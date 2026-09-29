@@ -19,7 +19,7 @@ Built as a TypeScript web app primarily using Next.js, Supabase, Socket.io, Tail
 ### How to install
 
 First, clone the repo.
-`git clone https://github.com/trevorwrightdev/gather-clone.git`
+`git clone https://github.com/pedrofsoaress/gather-clone.git`
 
 Install client dependencies.
 ```bash
@@ -57,8 +57,10 @@ Lastly, run `npm run dev` in both the `frontend` and `backend` directories.
 
 ### Deployment
 
+This fork is published at [gather-clone-beta.vercel.app](https://gather-clone-beta.vercel.app/). The Vercel project is connected to this fork's `main` branch.
+
 The Next.js frontend runs on Vercel with `frontend` as the project root. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_BASE_URL`, `NEXT_PUBLIC_BACKEND_URL`, `SERVICE_ROLE`, `NEXT_PUBLIC_AGORA_APP_ID`, and `APP_CERTIFICATE` in the Vercel project. `SERVICE_ROLE` and `APP_CERTIFICATE` must remain server-side secrets.
 
-The Socket.io backend needs a persistent Node.js web service. On Render, use `backend` as the root directory, `yarn install --frozen-lockfile && yarn build` as the build command, and `yarn start` as the start command. Set `FRONTEND_URL`, `SUPABASE_URL`, and `SERVICE_ROLE` on the service. `FRONTEND_URL` must be the Vercel production origin.
+The Socket.io backend needs a persistent Node.js web service. On Render, use `backend` as the root directory, `yarn install --frozen-lockfile && yarn build` as the build command, and `yarn start` as the start command. Set `FRONTEND_URL`, `SUPABASE_URL`, and `SERVICE_ROLE` on the service. `FRONTEND_URL` must be the Vercel production origin. Render's free instance sleeps when idle, so joining a space can take longer on the first request after inactivity.
 
 The database schema and access policies are in `supabase/migrations/`. Link a dedicated Supabase project and run `supabase db push --linked`. Push `supabase/config.toml` after setting its Auth site URL and redirect URLs to the deployed frontend. The project supports guest sessions; guest spaces are lost if the visitor signs out or clears browser data. Email sign-in with Supabase's default mail service only works for organization members. Public email sign-in needs custom SMTP. Google sign-in is shown only when `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true` and its provider has been configured in Supabase.
