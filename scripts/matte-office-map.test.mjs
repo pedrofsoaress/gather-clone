@@ -48,3 +48,12 @@ test('coffee and water can each be targeted by a distinct point', () => {
   const water = interactions.find((object) => object.id === 'water')
   assert.ok(coffee.bounds.x + coffee.bounds.width <= water.bounds.x)
 })
+
+test('desk seats pull the avatar onto the visible chair center', () => {
+  const desks = map.rooms[0].interactions.filter((object) => object.kind === 'desk')
+  assert.equal(desks.length, 8)
+  for (const desk of desks) {
+    assert.ok(desk.seatVisual.x < desk.approach.x && desk.seatVisual.x > desk.approach.x - 1, desk.id)
+    assert.ok(desk.seatVisual.y > desk.approach.y && desk.seatVisual.y < desk.approach.y + 1, desk.id)
+  }
+})

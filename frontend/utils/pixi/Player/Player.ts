@@ -8,6 +8,7 @@ import { defaultSkin, skins } from './skins'
 import signal from '@/utils/signal'
 import { videoChat } from '@/utils/video-chat/video-chat'
 import { agoraUidForProfile } from '@/utils/video-chat/agoraIdentity'
+import { gsap } from 'gsap'
 const AVATAR_SCALE = 1.5
 function formatText(message: string, maxLength: number): string {
     message = message.trim()
@@ -68,6 +69,7 @@ export class Player {
 
     private currentChannel: string = 'local'
     private seatMask: PIXI.Graphics | null = null
+    private seatTween: gsap.core.Tween | null = null
 
     constructor(skin: string, playApp: PlayApp, username: string, isLocal: boolean = false) {
         this.skin = skin
@@ -369,21 +371,32 @@ export class Player {
     public setSeatedVisual = (visual: { x: number, y: number } | null) => {
         if (!this.initialized) return
         const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        this.seatTween?.kill()
+        this.seatTween = null
         if (this.seatMask) {
             this.parent.removeChild(this.seatMask)
             this.seatMask.destroy()
             this.seatMask = null
         }
-        sprite.position.set(visual ? (visual.x - this.currentTilePosition.x) * 32 : 0,
-            visual ? (visual.y - this.currentTilePosition.y) * 32 : 0)
-        if (!visual) return
+        if (!visual) {
+            sprite.position.set(0, 0)
+            return
+        }
+        const x = (visual.x - this.currentTilePosition.x) * 32
+        const y = (visual.y - this.currentTilePosition.y) * 32
         this.changeAnimationState(`idle_${this.direction}` as AnimationState)
-        const mask = new PIXI.Graphics()
-        mask.roundRect(sprite.x - 15, sprite.y + 6, 30, 12, 3)
-        mask.fill({ color: 0x536c92, alpha: 0.98 })
-        mask.eventMode = 'none'
-        this.parent.addChild(mask)
-        this.seatMask = mask
+        this.seatTween = gsap.to(sprite.position, {
+            x, y, duration: 0.22, ease: 'power2.out',
+            onComplete: () => {
+                const mask = new PIXI.Graphics()
+                mask.roundRect(x - 15, y + 6, 30, 12, 3)
+                mask.fill({ color: 0x536c92, alpha: 0.98 })
+                mask.eventMode = 'none'
+                this.parent.addChild(mask)
+                this.seatMask = mask
+                this.seatTween = null
+            }
+        })
     }
 
     public keydown = (event: KeyboardEvent) => {
@@ -430,5 +443,6 @@ export class Player {
 
     public destroy() {
         PIXI.Ticker.shared.remove(this.move)
+        this.seatTween?.kill()
     }
 }
