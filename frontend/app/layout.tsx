@@ -18,8 +18,8 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata = {
   metadataBase: new URL(defaultUrl),
-  title: "Gather",
-  description: "This is a Gather clone.",
+  title: "Matte | Escritório virtual",
+  description: "Entre no escritório virtual da Matte e converse com o time por proximidade.",
 }
 
 export default function RootLayout({
@@ -28,7 +28,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={dmSans.className}>
+    <html lang="pt-BR" className={dmSans.className}>
       <body>
         <Layout>
             {children}

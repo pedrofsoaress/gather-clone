@@ -17,8 +17,9 @@ class Server {
         this.socket = io(backend_url, {
         reconnection: true,
         autoConnect: false,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: 30,
         reconnectionDelay: 2000,
+        reconnectionDelayMax: 5000,
         transportOptions: {
             polling: {
                 extraHeaders: {
@@ -31,8 +32,32 @@ class Server {
         }
     })
 
-        return new Promise<ConnectionResponse>((resolve, reject) => {
-            this.socket.connect()
+        return new Promise<ConnectionResponse>((resolve) => {
+            let settled = false
+            const finish = (success: boolean, errorMessage = '') => {
+                if (settled) return
+                settled = true
+                clearTimeout(deadline)
+                this.socket.off('connect_error', onConnectError)
+                this.socket.io.off('reconnect_failed', onReconnectFailed)
+                if (!success) this.disconnect()
+                resolve({ success, errorMessage })
+            }
+
+            const onConnectError = (err: Error) => {
+                console.warn('Connection attempt failed:', err.message)
+                if (/^Invalid (access token|uid)/.test(err.message)) {
+                    finish(false, err.message)
+                }
+            }
+
+            const onReconnectFailed = () => {
+                finish(false, 'The server is unavailable. Please try again shortly.')
+            }
+
+            const deadline = setTimeout(() => {
+                finish(false, 'The server took too long to start. Please try again.')
+            }, 150000)
 
             this.socket.on('connect', () => {
                 this.connected = true
@@ -43,35 +68,20 @@ class Server {
                 })
             })
 
-            this.socket.on('joinedRealm', () => {
-                resolve({
-                    success: true,
-                    errorMessage: ''
-                })
-            })
+            this.socket.on('disconnect', () => { this.connected = false })
+            this.socket.once('joinedRealm', () => finish(true))
 
-            this.socket.on('failedToJoinRoom', (reason: string) => {
-                resolve({
-                    success: false,
-                    errorMessage: reason
-                })
-            })
+            this.socket.once('failedToJoinRoom', (reason: string) => finish(false, reason))
 
-            this.socket.on('connect_error', (err: any) => {
-                console.error('Connection error:', err)
-                resolve({
-                    success: false,
-                    errorMessage: err.message
-                })
-            })
+            this.socket.on('connect_error', onConnectError)
+            this.socket.io.on('reconnect_failed', onReconnectFailed)
+            this.socket.connect()
         })
     }
 
     public disconnect() {
-        if (this.connected) {
-            this.connected = false
-            this.socket.disconnect()
-        }
+        this.connected = false
+        this.socket.disconnect()
     }
 
     public async getPlayersInRoom(roomIndex: number) {

@@ -14,7 +14,8 @@ export default async function Play({ params, searchParams }: { params: { id: str
     const { data: { user } } = await supabase.auth.getUser()
 
     if (!session || !user) {
-        return redirect('/signin')
+        const destination = `/play/${params.id}${searchParams.shareId ? `?shareId=${encodeURIComponent(searchParams.shareId)}` : ''}`
+        return redirect(`/signin?next=${encodeURIComponent(destination)}`)
     }
     const { data, error } = !searchParams.shareId ? await supabase.from('realms').select('map_data, owner_id, name').eq('id', params.id).single() : await getPlayRealmData(session.access_token, searchParams.shareId)
     const { data: profile, error: profileError } = await supabase.from('profiles').select('skin').eq('id', user.id).single()

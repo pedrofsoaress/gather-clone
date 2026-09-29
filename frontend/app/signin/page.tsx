@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import GoogleSignInButton from './GoogleSignInButton'
@@ -9,6 +9,16 @@ export default function Login() {
     const [email, setEmail] = useState('')
     const [status, setStatus] = useState('')
     const [loading, setLoading] = useState(false)
+    const autoJoinStarted = useRef(false)
+
+    const getDestination = () => {
+        const requested = new URLSearchParams(window.location.search).get('next')
+        if (!requested?.startsWith('/play/') || requested.startsWith('//')) return '/app'
+        const destination = new URL(requested, window.location.origin)
+        return destination.origin === window.location.origin
+            ? `${destination.pathname}${destination.search}`
+            : '/app'
+    }
 
     const signInAsGuest = async () => {
         setLoading(true)
@@ -34,9 +44,24 @@ export default function Login() {
             return
         }
 
-        router.push('/app')
+        router.push(getDestination())
         router.refresh()
     }
+
+    useEffect(() => {
+        if (autoJoinStarted.current) return
+        const destination = getDestination()
+        if (destination === '/app' || !destination.includes('shareId=')) return
+        autoJoinStarted.current = true
+        const supabase = createClient()
+        void supabase.auth.getSession().then(({ data }) => {
+            if (data.session) {
+                router.replace(destination)
+            } else {
+                void signInAsGuest()
+            }
+        })
+    }, [])
 
     const signInWithEmail = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault()

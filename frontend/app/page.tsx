@@ -1,37 +1,26 @@
-'use client'
 import AnimatedCharacter from './play/SkinMenu/AnimatedCharacter'
 import Link from 'next/link'
 import BasicButton from '@/components/BasicButton'
-import { Code } from '@phosphor-icons/react'
+
+const officeUrl = '/play/0d778bfd-8e16-49bc-832f-3aa60c5bef0c?shareId=f2ac1499-532e-47aa-9244-5b48f8926283'
 
 export default function Index() {
   return (
-    <div className='w-full grid place-items-center h-screen gradient p-4 relative'>
-      <div className='max-w-[600px] flex flex-col items-center'>
-        <div>
-          <h1 className='font-semibold text-3xl'>Welcome to My Gather Clone!</h1>   
-          <p className='w-full text-xl my-6'>
-            This project is a functional recreation of the core features of Gather, 
-            built as a portfolio piece to demonstrate my technical skills and passion for virtual spaces.
-          </p>
+    <main className='min-h-screen gradient px-6 py-16 flex items-center justify-center'>
+      <div className='w-full max-w-3xl rounded-3xl border border-white/20 bg-[#1b2344]/80 px-8 py-12 text-center shadow-2xl sm:px-16'>
+        <p className='mb-5 text-sm font-bold uppercase tracking-[0.35em] text-[#00d4b2]'>Matte</p>
+        <h1 className='text-4xl font-bold sm:text-6xl'>Escritório virtual</h1>
+        <p className='mx-auto mt-6 max-w-xl text-lg text-[#cad8ff]'>
+          Encontre o time, circule pelo escritório e converse com quem estiver por perto.
+        </p>
+        <div className='my-8 flex justify-center'>
+          <AnimatedCharacter src='/sprites/characters/Character_009.png' />
         </div>
-        <div className='flex flex-col items-center justify-center'>
-          <Link href='/app' >
-            <BasicButton>
-              Get Started
-            </BasicButton>
-          </Link>
-          <span className='mt-4 text-sm'>or watch a demo <a href="https://www.youtube.com/watch?v=AnhsC7Fmt20" target="_blank" rel="noopener noreferrer" className='underline'>here</a></span>
-        </div>
-        <div className='flex flex-row items-center justify-center mt-6 gap-8'>
-          <p className='text-sm'>created by <a href="https://www.trevdev.me/" target="_blank" rel="noopener noreferrer" className='font-bold underline'>trevdev</a></p>
-          <div className='inline-flex flex-row items-center justify-center gap-2'>
-            <a href='https://github.com/trevorwrightdev/gather-clone' target="_blank" rel="noopener noreferrer" className='text-sm underline font-bold'>see the code</a>
-            <Code className='w-4 h-4'/>
-          </div>
-        </div>
-        <AnimatedCharacter src='/sprites/characters/Character_009.png'/>
+        <Link href={officeUrl}>
+          <BasicButton>Entrar no escritório</BasicButton>
+        </Link>
+        <p className='mt-6 text-sm text-[#b9c2db]'>Acesso aberto pelo link. Câmera e microfone começam desligados.</p>
       </div>
-    </div>
+    </main>
   )
 }
