@@ -1,5 +1,5 @@
 'use client'
-import React from 'react'
+import React, { useEffect, useState, type FormEvent } from 'react'
 import BasicButton from '@/components/BasicButton'
 import AnimatedCharacter from './SkinMenu/AnimatedCharacter'
 import { useVideoChat } from '../hooks/useVideoChat'
@@ -9,32 +9,43 @@ type IntroScreenProps = {
     realmName: string
     skin: string
     username: string
-    setShowIntroScreen: (show: boolean) => void
+    onJoin: (displayName: string) => void
 }
 
-const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, setShowIntroScreen }) => {
+const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, onJoin }) => {
 
     const src = '/sprites/characters/Character_' + skin + '.png'
+    const [name, setName] = useState(username)
+    useEffect(() => setName(username), [username])
+    const normalizedName = name.trim()
+    const submit = (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault()
+        if (normalizedName && normalizedName.length <= 32) onJoin(normalizedName)
+    }
 
     return (
-        <main className='dark-gradient w-full h-screen flex flex-col items-center pt-28'>
-            <h1 className='text-4xl font-semibold'>Welcome to <span className='text-[#CAD8FF]'>{realmName}</span></h1>
-            <section className='flex flex-row mt-32 items-center gap-24'>
+        <main className='dark-gradient w-full min-h-screen flex flex-col items-center px-4 py-12 sm:pt-28'>
+            <h1 className='text-center text-3xl sm:text-4xl font-semibold'>Bem-vindo ao <span className='text-[#CAD8FF]'>{realmName}</span></h1>
+            <section className='flex flex-col sm:flex-row mt-10 sm:mt-32 items-center gap-10 sm:gap-24'>
                 <div className='flex flex-col items-center gap-4'>
-                    <div className='aspect-video w-[337px] h-[227px] bg-black rounded-xl border-2 border-[#3F4776] overflow-hidden'>
+                    <div className='aspect-video w-[min(337px,90vw)] bg-black rounded-xl border-2 border-[#3F4776] overflow-hidden'>
                         <LocalVideo/>
                     </div>
                     <MicAndCameraButtons/>
                 </div>
-                <div className='flex flex-col items-center gap-4'>
+                <form className='flex w-full max-w-xs flex-col items-center gap-4' onSubmit={submit}>
                     <div className='flex flex-row items-center'>
                         <AnimatedCharacter src={src} noAnimation/>
-                        <p className='relative top-4'>{username}</p>
+                        <p className='relative top-4 max-w-48 truncate'>{normalizedName || 'Seu personagem'}</p>
                     </div>
-                    <BasicButton className='py-0 px-32 w-[250px]' onClick={() => setShowIntroScreen(false)}>
-                        Join
+                    <label htmlFor='office-display-name' className='w-full text-sm font-medium text-slate-200'>Seu nome no escritório</label>
+                    <input id='office-display-name' type='text' autoComplete='nickname' required maxLength={32}
+                        value={name} onChange={event => setName(event.target.value)}
+                        className='w-full rounded-lg border border-[#6673aa] bg-[#1b203b] px-4 py-3 text-white outline-none focus:border-[#cad8ff]' />
+                    <BasicButton className='w-full py-3' type='submit' disabled={!normalizedName || normalizedName.length > 32}>
+                        Entrar no escritório
                     </BasicButton>
-                </div>
+                </form>
             </section>
         </main>
     )

@@ -13,7 +13,7 @@ class Server {
     public socket: Socket = {} as Socket
     private connected: boolean = false
 
-    public async connect(realmId: string, uid: string, shareId: string, access_token: string) {
+    public async connect(realmId: string, uid: string, shareId: string, access_token: string, displayName: string) {
         this.socket = io(backend_url, {
         reconnection: true,
         autoConnect: false,
@@ -64,7 +64,8 @@ class Server {
 
                 this.socket.emit('joinRealm', {
                     realmId,
-                    shareId
+                    shareId,
+                    displayName,
                 })
             })
 

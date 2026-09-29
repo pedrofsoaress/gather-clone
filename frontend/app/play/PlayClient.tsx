@@ -1,6 +1,6 @@
 'use client'
 import React, { useEffect, useState } from 'react'
-import PixiApp from './PixiApp'
+import dynamic from 'next/dynamic'
 import { RealmData } from '@/utils/pixi/types'
 import PlayNavbar from './PlayNavbar'
 import { useModal } from '../hooks/useModal'
@@ -8,6 +8,9 @@ import signal from '@/utils/signal'
 import IntroScreen from './IntroScreen'
 import VideoBar from '@/components/VideoChat/VideoBar'
 import { AgoraVideoChatProvider } from '../hooks/useVideoChat'
+import OfficeHud from './OfficeHud'
+
+const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 
 type PlayClientProps = {
     mapData: RealmData
@@ -25,11 +28,17 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
     const { setErrorModal, setDisconnectedMessage } = useModal()
 
     const [showIntroScreen, setShowIntroScreen] = useState(true)
+    const [displayName, setDisplayName] = useState(username)
+
+    useEffect(() => {
+        const savedName = window.localStorage.getItem(`matte-office-name:${uid}`)?.trim()
+        if (savedName && savedName.length <= 32) setDisplayName(savedName)
+    }, [uid])
 
     const [skin, setSkin] = useState(initialSkin)
 
     useEffect(() => {
-        const onShowKickedModal = (message: string) => { 
+        const onShowKickedModal = (message: string) => {
             setErrorModal('Disconnected')
             setDisconnectedMessage(message)
         }
@@ -58,19 +67,24 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
         <AgoraVideoChatProvider uid={uid}>
             {!showIntroScreen && <div className='relative w-full h-screen flex flex-col-reverse sm:flex-col'>
                 <VideoBar />
-                <PixiApp 
-                    mapData={mapData} 
-                    className='w-full grow sm:h-full sm:flex-grow-0' 
-                    username={username} 
-                    access_token={access_token} 
-                    realmId={realmId} 
-                    uid={uid} 
-                    shareId={shareId} 
-                    initialSkin={skin} 
+                <PixiApp
+                    mapData={mapData}
+                    className='w-full grow sm:h-full sm:flex-grow-0'
+                    username={displayName}
+                    access_token={access_token}
+                    realmId={realmId}
+                    uid={uid}
+                    shareId={shareId}
+                    initialSkin={skin}
                 />
-                <PlayNavbar username={username} skin={skin}/>
+                <PlayNavbar username={displayName} skin={skin}/>
+                <OfficeHud objects={mapData.rooms[mapData.spawnpoint.roomIndex].interactions ?? []} uid={uid} />
             </div>}
-            {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={username} setShowIntroScreen={setShowIntroScreen}/>}    
+            {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={(chosenName) => {
+                window.localStorage.setItem(`matte-office-name:${uid}`, chosenName)
+                setDisplayName(chosenName)
+                setShowIntroScreen(false)
+            }}/>}
         </AgoraVideoChatProvider>
     )
 }

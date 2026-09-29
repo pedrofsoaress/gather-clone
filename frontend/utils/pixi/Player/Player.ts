@@ -7,6 +7,7 @@ import { server } from '../../backend/server'
 import { defaultSkin, skins } from './skins'
 import signal from '@/utils/signal'
 import { videoChat } from '@/utils/video-chat/video-chat'
+const AVATAR_SCALE = 1.5
 function formatText(message: string, maxLength: number): string {
     message = message.trim()
     const words = message.split(' ')
@@ -65,6 +66,7 @@ export class Player {
     private strikes: number = 0
 
     private currentChannel: string = 'local'
+    private seatMask: PIXI.Graphics | null = null
 
     constructor(skin: string, playApp: PlayApp, username: string, isLocal: boolean = false) {
         this.skin = skin
@@ -84,6 +86,7 @@ export class Player {
         await this.sheet.parse()
 
         const animatedSprite = new PIXI.AnimatedSprite(this.sheet.animations['idle_down'])
+        animatedSprite.scale.set(AVATAR_SCALE)
         animatedSprite.animationSpeed = this.animationSpeed
         animatedSprite.play()
 
@@ -169,6 +172,13 @@ export class Player {
         this.currentTilePosition = { x, y }
     }
 
+    public isAtTile(x: number, y: number): boolean {
+        const position = this.convertTilePosToPlayerPos(x, y)
+        return this.targetPosition === null &&
+            Math.abs(this.parent.x - position.x) < 1 &&
+            Math.abs(this.parent.y - position.y) < 1
+    }
+
     private convertTilePosToPlayerPos = (x: number, y: number) => {
         return {
             x: (x * 32) + 16,
@@ -183,8 +193,8 @@ export class Player {
         }
     }
 
-    public moveToTile = (x: number, y: number) => {
-        if (this.strikes > 25) return
+    public moveToTile = (x: number, y: number): boolean => {
+        if (this.strikes > 25) return false
 
         const start: Coordinate = [this.currentTilePosition.x, this.currentTilePosition.y]
         const end: Coordinate = [x, y]
@@ -194,8 +204,10 @@ export class Player {
             if (!path && !this.isLocal) {
                 this.strikes++
             }
-            return
+            return false
         }
+
+        this.setSeatedVisual(null)
 
         PIXI.Ticker.shared.remove(this.move)
 
@@ -207,6 +219,7 @@ export class Player {
         if (this.isLocal) {
             server.socket.emit('movePlayer', { x, y })
         }
+        return true
     }
 
     private move = ({ deltaTime }: { deltaTime: number }) => {
@@ -233,6 +246,11 @@ export class Player {
         if (distance < speed) {
             this.parent.x = this.targetPosition.x
             this.parent.y = this.targetPosition.y
+
+            if (this.isLocal) {
+                this.playApp.onLocalPlayerTileChanged(this.currentTilePosition)
+                server.socket.emit('officeStep', this.currentTilePosition)
+            }
 
             this.pathIndex++
             if (this.pathIndex < this.path.length) {
@@ -319,6 +337,7 @@ export class Player {
 
         if (this.isLocal) {
             this.changeAnimationState(`idle_${this.direction}` as AnimationState)
+            this.playApp.onLocalPlayerStopped()
         } else {
             // if player doesnt move for x secs, do idle animation
             setTimeout(() => {
@@ -344,6 +363,26 @@ export class Player {
         const animatedSprite = this.parent.children[0] as PIXI.AnimatedSprite
         animatedSprite.textures = this.sheet.animations[state]
         animatedSprite.play()
+    }
+
+    public setSeatedVisual = (visual: { x: number, y: number } | null) => {
+        if (!this.initialized) return
+        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        if (this.seatMask) {
+            this.parent.removeChild(this.seatMask)
+            this.seatMask.destroy()
+            this.seatMask = null
+        }
+        sprite.position.set(visual ? (visual.x - this.currentTilePosition.x) * 32 : 0,
+            visual ? (visual.y - this.currentTilePosition.y) * 32 : 0)
+        if (!visual) return
+        this.changeAnimationState(`idle_${this.direction}` as AnimationState)
+        const mask = new PIXI.Graphics()
+        mask.roundRect(sprite.x - 15, sprite.y + 6, 30, 12, 3)
+        mask.fill({ color: 0x536c92, alpha: 0.98 })
+        mask.eventMode = 'none'
+        this.parent.addChild(mask)
+        this.seatMask = mask
     }
 
     public keydown = (event: KeyboardEvent) => {

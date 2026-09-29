@@ -7,6 +7,11 @@ import { defaultSkin } from './Player/skins'
 import signal from '../signal'
 import { createClient } from '../supabase/client'
 import { gsap } from 'gsap'
+import { bfs } from './pathfinding'
+import { canApproach } from './office/approach.mjs'
+import { isWithinMap, nearestObject } from './office/geometry'
+import { InteractionLayer } from './office/InteractionLayer'
+import type { OfficeSnapshot } from './office/types'
 
 export class PlayApp extends App {
     private scale: number = 1.5
@@ -28,6 +33,9 @@ export class PlayApp extends App {
     private fadeAnimation: gsap.core.Tween | null = null
     private currentPrivateAreaTiles: TilePoint[] = []
     public proximityId: string | null = null
+    private interactionLayer: InteractionLayer | null = null
+    private pendingOfficeObjectId: string | null = null
+    private officeSnapshot: OfficeSnapshot = { occupancy: {}, games: {} }
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -42,11 +50,90 @@ export class PlayApp extends App {
     override async loadRoom(index: number) {
         this.players = {}
         await super.loadRoom(index)
+        this.setUpRoomInteractions()
         this.setUpBlockedTiles()
         this.setUpFadeTiles()
         this.spawnLocalPlayer()
         await this.syncOtherPlayers()
         this.displayInitialChatMessage()
+    }
+
+    private setUpRoomInteractions = () => {
+        if (this.interactionLayer) {
+            this.app.stage.removeChild(this.interactionLayer.container)
+            this.interactionLayer.destroy()
+        }
+        this.pendingOfficeObjectId = null
+        const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
+        this.interactionLayer = new InteractionLayer(
+            objects,
+            (id) => this.requestOfficeObject(id),
+            (object) => signal.emit('officeHover', { objectId: object?.id ?? null }),
+        )
+        this.interactionLayer.setOccupancy(this.officeSnapshot.occupancy)
+        this.interactionLayer.setGames(this.officeSnapshot.games)
+        this.app.stage.addChild(this.interactionLayer.container)
+    }
+
+    public requestOfficeObject = (id: string): boolean => {
+        if (this.disableInput || this.player.frozen) return false
+        const room = this.realmData.rooms[this.currentRoomIndex]
+        const object = room.interactions?.find((item) => item.id === id)
+        if (!object) return false
+        const width = room.backgroundImage ? Math.ceil(room.backgroundImage.width / 32) : 50
+        const height = room.backgroundImage ? Math.ceil(room.backgroundImage.height / 32) : 30
+        if (!isWithinMap(object.approach.x, object.approach.y, width, height)) return false
+
+        this.pendingOfficeObjectId = null
+        this.keysDown = []
+        this.player.setMovementMode('mouse')
+        if (this.player.isAtTile(object.approach.x, object.approach.y)) {
+            signal.emit('officeOpen', { objectId: id })
+            return true
+        }
+
+        const canReach = canApproach(
+            this.player.currentTilePosition,
+            object.approach,
+            this.blocked,
+            bfs,
+        )
+        if (!canReach || !this.player.moveToTile(object.approach.x, object.approach.y)) {
+            signal.emit('officeFeedback', { message: 'Não consigo chegar até esse objeto.' })
+            return false
+        }
+        this.pendingOfficeObjectId = id
+        return true
+    }
+
+    public onLocalPlayerTileChanged = (position: Point) => {
+        const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
+        const nearby = nearestObject(objects, position.x, position.y, 2)
+        signal.emit('officeNearby', { objectId: nearby?.id ?? null })
+    }
+
+    private onOfficeStateChanged = (snapshot: OfficeSnapshot) => {
+        if (!snapshot || !snapshot.occupancy) return
+        this.officeSnapshot = snapshot
+        this.interactionLayer?.setOccupancy(snapshot.occupancy)
+        this.interactionLayer?.setGames(snapshot.games)
+        const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
+        for (const [uid, player] of [[this.uid, this.player] as const, ...Object.entries(this.players) as [string, Player][]]) {
+            const occupiedId = Object.keys(snapshot.occupancy).find(id => snapshot.occupancy[id].uid === uid)
+            const object = objects.find(item => item.id === occupiedId)
+            player.setSeatedVisual(object?.seatVisual ?? null)
+        }
+        signal.emit('officeSnapshot', snapshot)
+    }
+
+    public onLocalPlayerStopped = () => {
+        const id = this.pendingOfficeObjectId
+        this.pendingOfficeObjectId = null
+        if (!id) return
+        const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find((item) => item.id === id)
+        if (object && this.player.isAtTile(object.approach.x, object.approach.y)) {
+            signal.emit('officeOpen', { objectId: id })
+        }
     }
 
     private setUpFadeTiles = () => {
@@ -151,6 +238,9 @@ export class PlayApp extends App {
         otherPlayer.setPosition(x, y)
         this.layers.object.addChild(otherPlayer.parent)
         this.players[uid] = otherPlayer
+        const occupiedId = Object.keys(this.officeSnapshot.occupancy).find(id => this.officeSnapshot.occupancy[id].uid === uid)
+        const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find(item => item.id === occupiedId)
+        otherPlayer.setSeatedVisual(object?.seatVisual ?? null)
         this.sortObjectsByY()
     }
 
@@ -162,12 +252,16 @@ export class PlayApp extends App {
         this.setScale(this.scale)
         this.app.renderer.on('resize', this.resizeEvent)
         this.fadeTileContainer.alpha = 0
+        this.fadeTileContainer.eventMode = 'none'
         this.app.stage.addChild(this.fadeTileContainer)
         this.clickEvents()
         this.setUpKeyboardEvents()
         this.setUpFadeOverlay()
         this.setUpSignalListeners()
         this.setUpSocketEvents()
+        server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => {
+            if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot)
+        })
 
         this.fadeOut()
     }
@@ -182,6 +276,7 @@ export class PlayApp extends App {
         }
         this.layers.object.addChild(this.player.parent)
         this.moveCameraToPlayer()
+        this.onLocalPlayerTileChanged(this.player.currentTilePosition)
     }
 
     private setScale = (newScale: number) => {
@@ -208,6 +303,7 @@ export class PlayApp extends App {
     }
 
     private setUpFadeOverlay = () => {
+        this.fadeOverlay.eventMode = 'none'
         this.fadeOverlay.rect(0, 0, this.app.screen.width * (1 / this.scale), this.app.screen.height * (1 / this.scale))
         this.fadeOverlay.fill(0x0F0F0F)
         this.app.stage.addChild(this.fadeOverlay)
@@ -235,6 +331,9 @@ export class PlayApp extends App {
 
             const clickPosition = e.getLocalPosition(this.app.stage)
             const { x, y } = this.convertScreenToTileCoordinates(clickPosition.x, clickPosition.y)
+            const room = this.realmData.rooms[this.currentRoomIndex]
+            if (room.backgroundImage && !isWithinMap(x, y, room.backgroundImage.width / 32, room.backgroundImage.height / 32)) return
+            this.pendingOfficeObjectId = null
             this.player.moveToTile(x, y)
             this.player.setMovementMode('mouse')
         })
@@ -247,6 +346,18 @@ export class PlayApp extends App {
 
     private keydown = (event: KeyboardEvent) => {
         if (this.keysDown.includes(event.key) || this.disableInput) return
+        const target = event.target
+        if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable="true"]')) return
+
+        if (event.key.toLowerCase() === 'e') {
+            const position = this.player.currentTilePosition
+            const object = nearestObject(this.realmData.rooms[this.currentRoomIndex].interactions ?? [], position.x, position.y, 2)
+            if (object) this.requestOfficeObject(object.id)
+            return
+        }
+
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(event.key)) return
+        this.pendingOfficeObjectId = null
         this.player.keydown(event)
         this.keysDown.push(event.key)
     }
@@ -370,6 +481,7 @@ export class PlayApp extends App {
         signal.on('disableInput', this.onDisableInput)
         signal.on('message', this.onMessage)
         signal.on('getSkinForUid', this.getSkinForUid)
+        signal.on('officeRequest', this.onOfficeRequest)
     }
 
     private removeSignalListeners = () => {
@@ -378,6 +490,11 @@ export class PlayApp extends App {
         signal.off('disableInput', this.onDisableInput)
         signal.off('message', this.onMessage)
         signal.off('getSkinForUid', this.getSkinForUid)
+        signal.off('officeRequest', this.onOfficeRequest)
+    }
+
+    private onOfficeRequest = ({ objectId }: { objectId: string }) => {
+        this.requestOfficeObject(objectId)
     }
 
     private onRequestSkin = () => {
@@ -448,7 +565,16 @@ export class PlayApp extends App {
         }
     }
 
+    private onOfficeEffect = (event: { objectId: string, effect: 'coffee' | 'water' | 'snack', name: string }) => {
+        this.interactionLayer?.playEffect(event.objectId, event.effect)
+        signal.emit('officeFeedback', {
+            message: `${event.name} pegou ${event.effect === 'coffee' ? 'café' : event.effect === 'water' ? 'água' : 'um snack'}.`,
+        })
+    }
+
     private setUpSocketEvents = () => {
+        server.socket.on('officeStateChanged', this.onOfficeStateChanged)
+        server.socket.on('officeEffect', this.onOfficeEffect)
         server.socket.on('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.on('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.on('playerMoved', this.onPlayerMoved)
@@ -461,6 +587,8 @@ export class PlayApp extends App {
     }
 
     private removeSocketEvents = () => {
+        server.socket.off('officeStateChanged', this.onOfficeStateChanged)
+        server.socket.off('officeEffect', this.onOfficeEffect)
         server.socket.off('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.off('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.off('playerMoved', this.onPlayerMoved)
@@ -476,8 +604,6 @@ export class PlayApp extends App {
         this.removeSocketEvents()
         this.destroyPlayers()
         server.disconnect()
-
-        PIXI.Ticker.shared.destroy()
 
         this.removeSignalListeners()
         document.removeEventListener('keydown', this.keydown)

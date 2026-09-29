@@ -260,6 +260,8 @@ socket.on('officeAction', (payload, ack) => {
 
 ## Task 4: Persistent shared boards and guestbook
 
+**Added during execution:** Before entering, each visitor can edit a display name (1–32 characters). The join event validates it on the backend, the name appears on the avatar, occupied places, and notes, and the same browser remembers it for the next visit.
+
 **Files:** Create a CLI-named migration under `supabase/migrations/`, `backend/src/office/OfficeNotes.ts`, `backend/src/office/OfficeNotes.test.ts`, `frontend/app/play/OfficeBoard.tsx`; modify `backend/src/sockets/socket-types.ts`, `backend/src/sockets/sockets.ts`, `frontend/app/play/OfficeHud.tsx`.
 
 **Interfaces:** Consumes `officeReadNotes` and `officeAddNote`. Produces notes `{id,objectId,author,body,createdAt}`, `officeNoteCreated` to the realm and `OfficeNotes.list/add` backend methods.
@@ -357,6 +359,8 @@ returnBall(uid:string, objectId:string) {
 </section>
 ```
 - [ ] **Step 5: Run tests/builds and a two-browser session: collect coffee, play a rally, leave/disconnect, verify visible state resets.** Commit: `git add ... && git commit -m "feat: animate appliances and add shared ping-pong"`.
+
+**User amendment (29 September):** Scale the avatar to match office chairs. Reaching a free desk or chair automatically occupies it and shows the avatar seated; moving away releases it. People at neighboring desks must share a proximity conversation. Cover auto-occupation and adjacent-desk proximity with failing then passing tests, and confirm the visuals in two browsers. Production Agora credentials are verified during Task 6.
 
 ## Task 6: Publication and acceptance on the current link
 
