@@ -5,6 +5,7 @@ import type { OfficeObject } from '@/utils/pixi/types'
 import signal from '@/utils/signal'
 import { server } from '@/utils/backend/server'
 import type { OfficeSnapshot } from '@/utils/pixi/office/types'
+import OfficeBoard from './OfficeBoard'
 
 type OfficeHudProps = { objects: OfficeObject[], uid: string }
 
@@ -99,7 +100,8 @@ export default function OfficeHud({ objects, uid }: OfficeHudProps) {
                     <p>Bem-vindo ao escritório Matte.</p>
                     <p>Clique em um ponto verde para ir até um objeto. Perto dele, use E ou o botão Interagir no celular.</p>
                     <p>Converse por proximidade e use a sala de reunião para uma conversa privada.</p>
-                </div> : active.kind !== 'seat' && active.kind !== 'desk' && <p className="mt-4 text-sm text-slate-200">Você chegou ao objeto. As ações desta área aparecem aqui.</p>}
+                </div> : !['seat', 'desk', 'board', 'guestbook'].includes(active.kind) && <p className="mt-4 text-sm text-slate-200">Você chegou ao objeto. As ações desta área aparecem aqui.</p>}
+                {['board', 'desk', 'guestbook'].includes(active.kind) && <OfficeBoard key={active.id} object={active} />}
             </section>
         </div>}
     </>

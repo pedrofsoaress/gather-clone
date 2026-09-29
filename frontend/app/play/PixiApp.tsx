@@ -1,5 +1,5 @@
 'use client'
-import React, { useRef } from 'react'
+import React from 'react'
 import { PlayApp } from '@/utils/pixi/PlayApp'
 import { useEffect } from 'react'
 import { RealmData } from '@/utils/pixi/types'
@@ -19,16 +19,18 @@ type PixiAppProps = {
 
 const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, access_token, realmId, uid, shareId, initialSkin }) => {
 
-    const appRef = useRef<PlayApp | null>(null)
     const { setModal, setLoadingText, setFailedConnectionMessage, setErrorModal } = useModal()
 
     useEffect(() => {
+        let cancelled = false
+        let app: PlayApp | null = null
         const mount = async () => {
-            const app = new PlayApp(uid, realmId, mapData, username, initialSkin)
-            appRef.current = app
+            if (cancelled) return
+            app = new PlayApp(uid, realmId, mapData, username, initialSkin)
             setModal('Loading')
             setLoadingText('Connecting to server... This can take a minute after inactivity.')
-            const { success, errorMessage } = await server.connect(realmId, uid, shareId, access_token)
+            const { success, errorMessage } = await server.connect(realmId, uid, shareId, access_token, username)
+            if (cancelled) return
             if (!success) {
                 setErrorModal('Failed To Connect')
                 setFailedConnectionMessage(errorMessage)
@@ -37,21 +39,21 @@ const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, access_t
 
             setLoadingText('Loading game...')
             await app.init()
+            if (cancelled) return
             setModal('None')
             const pixiApp = app.getApp()
             pixiApp.canvas.tabIndex = 0
             pixiApp.canvas.setAttribute('aria-label', 'Escritório virtual Matte')
-            document.getElementById('app-container')!.appendChild(pixiApp.canvas)
+            document.getElementById('app-container')!.replaceChildren(pixiApp.canvas)
         }
 
-        if (!appRef.current) {
-            mount()
-        }
+        // React's development remount cancels the first setup before it opens a socket.
+        queueMicrotask(mount)
         
         return () => {
-            if (appRef.current) {
-                appRef.current.destroy()
-            }
+            cancelled = true
+            app?.destroy()
+            document.getElementById('app-container')?.replaceChildren()
         }
     }, [])
 

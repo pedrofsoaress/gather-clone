@@ -260,6 +260,8 @@ socket.on('officeAction', (payload, ack) => {
 
 ## Task 4: Persistent shared boards and guestbook
 
+**Added during execution:** Before entering, each visitor can edit a display name (1–32 characters). The join event validates it on the backend, the name appears on the avatar, occupied places, and notes, and the same browser remembers it for the next visit.
+
 **Files:** Create a CLI-named migration under `supabase/migrations/`, `backend/src/office/OfficeNotes.ts`, `backend/src/office/OfficeNotes.test.ts`, `frontend/app/play/OfficeBoard.tsx`; modify `backend/src/sockets/socket-types.ts`, `backend/src/sockets/sockets.ts`, `frontend/app/play/OfficeHud.tsx`.
 
 **Interfaces:** Consumes `officeReadNotes` and `officeAddNote`. Produces notes `{id,objectId,author,body,createdAt}`, `officeNoteCreated` to the realm and `OfficeNotes.list/add` backend methods.
