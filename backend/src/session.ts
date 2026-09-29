@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { kickPlayer } from './sockets/helpers'
 import { v4 as uuidv4 } from 'uuid'
 import { OfficeState } from './office/OfficeState'
 
@@ -77,6 +76,10 @@ export class SessionManager {
         return this.sessions[id]
     }
 
+    public activeSessions(): Session[] {
+        return Object.values(this.sessions)
+    }
+
     public getPlayerSession(uid: string): Session {
         const realmId = this.playerIdToRealmId[uid]
         return this.sessions[realmId]
@@ -111,7 +114,7 @@ export class SessionManager {
         return true
     }
 
-    public terminateSession(id: string, reason: string) {
+    public terminateSession(id: string, reason: string, kickPlayer: (uid: string, reason: string) => void) {
         const session = this.sessions[id]
         if (!session) return
 
@@ -302,7 +305,7 @@ export class Session {
 
     private getProximityTiles(x: number, y: number): string[] {
         const proximityTiles: string[] = []
-        const range = 3
+        const range = 6
 
         for (let dx = -range; dx <= range; dx++) {
             for (let dy = -range; dy <= range; dy++) {

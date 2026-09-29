@@ -66,3 +66,25 @@ test('a visitor holds at most one place and walking away releases it', () => {
   }
   assert.deepEqual(state.snapshot().occupancy, {})
 })
+
+test('walking up to a free chair seats the visitor automatically and leaving frees it', () => {
+  let now = 0
+  const state = new OfficeState({ ...room, interactions: [room.interactions![1]] }, () => now)
+  state.addPlayer('u1', { x: 10, y: 9 }, 'Ana')
+  now = 100
+  assert.equal(state.step('u1', { x: 10, y: 8 }).ok, true)
+  now = 200
+  assert.equal(state.step('u1', { x: 10, y: 7 }).ok, true)
+  assert.deepEqual(state.snapshot().occupancy.desk, { uid: 'u1', name: 'Ana' })
+  state.addPlayer('u2', { x: 10, y: 9 }, 'Bruno')
+  now = 300
+  assert.equal(state.step('u2', { x: 10, y: 8 }).ok, true)
+  now = 400
+  assert.equal(state.step('u2', { x: 10, y: 7 }).ok, true)
+  assert.deepEqual(state.snapshot().occupancy.desk, { uid: 'u1', name: 'Ana' })
+  for (const y of [8, 9]) {
+    now += 100
+    assert.equal(state.step('u1', { x: 10, y }).ok, true)
+  }
+  assert.equal(state.snapshot().occupancy.desk, undefined)
+})

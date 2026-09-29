@@ -37,6 +37,12 @@ function protectConnection(io: Server) {
 export function sockets(io: Server) {
     protectConnection(io)
 
+    setInterval(() => {
+        for (const session of sessionManager.activeSessions()) {
+            if (session.officeState.expire()) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+        }
+    }, 250).unref()
+
     // Handle a connection
     io.on('connection', (socket) => {
 
@@ -206,7 +212,10 @@ export function sockets(io: Server) {
             if (!parsed.success || !session || session.getPlayer(uid)?.socketId !== socket.id) return ack({ ok: false, error: 'Ação inválida.' })
             const result = session.officeState.apply(uid, parsed.data)
             ack(result)
-            if (result.ok && result.changed) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+            if (result.changed) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+            if (result.ok && result.effect) io.to(session.id).emit('officeEffect', {
+                objectId: parsed.data.objectId, effect: result.effect, uid, name: session.getPlayer(uid).username,
+            })
         })
 
         const noteTarget = (objectId: string) => {

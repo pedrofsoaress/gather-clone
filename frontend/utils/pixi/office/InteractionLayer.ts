@@ -1,5 +1,7 @@
 import * as PIXI from 'pixi.js'
 import type { OfficeObject } from '../types'
+import type { OfficeSnapshot } from './types'
+import { gsap } from 'gsap'
 
 const TILE_SIZE = 32
 
@@ -11,6 +13,8 @@ export class InteractionLayer {
         style: { fontFamily: 'nunito', fontSize: 15, fontWeight: 'bold', fill: 0xffffff },
     })
     private readonly badges = new Map<string, PIXI.Graphics>()
+    private readonly gameBalls = new Map<string, PIXI.Graphics>()
+    private readonly gameTweens = new Map<string, gsap.core.Tween>()
     private occupancy: Record<string, { uid: string, name: string }> = {}
     private hovered: OfficeObject | null = null
 
@@ -55,6 +59,17 @@ export class InteractionLayer {
             badge.eventMode = 'none'
             this.container.addChild(badge)
             this.badges.set(object.id, badge)
+
+            if (object.kind === 'pingpong') {
+                const ball = new PIXI.Graphics()
+                ball.circle(0, 0, 6)
+                ball.fill(0xfff3ac)
+                ball.position.set((x + width / 2) * TILE_SIZE, (y + height / 2) * TILE_SIZE)
+                ball.visible = false
+                ball.eventMode = 'none'
+                this.container.addChild(ball)
+                this.gameBalls.set(object.id, ball)
+            }
         }
 
         this.container.addChild(this.outline)
@@ -88,7 +103,46 @@ export class InteractionLayer {
         if (this.hovered) this.showObject(this.hovered)
     }
 
+    public setGames(games: OfficeSnapshot['games']) {
+        for (const [id, ball] of this.gameBalls) {
+            const playing = games[id]?.status === 'playing'
+            ball.visible = playing
+            if (playing && !this.gameTweens.has(id)) {
+                const baseX = ball.x
+                const baseY = ball.y
+                const tween = gsap.to(ball, {
+                    x: baseX + 24, y: baseY - 28, duration: 0.55,
+                    ease: 'sine.inOut', repeat: -1, yoyo: true,
+                })
+                this.gameTweens.set(id, tween)
+            } else if (!playing) {
+                this.gameTweens.get(id)?.kill()
+                this.gameTweens.delete(id)
+            }
+        }
+    }
+
+    public playEffect(objectId: string, effect: 'coffee' | 'water' | 'snack') {
+        const object = this.objects.find(item => item.id === objectId)
+        if (!object) return
+        const { x, y, width } = object.bounds
+        const sparkle = new PIXI.Text({
+            text: effect === 'coffee' ? '☕' : effect === 'water' ? '💧' : '★',
+            style: { fontFamily: 'Arial', fontSize: 27, fill: 0xffeeaa, fontWeight: 'bold' },
+        })
+        sparkle.anchor.set(0.5)
+        sparkle.position.set((x + width / 2) * TILE_SIZE, y * TILE_SIZE)
+        sparkle.eventMode = 'none'
+        this.container.addChild(sparkle)
+        gsap.to(sparkle, {
+            y: sparkle.y - 45, alpha: 0, duration: 1.8,
+            onComplete: () => { this.container.removeChild(sparkle); sparkle.destroy() },
+        })
+    }
+
     public destroy() {
+        for (const tween of this.gameTweens.values()) tween.kill()
+        gsap.killTweensOf(this.container.children)
         this.container.destroy({ children: true })
     }
 }

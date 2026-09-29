@@ -7,6 +7,7 @@ import { server } from '../../backend/server'
 import { defaultSkin, skins } from './skins'
 import signal from '@/utils/signal'
 import { videoChat } from '@/utils/video-chat/video-chat'
+const AVATAR_SCALE = 1.5
 function formatText(message: string, maxLength: number): string {
     message = message.trim()
     const words = message.split(' ')
@@ -85,6 +86,7 @@ export class Player {
         await this.sheet.parse()
 
         const animatedSprite = new PIXI.AnimatedSprite(this.sheet.animations['idle_down'])
+        animatedSprite.scale.set(AVATAR_SCALE)
         animatedSprite.animationSpeed = this.animationSpeed
         animatedSprite.play()
 
@@ -376,7 +378,7 @@ export class Player {
         if (!visual) return
         this.changeAnimationState(`idle_${this.direction}` as AnimationState)
         const mask = new PIXI.Graphics()
-        mask.roundRect(sprite.x - 10, sprite.y + 7, 20, 9, 3)
+        mask.roundRect(sprite.x - 15, sprite.y + 6, 30, 12, 3)
         mask.fill({ color: 0x536c92, alpha: 0.98 })
         mask.eventMode = 'none'
         this.parent.addChild(mask)

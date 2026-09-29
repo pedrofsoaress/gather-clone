@@ -71,6 +71,7 @@ export class PlayApp extends App {
             (object) => signal.emit('officeHover', { objectId: object?.id ?? null }),
         )
         this.interactionLayer.setOccupancy(this.officeSnapshot.occupancy)
+        this.interactionLayer.setGames(this.officeSnapshot.games)
         this.app.stage.addChild(this.interactionLayer.container)
     }
 
@@ -115,6 +116,7 @@ export class PlayApp extends App {
         if (!snapshot || !snapshot.occupancy) return
         this.officeSnapshot = snapshot
         this.interactionLayer?.setOccupancy(snapshot.occupancy)
+        this.interactionLayer?.setGames(snapshot.games)
         const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
         for (const [uid, player] of [[this.uid, this.player] as const, ...Object.entries(this.players) as [string, Player][]]) {
             const occupiedId = Object.keys(snapshot.occupancy).find(id => snapshot.occupancy[id].uid === uid)
@@ -563,8 +565,16 @@ export class PlayApp extends App {
         }
     }
 
+    private onOfficeEffect = (event: { objectId: string, effect: 'coffee' | 'water' | 'snack', name: string }) => {
+        this.interactionLayer?.playEffect(event.objectId, event.effect)
+        signal.emit('officeFeedback', {
+            message: `${event.name} pegou ${event.effect === 'coffee' ? 'café' : event.effect === 'water' ? 'água' : 'um snack'}.`,
+        })
+    }
+
     private setUpSocketEvents = () => {
         server.socket.on('officeStateChanged', this.onOfficeStateChanged)
+        server.socket.on('officeEffect', this.onOfficeEffect)
         server.socket.on('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.on('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.on('playerMoved', this.onPlayerMoved)
@@ -578,6 +588,7 @@ export class PlayApp extends App {
 
     private removeSocketEvents = () => {
         server.socket.off('officeStateChanged', this.onOfficeStateChanged)
+        server.socket.off('officeEffect', this.onOfficeEffect)
         server.socket.off('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.off('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.off('playerMoved', this.onPlayerMoved)

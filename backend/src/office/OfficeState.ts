@@ -1,18 +1,28 @@
 import type { OfficeObject, Room } from '../session'
 
 export type OfficePosition = { x: number, y: number }
-export type OfficeResult = { ok: boolean, error?: string, changed?: boolean }
+export type OfficeResult = { ok: boolean, error?: string, changed?: boolean, effect?: 'coffee' | 'water' | 'snack' }
+export type OfficeGame = {
+  players: { uid: string, name: string }[],
+  turn: string | null,
+  scores: [number, number],
+  rally: number,
+  deadline: number | null,
+  status: 'waiting' | 'playing' | 'ended',
+}
 export type OfficeSnapshot = {
   occupancy: Record<string, { uid: string, name: string }>,
-  games: Record<string, unknown>,
+  games: Record<string, OfficeGame>,
 }
 
 type Visitor = { position: OfficePosition, name: string, lastStepAt: number }
+type MutableGame = { players: string[], turn: string | null, scores: [number, number], rally: number, deadline: number | null, status: OfficeGame['status'] }
 
 export class OfficeState {
   private readonly objects: Map<string, OfficeObject>
   private readonly visitors = new Map<string, Visitor>()
   private readonly occupied = new Map<string, string>()
+  private readonly games = new Map<string, MutableGame>()
   private readonly width: number
   private readonly height: number
 
@@ -29,7 +39,13 @@ export class OfficeState {
   }
 
   removePlayer(uid: string): boolean {
-    const changed = this.release(uid).changed === true
+    let changed = this.release(uid).changed === true
+    for (const [objectId, game] of this.games) {
+      if (game.players.includes(uid)) {
+        this.games.delete(objectId)
+        changed = true
+      }
+    }
     this.visitors.delete(uid)
     return changed
   }
@@ -63,7 +79,21 @@ export class OfficeState {
     visitor.position = { ...next }
     visitor.lastStepAt = at
     const occupied = this.objectOccupiedBy(uid)
-    const changed = Boolean(occupied && !this.isNear(uid, occupied) && this.release(uid).changed)
+    let changed = Boolean(occupied && !this.isNear(uid, occupied) && this.release(uid).changed)
+    if (!this.objectOccupiedBy(uid)) {
+      const nearbySeats = [...this.objects.values()]
+        .filter(object => object.kind === 'seat' || object.kind === 'desk')
+        .map(object => ({ object, distance: Math.abs(next.x - object.approach.x) + Math.abs(next.y - object.approach.y) }))
+        .filter(candidate => candidate.distance <= 1 && !this.occupied.has(candidate.object.id))
+        .sort((a, b) => a.distance - b.distance || a.object.id.localeCompare(b.object.id))
+      if (nearbySeats.length && this.occupy(uid, nearbySeats[0].object.id).changed) changed = true
+    }
+    for (const [objectId, game] of this.games) {
+      if (game.players.includes(uid) && !this.isNear(uid, objectId)) {
+        this.games.delete(objectId)
+        changed = true
+      }
+    }
     return { ok: true, changed }
   }
 
@@ -93,7 +123,83 @@ export class OfficeState {
   apply(uid: string, action: { objectId: string, action: string }): OfficeResult {
     if (action.action === 'occupy') return this.occupy(uid, action.objectId)
     if (action.action === 'release') return this.release(uid, action.objectId)
+    if (action.action === 'drink' || action.action === 'snack') {
+      const object = this.objects.get(action.objectId)
+      if (!this.visitors.has(uid) || !object || !this.isNear(uid, action.objectId) ||
+          (action.action === 'drink' && object.kind !== 'drink') ||
+          (action.action === 'snack' && object.kind !== 'snack') || !object.effect) {
+        return { ok: false, error: 'Aproxime-se da máquina para usá-la.' }
+      }
+      return { ok: true, effect: object.effect }
+    }
+    if (action.action === 'startGame') return this.startGame(uid, action.objectId)
+    if (action.action === 'joinGame') return this.joinGame(uid, action.objectId)
+    if (action.action === 'returnBall') return this.returnBall(uid, action.objectId)
+    if (action.action === 'leaveGame') return this.leaveGame(uid, action.objectId)
     return { ok: false, error: 'Ação inválida.' }
+  }
+
+  startGame(uid: string, objectId: string): OfficeResult {
+    if (this.objects.get(objectId)?.kind !== 'pingpong' || !this.isNear(uid, objectId)) return { ok: false, error: 'Aproxime-se da mesa para jogar.' }
+    const previous = this.games.get(objectId)
+    if (previous && previous.status !== 'ended') return { ok: false, error: 'Já existe um jogo nesta mesa.' }
+    this.games.set(objectId, { players: [uid], turn: null, scores: [0, 0], rally: 0, deadline: null, status: 'waiting' })
+    return { ok: true, changed: true }
+  }
+
+  joinGame(uid: string, objectId: string): OfficeResult {
+    const game = this.games.get(objectId)
+    if (!game || game.status !== 'waiting' || game.players.includes(uid) || !this.isNear(uid, objectId)) {
+      return { ok: false, error: 'Este jogo não está disponível.' }
+    }
+    game.players.push(uid)
+    game.status = 'playing'
+    game.turn = game.players[0]
+    game.deadline = this.now() + 3000
+    return { ok: true, changed: true }
+  }
+
+  returnBall(uid: string, objectId: string): OfficeResult {
+    const game = this.games.get(objectId)
+    if (!game || game.status !== 'playing' || game.turn !== uid || !this.isNear(uid, objectId)) {
+      return { ok: false, error: 'Ainda não é sua vez ou você se afastou.' }
+    }
+    if (game.deadline !== null && this.now() >= game.deadline) {
+      this.expire()
+      return { ok: false, error: 'Tempo esgotado para rebater.', changed: true }
+    }
+    game.rally += 1
+    game.turn = game.players.find(player => player !== uid) ?? null
+    game.deadline = this.now() + 3000
+    return { ok: true, changed: true }
+  }
+
+  leaveGame(uid: string, objectId: string): OfficeResult {
+    const game = this.games.get(objectId)
+    if (!game || !game.players.includes(uid)) return { ok: false, error: 'Você não está neste jogo.' }
+    this.games.delete(objectId)
+    return { ok: true, changed: true }
+  }
+
+  expire(): boolean {
+    let changed = false
+    const at = this.now()
+    for (const game of this.games.values()) {
+      if (game.status !== 'playing' || game.deadline === null || at < game.deadline) continue
+      const scorer = game.players.findIndex(uid => uid !== game.turn)
+      if (scorer < 0) continue
+      game.scores[scorer] += 1
+      game.rally = 0
+      game.turn = game.players[scorer]
+      game.deadline = at + 3000
+      if (game.scores[scorer] >= 5) {
+        game.status = 'ended'
+        game.turn = null
+        game.deadline = null
+      }
+      changed = true
+    }
+    return changed
   }
 
   snapshot(): OfficeSnapshot {
@@ -102,7 +208,18 @@ export class OfficeState {
       const visitor = this.visitors.get(uid)
       if (visitor) occupancy[objectId] = { uid, name: visitor.name }
     }
-    return { occupancy, games: {} }
+    const games: OfficeSnapshot['games'] = {}
+    for (const [objectId, game] of this.games) {
+      games[objectId] = {
+        players: game.players.map(uid => ({ uid, name: this.visitors.get(uid)?.name ?? 'Visitante' })),
+        turn: game.turn,
+        scores: [game.scores[0], game.scores[1]],
+        rally: game.rally,
+        deadline: game.deadline,
+        status: game.status,
+      }
+    }
+    return { occupancy, games }
   }
 
   private objectOccupiedBy(uid: string): string | null {

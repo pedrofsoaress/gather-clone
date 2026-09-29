@@ -6,6 +6,7 @@ import signal from '@/utils/signal'
 import { server } from '@/utils/backend/server'
 import type { OfficeSnapshot } from '@/utils/pixi/office/types'
 import OfficeBoard from './OfficeBoard'
+import PingPongPanel from './PingPongPanel'
 
 type OfficeHudProps = { objects: OfficeObject[], uid: string }
 
@@ -59,12 +60,12 @@ export default function OfficeHud({ objects, uid }: OfficeHudProps) {
     const hovered = objects.find((object) => object.id === hoverId)
     const occupant = active ? snapshot.occupancy[active.id] : undefined
 
-    const act = (objectId: string, action: 'occupy' | 'release') => {
+    const act = (objectId: string, action: 'occupy' | 'release' | 'drink' | 'snack' | 'startGame' | 'joinGame' | 'returnBall' | 'leaveGame') => {
         if (busy) return
         setBusy(true)
-        server.socket.emit('officeAction', { objectId, action }, (result: { ok: boolean, error?: string }) => {
+        server.socket.timeout(8000).emit('officeAction', { objectId, action }, (timeout: Error | null, result: { ok: boolean, error?: string }) => {
             setBusy(false)
-            if (!result?.ok) setFeedback(result?.error || 'Não foi possível completar a ação.')
+            if (timeout || !result?.ok) setFeedback(result?.error || 'Não foi possível completar a ação.')
         })
     }
 
@@ -100,7 +101,16 @@ export default function OfficeHud({ objects, uid }: OfficeHudProps) {
                     <p>Bem-vindo ao escritório Matte.</p>
                     <p>Clique em um ponto verde para ir até um objeto. Perto dele, use E ou o botão Interagir no celular.</p>
                     <p>Converse por proximidade e use a sala de reunião para uma conversa privada.</p>
-                </div> : !['seat', 'desk', 'board', 'guestbook'].includes(active.kind) && <p className="mt-4 text-sm text-slate-200">Você chegou ao objeto. As ações desta área aparecem aqui.</p>}
+                </div> : null}
+                {(active.kind === 'drink' || active.kind === 'snack') && <div className="mt-4 space-y-3">
+                    <p className="text-sm text-slate-200">{active.effect === 'coffee' ? 'Prepare um café para a pausa.' : active.effect === 'water' ? 'Pegue um copo d’água.' : 'Escolha um snack para a pausa.'}</p>
+                    <button type="button" disabled={busy} onClick={() => act(active.id, active.kind === 'snack' ? 'snack' : 'drink')}
+                        className="rounded-lg bg-teal-400 px-5 py-3 font-bold text-slate-950 disabled:opacity-50">
+                        {active.effect === 'coffee' ? 'Pegar café' : active.effect === 'water' ? 'Pegar água' : 'Pegar snack'}
+                    </button>
+                </div>}
+                {active.kind === 'pingpong' && <PingPongPanel game={snapshot.games[active.id]} uid={uid} busy={busy}
+                    onAction={action => act(active.id, action)} />}
                 {['board', 'desk', 'guestbook'].includes(active.kind) && <OfficeBoard key={active.id} object={active} />}
             </section>
         </div>}

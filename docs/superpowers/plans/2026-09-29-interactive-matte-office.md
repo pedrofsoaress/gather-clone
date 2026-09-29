@@ -360,6 +360,8 @@ returnBall(uid:string, objectId:string) {
 ```
 - [ ] **Step 5: Run tests/builds and a two-browser session: collect coffee, play a rally, leave/disconnect, verify visible state resets.** Commit: `git add ... && git commit -m "feat: animate appliances and add shared ping-pong"`.
 
+**User amendment (29 September):** Scale the avatar to match office chairs. Reaching a free desk or chair automatically occupies it and shows the avatar seated; moving away releases it. People at neighboring desks must share a proximity conversation. Cover auto-occupation and adjacent-desk proximity with failing then passing tests, and confirm the visuals in two browsers. Production Agora credentials are verified during Task 6.
+
 ## Task 6: Publication and acceptance on the current link
 
 **Files:** Modify `README.md` for controls and operations; no new application module.
