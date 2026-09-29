@@ -26,7 +26,10 @@ export const OfficeObjectSchema = z.object({
     width: z.number().int().positive(), height: z.number().int().positive(),
   }),
   approach: z.object({ x: z.number().int(), y: z.number().int() }),
-  seatVisual: z.object({ x: z.number(), y: z.number() }).optional(),
+  seatVisual: z.object({
+    x: z.number(), y: z.number(),
+    facing: z.enum(['up', 'down', 'left', 'right']).optional(),
+  }).optional(),
   effect: z.enum(['coffee', 'water', 'snack']).optional(),
 })
 

@@ -7,11 +7,7 @@ const TILE_SIZE = 32
 
 export class InteractionLayer {
     public readonly container = new PIXI.Container()
-    private readonly outline = new PIXI.Graphics()
-    private readonly label = new PIXI.Text({
-        text: '',
-        style: { fontFamily: 'nunito', fontSize: 15, fontWeight: 'bold', fill: 0xffffff },
-    })
+    private readonly hoverRing = new PIXI.Graphics()
     private readonly badges = new Map<string, PIXI.Graphics>()
     private readonly gameBalls = new Map<string, PIXI.Graphics>()
     private readonly gameTweens = new Map<string, gsap.core.Tween>()
@@ -24,9 +20,7 @@ export class InteractionLayer {
         onHover: (object: OfficeObject | null) => void,
     ) {
         this.container.eventMode = 'passive'
-        this.outline.eventMode = 'none'
-        this.label.eventMode = 'none'
-        this.label.visible = false
+        this.hoverRing.eventMode = 'none'
 
         for (const object of objects) {
             const { x, y, width, height } = object.bounds
@@ -45,8 +39,7 @@ export class InteractionLayer {
             })
             hitArea.on('pointerout', () => {
                 this.hovered = null
-                this.outline.clear()
-                this.label.visible = false
+                this.hoverRing.clear()
                 onHover(null)
             })
             this.container.addChild(hitArea)
@@ -72,20 +65,15 @@ export class InteractionLayer {
             }
         }
 
-        this.container.addChild(this.outline)
-        this.container.addChild(this.label)
+        this.container.addChild(this.hoverRing)
     }
 
     private showObject(object: OfficeObject) {
         this.hovered = object
-        const { x, y, width, height } = object.bounds
-        this.outline.clear()
-        this.outline.rect(x * TILE_SIZE, y * TILE_SIZE, width * TILE_SIZE, height * TILE_SIZE)
-        this.outline.stroke({ width: 2, color: 0x62e2c7, alpha: 0.95 })
-        const occupant = this.occupancy[object.id]
-        this.label.text = occupant ? `${object.label} · ${occupant.name}` : object.label
-        this.label.position.set(x * TILE_SIZE, Math.max(0, y * TILE_SIZE - 24))
-        this.label.visible = true
+        const { x, y, width } = object.bounds
+        this.hoverRing.clear()
+        this.hoverRing.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 12)
+        this.hoverRing.stroke({ width: 2, color: 0x62e2c7, alpha: 0.8 })
     }
 
     public setOccupancy(occupancy: Record<string, { uid: string, name: string }>) {
