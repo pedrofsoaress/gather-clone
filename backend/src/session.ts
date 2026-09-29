@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { kickPlayer } from './sockets/helpers'
 import { v4 as uuidv4 } from 'uuid'
+import { OfficeState } from './office/OfficeState'
 
 export type RealmData = {
     spawnpoint: {
@@ -132,10 +133,12 @@ export class Session {
     public players: { [key: string]: Player } = {}
     public id: string
     public map_data: RealmData 
+    public officeState: OfficeState
 
     constructor(id: string, mapData: RealmData) {
         this.id = id
         this.map_data = mapData 
+        this.officeState = new OfficeState(mapData.rooms[mapData.spawnpoint.roomIndex])
 
         for (let i = 0; i < mapData.rooms.length; i++) {
             this.playerRooms[i] = new Set<string>()
@@ -167,10 +170,12 @@ export class Session {
         }
         this.playerPositions[spawnIndex][coordKey].add(uid)
         this.players[uid] = player
+        this.officeState.addPlayer(uid, { x: spawnX, y: spawnY }, username)
     }
 
     public removePlayer(uid: string): void {
         if (!this.players[uid]) return
+        this.officeState.removePlayer(uid)
 
         const player = this.players[uid]
         this.playerRooms[player.room].delete(uid)
@@ -185,6 +190,7 @@ export class Session {
         if (!this.players[uid]) return []
 
         const player = this.players[uid]
+        this.officeState.removePlayer(uid)
 
         this.playerRooms[player.room].delete(uid)
         this.playerRooms[roomIndex].add(uid)
@@ -195,6 +201,7 @@ export class Session {
         }
 
         player.room = roomIndex
+        if (roomIndex === this.map_data.spawnpoint.roomIndex) this.officeState.addPlayer(uid, { x, y }, player.username)
         return this.movePlayer(uid, x, y)
     }
 

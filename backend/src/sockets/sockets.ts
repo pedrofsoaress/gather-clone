@@ -1,5 +1,5 @@
 import { Server } from 'socket.io'
-import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage } from './socket-types'
+import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, OfficeStep, OfficeAction } from './socket-types'
 import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
@@ -154,7 +154,37 @@ export function sockets(io: Server) {
             if (success) {
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
                 users.removeUser(uid)
+                io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
             }
+        })
+
+        socket.on('officeGetSnapshot', (ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            ack(session ? { ok: true, snapshot: session.officeState.snapshot() } : { ok: false, error: 'Fora do escritório.' })
+        })
+
+        socket.on('officeStep', (raw: unknown, ack: unknown) => {
+            const uid = socket.handshake.query.uid as string
+            const parsed = OfficeStep.safeParse(raw)
+            const session = sessionManager.getPlayerSession(uid)
+            const result = parsed.success && session
+                ? session.officeState.step(uid, parsed.data)
+                : { ok: false, error: 'Posição inválida.' }
+            if (typeof ack === 'function') ack(result)
+            if (result.ok && result.changed && session) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+        })
+
+        socket.on('officeAction', (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const uid = socket.handshake.query.uid as string
+            const parsed = OfficeAction.safeParse(raw)
+            const session = sessionManager.getPlayerSession(uid)
+            if (!parsed.success || !session) return ack({ ok: false, error: 'Ação inválida.' })
+            const result = session.officeState.apply(uid, parsed.data)
+            ack(result)
+            if (result.ok && result.changed) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
         })
 
         on('movePlayer', MovePlayer, ({ session, data }) => {  

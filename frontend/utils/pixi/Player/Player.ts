@@ -65,6 +65,7 @@ export class Player {
     private strikes: number = 0
 
     private currentChannel: string = 'local'
+    private seatMask: PIXI.Graphics | null = null
 
     constructor(skin: string, playApp: PlayApp, username: string, isLocal: boolean = false) {
         this.skin = skin
@@ -204,6 +205,8 @@ export class Player {
             return false
         }
 
+        this.setSeatedVisual(null)
+
         PIXI.Ticker.shared.remove(this.move)
 
         this.path = path
@@ -244,6 +247,7 @@ export class Player {
 
             if (this.isLocal) {
                 this.playApp.onLocalPlayerTileChanged(this.currentTilePosition)
+                server.socket.emit('officeStep', this.currentTilePosition)
             }
 
             this.pathIndex++
@@ -357,6 +361,26 @@ export class Player {
         const animatedSprite = this.parent.children[0] as PIXI.AnimatedSprite
         animatedSprite.textures = this.sheet.animations[state]
         animatedSprite.play()
+    }
+
+    public setSeatedVisual = (visual: { x: number, y: number } | null) => {
+        if (!this.initialized) return
+        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        if (this.seatMask) {
+            this.parent.removeChild(this.seatMask)
+            this.seatMask.destroy()
+            this.seatMask = null
+        }
+        sprite.position.set(visual ? (visual.x - this.currentTilePosition.x) * 32 : 0,
+            visual ? (visual.y - this.currentTilePosition.y) * 32 : 0)
+        if (!visual) return
+        this.changeAnimationState(`idle_${this.direction}` as AnimationState)
+        const mask = new PIXI.Graphics()
+        mask.roundRect(sprite.x - 10, sprite.y + 7, 20, 9, 3)
+        mask.fill({ color: 0x536c92, alpha: 0.98 })
+        mask.eventMode = 'none'
+        this.parent.addChild(mask)
+        this.seatMask = mask
     }
 
     public keydown = (event: KeyboardEvent) => {

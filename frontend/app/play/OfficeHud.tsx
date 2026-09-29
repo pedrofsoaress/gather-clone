@@ -3,14 +3,18 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OfficeObject } from '@/utils/pixi/types'
 import signal from '@/utils/signal'
+import { server } from '@/utils/backend/server'
+import type { OfficeSnapshot } from '@/utils/pixi/office/types'
 
-type OfficeHudProps = { objects: OfficeObject[] }
+type OfficeHudProps = { objects: OfficeObject[], uid: string }
 
-export default function OfficeHud({ objects }: OfficeHudProps) {
+export default function OfficeHud({ objects, uid }: OfficeHudProps) {
     const [openId, setOpenId] = useState<string | null>(null)
     const [nearbyId, setNearbyId] = useState<string | null>(null)
     const [hoverId, setHoverId] = useState<string | null>(null)
     const [feedback, setFeedback] = useState('')
+    const [snapshot, setSnapshot] = useState<OfficeSnapshot>({ occupancy: {}, games: {} })
+    const [busy, setBusy] = useState(false)
     const headingRef = useRef<HTMLHeadingElement>(null)
 
     useEffect(() => {
@@ -18,15 +22,18 @@ export default function OfficeHud({ objects }: OfficeHudProps) {
         const onNearby = ({ objectId }: { objectId: string | null }) => setNearbyId(objectId)
         const onHover = ({ objectId }: { objectId: string | null }) => setHoverId(objectId)
         const onFeedback = ({ message }: { message: string }) => setFeedback(message)
+        const onSnapshot = (next: OfficeSnapshot) => setSnapshot(next)
         signal.on('officeOpen', onOpen)
         signal.on('officeNearby', onNearby)
         signal.on('officeHover', onHover)
         signal.on('officeFeedback', onFeedback)
+        signal.on('officeSnapshot', onSnapshot)
         return () => {
             signal.off('officeOpen', onOpen)
             signal.off('officeNearby', onNearby)
             signal.off('officeHover', onHover)
             signal.off('officeFeedback', onFeedback)
+            signal.off('officeSnapshot', onSnapshot)
             signal.emit('disableInput', false)
         }
     }, [])
@@ -49,12 +56,22 @@ export default function OfficeHud({ objects }: OfficeHudProps) {
     const active = objects.find((object) => object.id === openId)
     const nearby = objects.find((object) => object.id === nearbyId)
     const hovered = objects.find((object) => object.id === hoverId)
+    const occupant = active ? snapshot.occupancy[active.id] : undefined
+
+    const act = (objectId: string, action: 'occupy' | 'release') => {
+        if (busy) return
+        setBusy(true)
+        server.socket.emit('officeAction', { objectId, action }, (result: { ok: boolean, error?: string }) => {
+            setBusy(false)
+            if (!result?.ok) setFeedback(result?.error || 'Não foi possível completar a ação.')
+        })
+    }
 
     if (objects.length === 0) return null
 
     return <>
         {!active && <div className="absolute right-3 top-3 z-20 rounded-xl border border-teal-300/40 bg-slate-950/85 px-3 py-2 text-sm text-white shadow-lg">
-            {hovered ? `Clique em ${hovered.label}` : nearby ? `E · ${nearby.label}` : 'Clique em um ponto verde para interagir'}
+            {hovered ? `Clique em ${hovered.label}${snapshot.occupancy[hovered.id] ? ` · ${snapshot.occupancy[hovered.id].name}` : ''}` : nearby ? `E · ${nearby.label}` : 'Clique em um ponto verde para interagir'}
         </div>}
         {!active && nearby && <button
             type="button"
@@ -70,11 +87,19 @@ export default function OfficeHud({ objects }: OfficeHudProps) {
                     <h2 ref={headingRef} tabIndex={-1} id="office-action-title" className="text-xl font-bold outline-none">{active.label}</h2>
                     <button type="button" aria-label="Fechar interação" className="rounded-lg bg-slate-700 px-3 py-1 hover:bg-slate-600" onClick={close}>Fechar</button>
                 </div>
+                {(active.kind === 'seat' || active.kind === 'desk') && <div className="mt-4 space-y-3">
+                    <p className="text-sm text-slate-200">{occupant ? `Ocupado por ${occupant.name}` : 'Lugar disponível.'}</p>
+                    <button type="button" disabled={busy || Boolean(occupant && occupant.uid !== uid)}
+                        onClick={() => act(active.id, occupant?.uid === uid ? 'release' : 'occupy')}
+                        className="rounded-lg bg-teal-400 px-4 py-2 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300">
+                        {occupant?.uid === uid ? 'Levantar' : occupant ? `Ocupado por ${occupant.name}` : 'Ocupar estação'}
+                    </button>
+                </div>}
                 {active.kind === 'guide' ? <div className="mt-4 space-y-2 text-sm text-slate-200">
                     <p>Bem-vindo ao escritório Matte.</p>
                     <p>Clique em um ponto verde para ir até um objeto. Perto dele, use E ou o botão Interagir no celular.</p>
                     <p>Converse por proximidade e use a sala de reunião para uma conversa privada.</p>
-                </div> : <p className="mt-4 text-sm text-slate-200">Você chegou ao objeto. As ações desta área aparecem aqui.</p>}
+                </div> : active.kind !== 'seat' && active.kind !== 'desk' && <p className="mt-4 text-sm text-slate-200">Você chegou ao objeto. As ações desta área aparecem aqui.</p>}
             </section>
         </div>}
     </>

@@ -10,9 +10,12 @@ export class InteractionLayer {
         text: '',
         style: { fontFamily: 'nunito', fontSize: 15, fontWeight: 'bold', fill: 0xffffff },
     })
+    private readonly badges = new Map<string, PIXI.Graphics>()
+    private occupancy: Record<string, { uid: string, name: string }> = {}
+    private hovered: OfficeObject | null = null
 
     constructor(
-        objects: OfficeObject[],
+        private readonly objects: OfficeObject[],
         onActivate: (id: string) => void,
         onHover: (object: OfficeObject | null) => void,
     ) {
@@ -37,6 +40,7 @@ export class InteractionLayer {
                 onHover(object)
             })
             hitArea.on('pointerout', () => {
+                this.hovered = null
                 this.outline.clear()
                 this.label.visible = false
                 onHover(null)
@@ -50,6 +54,7 @@ export class InteractionLayer {
             badge.fill(0xffffff)
             badge.eventMode = 'none'
             this.container.addChild(badge)
+            this.badges.set(object.id, badge)
         }
 
         this.container.addChild(this.outline)
@@ -57,13 +62,30 @@ export class InteractionLayer {
     }
 
     private showObject(object: OfficeObject) {
+        this.hovered = object
         const { x, y, width, height } = object.bounds
         this.outline.clear()
         this.outline.rect(x * TILE_SIZE, y * TILE_SIZE, width * TILE_SIZE, height * TILE_SIZE)
         this.outline.stroke({ width: 2, color: 0x62e2c7, alpha: 0.95 })
-        this.label.text = object.label
+        const occupant = this.occupancy[object.id]
+        this.label.text = occupant ? `${object.label} · ${occupant.name}` : object.label
         this.label.position.set(x * TILE_SIZE, Math.max(0, y * TILE_SIZE - 24))
         this.label.visible = true
+    }
+
+    public setOccupancy(occupancy: Record<string, { uid: string, name: string }>) {
+        this.occupancy = occupancy
+        for (const [id, badge] of this.badges) {
+            const object = this.objects.find(item => item.id === id)
+            if (!object) continue
+            const { x, y, width } = object.bounds
+            badge.clear()
+            badge.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 7)
+            badge.fill({ color: occupancy[id] ? 0xf2a64b : 0x1cae9b, alpha: 0.95 })
+            badge.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 3)
+            badge.fill(0xffffff)
+        }
+        if (this.hovered) this.showObject(this.hovered)
     }
 
     public destroy() {

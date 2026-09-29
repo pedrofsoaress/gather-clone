@@ -11,6 +11,7 @@ import { bfs } from './pathfinding'
 import { canApproach } from './office/approach.mjs'
 import { isWithinMap, nearestObject } from './office/geometry'
 import { InteractionLayer } from './office/InteractionLayer'
+import type { OfficeSnapshot } from './office/types'
 
 export class PlayApp extends App {
     private scale: number = 1.5
@@ -34,6 +35,7 @@ export class PlayApp extends App {
     public proximityId: string | null = null
     private interactionLayer: InteractionLayer | null = null
     private pendingOfficeObjectId: string | null = null
+    private officeSnapshot: OfficeSnapshot = { occupancy: {}, games: {} }
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -68,6 +70,7 @@ export class PlayApp extends App {
             (id) => this.requestOfficeObject(id),
             (object) => signal.emit('officeHover', { objectId: object?.id ?? null }),
         )
+        this.interactionLayer.setOccupancy(this.officeSnapshot.occupancy)
         this.app.stage.addChild(this.interactionLayer.container)
     }
 
@@ -106,6 +109,19 @@ export class PlayApp extends App {
         const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
         const nearby = nearestObject(objects, position.x, position.y, 2)
         signal.emit('officeNearby', { objectId: nearby?.id ?? null })
+    }
+
+    private onOfficeStateChanged = (snapshot: OfficeSnapshot) => {
+        if (!snapshot || !snapshot.occupancy) return
+        this.officeSnapshot = snapshot
+        this.interactionLayer?.setOccupancy(snapshot.occupancy)
+        const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
+        for (const [uid, player] of [[this.uid, this.player] as const, ...Object.entries(this.players) as [string, Player][]]) {
+            const occupiedId = Object.keys(snapshot.occupancy).find(id => snapshot.occupancy[id].uid === uid)
+            const object = objects.find(item => item.id === occupiedId)
+            player.setSeatedVisual(object?.seatVisual ?? null)
+        }
+        signal.emit('officeSnapshot', snapshot)
     }
 
     public onLocalPlayerStopped = () => {
@@ -220,6 +236,9 @@ export class PlayApp extends App {
         otherPlayer.setPosition(x, y)
         this.layers.object.addChild(otherPlayer.parent)
         this.players[uid] = otherPlayer
+        const occupiedId = Object.keys(this.officeSnapshot.occupancy).find(id => this.officeSnapshot.occupancy[id].uid === uid)
+        const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find(item => item.id === occupiedId)
+        otherPlayer.setSeatedVisual(object?.seatVisual ?? null)
         this.sortObjectsByY()
     }
 
@@ -238,6 +257,9 @@ export class PlayApp extends App {
         this.setUpFadeOverlay()
         this.setUpSignalListeners()
         this.setUpSocketEvents()
+        server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => {
+            if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot)
+        })
 
         this.fadeOut()
     }
@@ -542,6 +564,7 @@ export class PlayApp extends App {
     }
 
     private setUpSocketEvents = () => {
+        server.socket.on('officeStateChanged', this.onOfficeStateChanged)
         server.socket.on('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.on('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.on('playerMoved', this.onPlayerMoved)
@@ -554,6 +577,7 @@ export class PlayApp extends App {
     }
 
     private removeSocketEvents = () => {
+        server.socket.off('officeStateChanged', this.onOfficeStateChanged)
         server.socket.off('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.off('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.off('playerMoved', this.onPlayerMoved)
