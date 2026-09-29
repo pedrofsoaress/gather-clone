@@ -1,6 +1,6 @@
 'use client'
 import React, { useEffect, useState } from 'react'
-import PixiApp from './PixiApp'
+import dynamic from 'next/dynamic'
 import { RealmData } from '@/utils/pixi/types'
 import PlayNavbar from './PlayNavbar'
 import { useModal } from '../hooks/useModal'
@@ -9,6 +9,8 @@ import IntroScreen from './IntroScreen'
 import VideoBar from '@/components/VideoChat/VideoBar'
 import { AgoraVideoChatProvider } from '../hooks/useVideoChat'
 import OfficeHud from './OfficeHud'
+
+const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 
 type PlayClientProps = {
     mapData: RealmData

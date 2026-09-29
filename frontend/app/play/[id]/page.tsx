@@ -3,7 +3,7 @@ import NotFound from '@/app/not-found'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import { getPlayRealmData } from '@/utils/supabase/getPlayRealmData'
-import PlayClient from '../PlayClient'
+import PlayClient from '../PlayClientLoader'
 import { updateVisitedRealms } from '@/utils/supabase/updateVisitedRealms'
 import { formatEmailToName } from '@/utils/formatEmailToName'
 
