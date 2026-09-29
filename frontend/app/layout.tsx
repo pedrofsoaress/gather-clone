@@ -1,17 +1,10 @@
-import { Nunito_Sans, DM_Sans } from 'next/font/google'
+import localFont from 'next/font/local'
 import "./globals.css";
 import Layout from '@/components/Layout/Layout'
 
-const nunito = Nunito_Sans({
-    subsets: ['latin'],
-    weight: ['400', '500', '600', '700'],
-    adjustFontFallback: false,
-})
-
-const dmSans = DM_Sans({
-    subsets: ['latin'],
-    weight: ['400', '500', '600', '700'],
-    adjustFontFallback: false,
+const nunito = localFont({
+    src: '../public/fonts/nunito.ttf',
+    display: 'swap',
 })
 
 const defaultUrl = process.env.VERCEL_URL
@@ -30,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR" className={dmSans.className}>
+    <html lang="pt-BR" className={nunito.className}>
       <body>
         <Layout>
             {children}
