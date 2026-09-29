@@ -68,7 +68,7 @@ export class PlayApp extends App {
             (id) => this.requestOfficeObject(id),
             (object) => signal.emit('officeHover', { objectId: object?.id ?? null }),
         )
-        this.app.stage.addChildAt(this.interactionLayer.container, this.app.stage.getChildIndex(this.layers.object))
+        this.app.stage.addChild(this.interactionLayer.container)
     }
 
     public requestOfficeObject = (id: string): boolean => {
@@ -231,6 +231,7 @@ export class PlayApp extends App {
         this.setScale(this.scale)
         this.app.renderer.on('resize', this.resizeEvent)
         this.fadeTileContainer.alpha = 0
+        this.fadeTileContainer.eventMode = 'none'
         this.app.stage.addChild(this.fadeTileContainer)
         this.clickEvents()
         this.setUpKeyboardEvents()
@@ -278,6 +279,7 @@ export class PlayApp extends App {
     }
 
     private setUpFadeOverlay = () => {
+        this.fadeOverlay.eventMode = 'none'
         this.fadeOverlay.rect(0, 0, this.app.screen.width * (1 / this.scale), this.app.screen.height * (1 / this.scale))
         this.fadeOverlay.fill(0x0F0F0F)
         this.app.stage.addChild(this.fadeOverlay)
