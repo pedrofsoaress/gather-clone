@@ -1,5 +1,5 @@
 import { Server } from 'socket.io'
-import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage } from './socket-types'
+import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, OfficeStep, OfficeAction, OfficeReadNotes, OfficeAddNote } from './socket-types'
 import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
@@ -7,8 +7,10 @@ import { sessionManager } from '../session'
 import { removeExtraSpaces } from '../utils'
 import { kickPlayer } from './helpers'
 import { formatEmailToName } from '../utils'
+import { OfficeNotes, validNoteObject } from '../office/OfficeNotes'
 
 const joiningInProgress = new Set<string>()
+const officeNotes = new OfficeNotes(supabase)
 
 function protectConnection(io: Server) {
     io.use(async (socket, next) => {
@@ -34,6 +36,12 @@ function protectConnection(io: Server) {
 
 export function sockets(io: Server) {
     protectConnection(io)
+
+    setInterval(() => {
+        for (const session of sessionManager.activeSessions()) {
+            if (session.officeState.expire()) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+        }
+    }, 250).unref()
 
     // Handle a connection
     io.on('connection', (socket) => {
@@ -80,12 +88,14 @@ export function sockets(io: Server) {
                 joiningInProgress.delete(uid)
             }
 
-            if (JoinRealm.safeParse(realmData).success === false) {
+            const joinRequest = JoinRealm.safeParse(realmData)
+            if (!joinRequest.success) {
                 return rejectJoin('Invalid request data.')
             }
 
             if (joiningInProgress.has(uid)) {
-                rejectJoin('Already joining a space.')
+                socket.emit('failedToJoinRoom', 'Already joining a space.')
+                return
             }
             joiningInProgress.add(uid)
 
@@ -120,7 +130,7 @@ export function sockets(io: Server) {
                 }
 
                 const user = users.getUser(uid)!
-                const username = formatEmailToName(user.user_metadata.email)
+                const username = joinRequest.data.displayName ?? formatEmailToName(user.user_metadata.email)
                 sessionManager.addPlayerToSession(socket.id, realmData.realmId, uid, username, profile.skin)
                 const newSession = sessionManager.getPlayerSession(uid)
                 const player = newSession.getPlayer(uid)   
@@ -154,6 +164,105 @@ export function sockets(io: Server) {
             if (success) {
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
                 users.removeUser(uid)
+                io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+            }
+        })
+
+        socket.on('officeGetSnapshot', (ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            ack(session ? { ok: true, snapshot: session.officeState.snapshot() } : { ok: false, error: 'Fora do escritório.' })
+        })
+
+        let officeStepQueue = Promise.resolve()
+        let lastOfficeStepAt = -Infinity
+        socket.on('officeStep', (raw: unknown, ack: unknown) => {
+            officeStepQueue = officeStepQueue.then(async () => {
+                const uid = socket.handshake.query.uid as string
+                const parsed = OfficeStep.safeParse(raw)
+                const session = sessionManager.getPlayerSession(uid)
+                if (!parsed.success || !session || session.getPlayer(uid)?.socketId !== socket.id) {
+                    if (typeof ack === 'function') ack({ ok: false, error: 'Posição inválida.' })
+                    return
+                }
+
+                const waitMs = Math.max(0, lastOfficeStepAt + 80 - Date.now())
+                if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs))
+                if (session.getPlayer(uid)?.socketId !== socket.id) {
+                    if (typeof ack === 'function') ack({ ok: false, error: 'Visitante desconectado.' })
+                    return
+                }
+                const result = session.officeState.step(uid, parsed.data)
+                if (result.ok) lastOfficeStepAt = Date.now()
+                if (typeof ack === 'function') ack(result)
+                if (result.ok && result.changed) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+            }).catch(error => {
+                console.error('officeStep failed', error)
+                if (typeof ack === 'function') ack({ ok: false, error: 'Não foi possível mover.' })
+            })
+        })
+
+        socket.on('officeAction', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const uid = socket.handshake.query.uid as string
+            const parsed = OfficeAction.safeParse(raw)
+            const session = sessionManager.getPlayerSession(uid)
+            if (!parsed.success || !session || session.getPlayer(uid)?.socketId !== socket.id) return ack({ ok: false, error: 'Ação inválida.' })
+            const result = session.officeState.apply(uid, parsed.data)
+            ack(result)
+            if (result.changed) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+            if (result.ok && result.effect) io.to(session.id).emit('officeEffect', {
+                objectId: parsed.data.objectId, effect: result.effect, uid, name: session.getPlayer(uid).username,
+            })
+        })
+
+        const noteTarget = (objectId: string) => {
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            const player = session?.getPlayer(uid)
+            if (!session || !player || player.socketId !== socket.id) return null
+            const room = session.map_data.rooms[player.room]
+            if (!room || !validNoteObject(room, objectId) || !session.officeState.isNear(uid, objectId)) return null
+            const object = session.officeState.getObject(objectId)
+            if (!object || !['board', 'desk', 'guestbook'].includes(object.kind)) return null
+            return { session, player, object }
+        }
+
+        socket.on('officeReadNotes', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const parsed = OfficeReadNotes.safeParse(raw)
+            const target = parsed.success ? noteTarget(parsed.data.objectId) : null
+            if (!parsed.success || !target) return ack({ ok: false, error: 'Aproxime-se do objeto para usá-lo.' })
+            try {
+                const notes = await officeNotes.list(target.session.id, target.object.id)
+                ack({ ok: true, notes })
+            } catch {
+                ack({ ok: false, error: 'Não foi possível carregar os recados.' })
+            }
+        })
+
+        socket.on('officeAddNote', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const parsed = OfficeAddNote.safeParse(raw)
+            const target = parsed.success ? noteTarget(parsed.data.objectId) : null
+            if (!parsed.success || !target) return ack({ ok: false, error: 'Aproxime-se do objeto para usá-lo.' })
+            try {
+                const result = await officeNotes.add({
+                    realmId: target.session.id,
+                    objectId: target.object.id,
+                    uid: target.player.uid,
+                    author: target.player.username,
+                    kind: target.object.kind as 'board' | 'desk' | 'guestbook',
+                    body: parsed.data.body,
+                })
+                ack(result)
+                if (result.ok && result.note) io.to(target.session.id).emit('officeNoteCreated', result.note)
+            } catch {
+                ack({ ok: false, error: 'Não foi possível salvar o recado.' })
             }
         })
 

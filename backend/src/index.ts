@@ -6,6 +6,7 @@ import { sockets } from './sockets/sockets'
 import routes from './routes/routes'
 import { supabase } from './supabase'
 import { sessionManager } from './session'
+import { kickPlayer } from './sockets/helpers'
 
 require('dotenv').config()
 
@@ -40,12 +41,12 @@ function onRealmUpdate(payload: any) {
         refresh = true
     }
     if (refresh) {
-        sessionManager.terminateSession(id, "This realm has been changed by the owner.")
+        sessionManager.terminateSession(id, "This realm has been changed by the owner.", kickPlayer)
     }
 }
 
 function onRealmDelete(payload: any) {
-    sessionManager.terminateSession(payload.old.id, "This realm is no longer available.")
+    sessionManager.terminateSession(payload.old.id, "This realm is no longer available.", kickPlayer)
 }
 
 supabase

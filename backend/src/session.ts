@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { kickPlayer } from './sockets/helpers'
 import { v4 as uuidv4 } from 'uuid'
+import { OfficeState } from './office/OfficeState'
 
 export type RealmData = {
     spawnpoint: {
@@ -13,6 +13,7 @@ export type RealmData = {
 
 export interface Room {
     name: string,
+    interactions?: OfficeObject[],
     tilemap: {
         [key: `${number}, ${number}`]: {
             floor?: string,
@@ -27,6 +28,16 @@ export interface Room {
         }
     }
     channelId?: string
+}
+
+export interface OfficeObject {
+    id: string,
+    kind: 'guide' | 'seat' | 'desk' | 'board' | 'drink' | 'snack' | 'guestbook' | 'pingpong',
+    label: string,
+    bounds: { x: number, y: number, width: number, height: number },
+    approach: { x: number, y: number },
+    seatVisual?: { x: number, y: number },
+    effect?: 'coffee' | 'water' | 'snack',
 }
 
 export interface Player {
@@ -65,6 +76,10 @@ export class SessionManager {
         return this.sessions[id]
     }
 
+    public activeSessions(): Session[] {
+        return Object.values(this.sessions)
+    }
+
     public getPlayerSession(uid: string): Session {
         const realmId = this.playerIdToRealmId[uid]
         return this.sessions[realmId]
@@ -99,7 +114,7 @@ export class SessionManager {
         return true
     }
 
-    public terminateSession(id: string, reason: string) {
+    public terminateSession(id: string, reason: string, kickPlayer: (uid: string, reason: string) => void) {
         const session = this.sessions[id]
         if (!session) return
 
@@ -121,10 +136,12 @@ export class Session {
     public players: { [key: string]: Player } = {}
     public id: string
     public map_data: RealmData 
+    public officeState: OfficeState
 
     constructor(id: string, mapData: RealmData) {
         this.id = id
         this.map_data = mapData 
+        this.officeState = new OfficeState(mapData.rooms[mapData.spawnpoint.roomIndex])
 
         for (let i = 0; i < mapData.rooms.length; i++) {
             this.playerRooms[i] = new Set<string>()
@@ -156,10 +173,12 @@ export class Session {
         }
         this.playerPositions[spawnIndex][coordKey].add(uid)
         this.players[uid] = player
+        this.officeState.addPlayer(uid, { x: spawnX, y: spawnY }, username)
     }
 
     public removePlayer(uid: string): void {
         if (!this.players[uid]) return
+        this.officeState.removePlayer(uid)
 
         const player = this.players[uid]
         this.playerRooms[player.room].delete(uid)
@@ -174,6 +193,7 @@ export class Session {
         if (!this.players[uid]) return []
 
         const player = this.players[uid]
+        this.officeState.removePlayer(uid)
 
         this.playerRooms[player.room].delete(uid)
         this.playerRooms[roomIndex].add(uid)
@@ -184,6 +204,7 @@ export class Session {
         }
 
         player.room = roomIndex
+        if (roomIndex === this.map_data.spawnpoint.roomIndex) this.officeState.addPlayer(uid, { x, y }, player.username)
         return this.movePlayer(uid, x, y)
     }
 
@@ -284,7 +305,7 @@ export class Session {
 
     private getProximityTiles(x: number, y: number): string[] {
         const proximityTiles: string[] = []
-        const range = 3
+        const range = 6
 
         for (let dx = -range; dx <= range; dx++) {
             for (let dy = -range; dy <= range; dy++) {
