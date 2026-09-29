@@ -1,92 +1,84 @@
-// Generates the public Matte office using sprites that ship with the app.
+// Generates the public Matte office. The artwork lives in frontend/public.
 // Run with `node scripts/matte-office-map.mjs > /tmp/matte-office.json`.
 
-const width = 34
-const height = 24
+const width = 50
+const height = 30
 const tilemap = {}
 
+for (let y = 0; y < height; y++) {
+  for (let x = 0; x < width; x++) tilemap[`${x}, ${y}`] = {}
+}
+
 function tile(x, y) {
-  const key = `${x}, ${y}`
-  tilemap[key] ??= {}
-  return tilemap[key]
+  return tilemap[`${x}, ${y}`]
 }
 
-function floorRect(x1, y1, x2, y2, floor) {
+function block(x1, y1, x2, y2) {
   for (let y = y1; y <= y2; y++) {
-    for (let x = x1; x <= x2; x++) tile(x, y).floor = floor
+    for (let x = x1; x <= x2; x++) tile(x, y).impassable = true
   }
 }
 
-function furniture(x, y, name) {
-  tile(x, y).above_floor = `village-${name}`
-}
-
-floorRect(0, 0, width - 1, height - 1, 'city-light_concrete')
-
-// Perimeter and a clear central path from the entrance to reception.
-for (let x = 0; x < width; x++) {
-  for (const y of [0, height - 1]) {
-    Object.assign(tile(x, y), { floor: 'city-dark_bricks_h', impassable: true })
-  }
-}
-for (let y = 1; y < height - 1; y++) {
-  for (const x of [0, width - 1]) {
-    Object.assign(tile(x, y), { floor: 'city-dark_bricks_v', impassable: true })
+function open(x1, y1, x2, y2) {
+  for (let y = y1; y <= y2; y++) {
+    for (let x = x1; x <= x2; x++) delete tile(x, y).impassable
   }
 }
 
-floorRect(14, 2, 19, 22, 'city-dark_concrete')
-floorRect(11, 2, 22, 7, 'city-light_bricks_h')
-floorRect(2, 9, 12, 19, 'city-light_bricks_v')
-floorRect(21, 9, 31, 19, 'city-light_bricks_h')
-floorRect(3, 20, 12, 22, 'city-light_bricks_h')
+// Perimeter, partitions, and open doors between the rooms.
+block(0, 0, 49, 0)
+block(0, 29, 49, 29)
+block(0, 0, 0, 29)
+block(49, 0, 49, 29)
+block(1, 9, 16, 9)
+open(6, 9, 9, 9)
+block(18, 9, 31, 9)
+open(23, 9, 26, 9)
+block(34, 9, 48, 9)
+open(39, 9, 42, 9)
+block(1, 17, 17, 17)
+open(6, 17, 10, 17)
+block(33, 17, 48, 17)
+open(39, 17, 43, 17)
+block(17, 19, 17, 26)
+open(17, 25, 17, 26)
+block(32, 19, 32, 26)
+open(32, 25, 32, 26)
 
-// Reception: a desk and waiting benches.
-for (const x of [15, 16, 17, 18]) furniture(x, 4, 'table')
-furniture(16, 6, 'chair_up')
-furniture(17, 6, 'chair_up')
-furniture(12, 5, 'bench_left')
-furniture(13, 5, 'bench_right')
-furniture(20, 5, 'bench_left')
-furniture(21, 5, 'bench_right')
+// Furniture is drawn in the background image; these rectangles keep players
+// from walking across desks, tables, sofas, counters, and the ping-pong table.
+block(3, 1, 9, 3)     // lounge bookshelf
+block(5, 4, 10, 6)    // lounge sofa
+block(7, 7, 8, 7)     // lounge coffee table
+block(21, 3, 28, 7)   // boardroom table
+block(35, 1, 47, 4)   // kitchen counter and vending machines
+block(37, 5, 41, 7)   // kitchen table
+block(43, 6, 47, 8)   // kitchen bar
+for (const y of [11, 14]) {
+  block(5, y, 9, y + 1)
+  block(11, y, 15, y + 1)
+  block(35, y, 39, y + 1)
+  block(41, y, 45, y + 1)
+}
+block(22, 12, 28, 15) // shared project table
+block(2, 19, 5, 21)   // workshop shelves
+block(5, 22, 11, 24)  // workshop workbench
+block(21, 20, 28, 22) // reception desk
+block(35, 21, 38, 25) // ping-pong table
+block(42, 21, 47, 23) // games lounge sofa
 
-// Two banks of individual workstations. The central aisle remains open.
-for (const y of [11, 15]) {
-  for (const x of [4, 9]) {
-    furniture(x, y, 'table')
-    furniture(x + 1, y, 'table')
-    furniture(x, y + 1, 'chair_down')
-    furniture(x + 1, y + 1, 'chair_down')
-  }
-}
-
-// Meeting area: every walkable tile shares a private audio channel.
-for (let y = 9; y <= 19; y++) {
-  for (let x = 21; x <= 31; x++) tile(x, y).privateAreaId = 'matte-reuniao'
-}
-for (let x = 24; x <= 28; x++) {
-  furniture(x, 13, 'table')
-  furniture(x, 14, 'table')
-}
-for (const x of [24, 26, 28]) {
-  furniture(x, 12, 'chair_up')
-  furniture(x, 15, 'chair_down')
-}
-furniture(23, 13, 'chair_right')
-furniture(29, 13, 'chair_left')
-
-// Small lounge and plants soften the shared space.
-for (const [x, y] of [[4, 21], [7, 21], [10, 21]]) {
-  furniture(x, y, 'bench_left')
-  furniture(x + 1, y, 'bench_right')
-}
-for (const [x, y] of [[2, 2], [31, 2], [2, 21], [31, 21], [7, 5], [26, 5]]) {
-  tile(x, y).above_floor = 'grasslands-blue_flower_2'
+// A private voice channel for the glass-walled boardroom.
+for (let y = 1; y <= 8; y++) {
+  for (let x = 18; x <= 31; x++) tile(x, y).privateAreaId = 'matte-boardroom'
 }
 
 const map = {
-  rooms: [{ name: 'Escritório Matte', tilemap }],
-  spawnpoint: { roomIndex: 0, x: 16, y: 10 },
+  rooms: [{
+    name: 'Escritório Matte',
+    backgroundImage: { src: '/matte-office-v2.png', width: width * 32, height: height * 32 },
+    tilemap,
+  }],
+  spawnpoint: { roomIndex: 0, x: 25, y: 18 },
 }
 
 if (process.argv[1]?.endsWith('matte-office-map.mjs')) {

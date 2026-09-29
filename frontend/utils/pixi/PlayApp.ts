@@ -31,6 +31,9 @@ export class PlayApp extends App {
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
+        if (realmData.rooms[realmData.spawnpoint.roomIndex]?.backgroundImage) {
+            this.scale = 1
+        }
         this.uid = uid
         this.realmId = realmId
         this.player = new Player(skin, this, username, true)

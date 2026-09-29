@@ -21,6 +21,11 @@ const RoomSchema = z.object({
   name: z.string(),
   tilemap: TileMapSchema,
   channelId: z.string().optional(),
+  backgroundImage: z.object({
+    src: z.string().startsWith('/'),
+    width: z.number().positive(),
+    height: z.number().positive(),
+  }).optional(),
 })
 
 const SpawnpointSchema = z.object({

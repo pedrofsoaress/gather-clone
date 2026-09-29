@@ -7,6 +7,7 @@ PIXI.TextureStyle.defaultOptions.scaleMode = 'nearest'
 export class App {
     protected app: PIXI.Application = new PIXI.Application()
     protected initialized: boolean = false
+    protected backgroundLayer: PIXI.Container = new PIXI.Container()
     protected layers: { [key in Layer]: PIXI.Container } = {
         floor: new PIXI.Container(),
         above_floor: new PIXI.Container(),
@@ -34,6 +35,8 @@ export class App {
         })
         this.initialized = true
 
+        this.backgroundLayer.eventMode = 'none'
+        this.app.stage.addChild(this.backgroundLayer)
         this.app.stage.addChild(this.layers.floor)
         this.app.stage.addChild(this.layers.above_floor)
         this.app.stage.addChild(this.layers.object)
@@ -41,10 +44,19 @@ export class App {
 
     protected async loadRoomFromData(room: Room) {
         // Clear the current room
+        this.backgroundLayer.removeChildren()
         this.layers.floor.removeChildren()
         this.layers.above_floor.removeChildren()
         this.layers.object.removeChildren()
         this.collidersFromSpritesMap = {}
+
+        if (room.backgroundImage) {
+            const texture = await PIXI.Assets.load(room.backgroundImage.src)
+            const background = new PIXI.Sprite(texture)
+            background.width = room.backgroundImage.width
+            background.height = room.backgroundImage.height
+            this.backgroundLayer.addChild(background)
+        }
 
         for (const [tilePoint, tileData] of Object.entries(room.tilemap)) {
             const floor = tileData.floor
