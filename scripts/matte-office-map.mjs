@@ -72,11 +72,46 @@ for (let y = 1; y <= 8; y++) {
   for (let x = 18; x <= 31; x++) tile(x, y).privateAreaId = 'matte-boardroom'
 }
 
+function officeObject(id, kind, label, [x, y, width, height], [approachX, approachY], extra = {}) {
+  return {
+    id, kind, label,
+    bounds: { x, y, width, height },
+    approach: { x: approachX, y: approachY },
+    ...extra,
+  }
+}
+
+const interactions = [
+  officeObject('lounge-books', 'guide', 'Estante do lounge', [2, 1, 8, 3], [10, 3]),
+  officeObject('lounge-sofa', 'seat', 'Sofá do lounge', [5, 4, 6, 3], [11, 6], { seatVisual: { x: 8, y: 5 } }),
+  officeObject('boardroom-table', 'board', 'Mesa da reunião', [21, 3, 8, 5], [25, 8]),
+  officeObject('coffee', 'drink', 'Café', [35, 1, 6, 4], [35, 5], { effect: 'coffee' }),
+  officeObject('water', 'drink', 'Água', [41, 1, 2, 4], [42, 5], { effect: 'water' }),
+  officeObject('vending', 'snack', 'Máquina de snacks', [43, 1, 5, 4], [46, 5], { effect: 'snack' }),
+  officeObject('kitchen-table', 'seat', 'Mesa da cozinha', [37, 5, 5, 3], [37, 8], { seatVisual: { x: 39, y: 6 } }),
+  officeObject('desk-left-1', 'desk', 'Mesa esquerda 1', [5, 11, 5, 2], [7, 13], { seatVisual: { x: 7, y: 13 } }),
+  officeObject('desk-left-2', 'desk', 'Mesa esquerda 2', [11, 11, 5, 2], [13, 13], { seatVisual: { x: 13, y: 13 } }),
+  officeObject('desk-left-3', 'desk', 'Mesa esquerda 3', [5, 14, 5, 2], [7, 16], { seatVisual: { x: 7, y: 16 } }),
+  officeObject('desk-left-4', 'desk', 'Mesa esquerda 4', [11, 14, 5, 2], [13, 16], { seatVisual: { x: 13, y: 16 } }),
+  officeObject('desk-right-1', 'desk', 'Mesa direita 1', [35, 11, 5, 2], [37, 13], { seatVisual: { x: 37, y: 13 } }),
+  officeObject('desk-right-2', 'desk', 'Mesa direita 2', [41, 11, 5, 2], [43, 13], { seatVisual: { x: 43, y: 13 } }),
+  officeObject('desk-right-3', 'desk', 'Mesa direita 3', [35, 14, 5, 2], [37, 16], { seatVisual: { x: 37, y: 16 } }),
+  officeObject('desk-right-4', 'desk', 'Mesa direita 4', [41, 14, 5, 2], [43, 16], { seatVisual: { x: 43, y: 16 } }),
+  officeObject('project-table', 'board', 'Mesa de projetos', [22, 12, 7, 4], [25, 16]),
+  officeObject('workshop-shelves', 'guide', 'Prateleiras da oficina', [2, 19, 4, 3], [6, 20]),
+  officeObject('workbench', 'board', 'Bancada de ideias', [5, 22, 7, 3], [8, 25]),
+  officeObject('reception', 'guestbook', 'Recepção', [21, 20, 8, 3], [25, 19]),
+  officeObject('reception-seats', 'seat', 'Poltronas da recepção', [22, 23, 7, 3], [25, 26], { seatVisual: { x: 25, y: 24 } }),
+  officeObject('pingpong', 'pingpong', 'Pingue-pongue', [35, 21, 4, 5], [34, 23]),
+  officeObject('games-sofa', 'seat', 'Sofá dos jogos', [42, 21, 6, 3], [42, 24], { seatVisual: { x: 44, y: 22 } }),
+]
+
 const map = {
   rooms: [{
     name: 'Escritório Matte',
     backgroundImage: { src: '/matte-office-v2.png', width: width * 32, height: height * 32 },
     tilemap,
+    interactions,
   }],
   spawnpoint: { roomIndex: 0, x: 25, y: 18 },
 }

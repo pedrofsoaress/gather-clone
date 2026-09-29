@@ -1,5 +1,5 @@
 import { Sprite } from 'pixi.js'
-import { RoomSchema, RealmDataSchema } from './zod'
+import { RoomSchema, RealmDataSchema, OfficeObjectSchema } from './zod'
 import { z } from 'zod'
 
 export type Tool = 'None' | 'Hand' | 'ZoomIn' | 'ZoomOut' | 'Tile'  | 'Eraser'
@@ -13,6 +13,8 @@ export type TilePoint = `${number}, ${number}`
 export type RealmData = z.infer<typeof RealmDataSchema>
 
 export type Room = z.infer<typeof RoomSchema>
+
+export type OfficeObject = z.infer<typeof OfficeObjectSchema>
 
 export interface ColliderMap {
     [key: TilePoint]: boolean

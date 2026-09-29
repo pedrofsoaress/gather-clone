@@ -13,6 +13,7 @@ export type RealmData = {
 
 export interface Room {
     name: string,
+    interactions?: OfficeObject[],
     tilemap: {
         [key: `${number}, ${number}`]: {
             floor?: string,
@@ -27,6 +28,16 @@ export interface Room {
         }
     }
     channelId?: string
+}
+
+export interface OfficeObject {
+    id: string,
+    kind: 'guide' | 'seat' | 'desk' | 'board' | 'drink' | 'snack' | 'guestbook' | 'pingpong',
+    label: string,
+    bounds: { x: number, y: number, width: number, height: number },
+    approach: { x: number, y: number },
+    seatVisual?: { x: number, y: number },
+    effect?: 'coffee' | 'water' | 'snack',
 }
 
 export interface Player {
