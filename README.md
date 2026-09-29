@@ -57,7 +57,7 @@ Lastly, run `npm run dev` in both the `frontend` and `backend` directories.
 
 ### Deployment
 
-This fork is published at [gather-clone-beta.vercel.app](https://gather-clone-beta.vercel.app/). The Vercel project is connected to this fork's `main` branch.
+This fork is published at [gather-clone-beta.vercel.app](https://gather-clone-beta.vercel.app/). The Vercel project is connected to this fork's `main` branch. Its Socket.io backend is live at [gather-clone-backend.onrender.com](https://gather-clone-backend.onrender.com/).
 
 The Next.js frontend runs on Vercel with `frontend` as the project root. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_BASE_URL`, `NEXT_PUBLIC_BACKEND_URL`, `SERVICE_ROLE`, `NEXT_PUBLIC_AGORA_APP_ID`, and `APP_CERTIFICATE` in the Vercel project. `SERVICE_ROLE` and `APP_CERTIFICATE` must remain server-side secrets.
 
