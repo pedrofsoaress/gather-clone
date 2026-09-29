@@ -63,12 +63,14 @@ function RemoteUser({ user }: { user: RemoteUser }) {
 
     const containerRef = useRef<HTMLDivElement>(null)
     const [skin, setSkin] = useState<string>('')
+    const [name, setName] = useState<string>('Visitante')
 
     useEffect(() => {
-        const onVideoSkin = (data: { skin: string, uid: string }) => {
+        const onVideoSkin = (data: { skin: string, uid: string, name?: string }) => {
             const slicedUid = user.user.uid.toString().slice(0, 36)
             if (data.uid === slicedUid) {
                 setSkin(data.skin)
+                if (data.name) setName(data.name)
             }
         }
 
@@ -102,7 +104,7 @@ function RemoteUser({ user }: { user: RemoteUser }) {
             <div ref={containerRef} id={`remote-user-${user.uid}`} className='w-full h-full'></div>
             <p className='absolute bottom-1 left-2 bg-black bg-opacity-70 rounded-full z-10 text-xs p-1 px-2 select-none flex flex-row items-center gap-1'>
                 {!user.micEnabled && <MicrophoneSlash className='w-3 h-3 text-[#FF2F49]' />}
-                {user.uid.slice(36)}
+                {name}
             </p>
         </div>
     )

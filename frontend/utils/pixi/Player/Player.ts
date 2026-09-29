@@ -7,6 +7,7 @@ import { server } from '../../backend/server'
 import { defaultSkin, skins } from './skins'
 import signal from '@/utils/signal'
 import { videoChat } from '@/utils/video-chat/video-chat'
+import { agoraUidForProfile } from '@/utils/video-chat/agoraIdentity'
 const AVATAR_SCALE = 1.5
 function formatText(message: string, maxLength: number): string {
     message = message.trim()
@@ -313,14 +314,14 @@ export class Player {
         if (tile && tile.privateAreaId) {
             if (tile.privateAreaId !== this.currentChannel) {
                 this.currentChannel = tile.privateAreaId
-                videoChat.joinChannel(tile.privateAreaId, this.playApp.uid + this.username, this.playApp.realmId)
+                videoChat.joinChannel(tile.privateAreaId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId)
                 this.playApp.fadeInTiles(tile.privateAreaId)
             }
         } else {
             if (this.playApp.proximityId) {
                 if (this.playApp.proximityId !== this.currentChannel) {
                     this.currentChannel = this.playApp.proximityId
-                    videoChat.joinChannel(this.playApp.proximityId, this.playApp.uid + this.username, this.playApp.realmId)
+                    videoChat.joinChannel(this.playApp.proximityId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId)
                     this.playApp.fadeOutTiles()
                 }
             } else if (this.currentChannel !== 'local') {

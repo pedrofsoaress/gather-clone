@@ -238,6 +238,7 @@ export class PlayApp extends App {
         otherPlayer.setPosition(x, y)
         this.layers.object.addChild(otherPlayer.parent)
         this.players[uid] = otherPlayer
+        this.emitVideoProfile(uid)
         const occupiedId = Object.keys(this.officeSnapshot.occupancy).find(id => this.officeSnapshot.occupancy[id].uid === uid)
         const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find(item => item.id === occupiedId)
         otherPlayer.setSeatedVisual(object?.seatVisual ?? null)
@@ -472,6 +473,7 @@ export class PlayApp extends App {
         signal.emit('video-skin', {
             skin: data.skin,
             uid: data.uid,
+            name: player?.username,
         })
     }
 
@@ -509,10 +511,16 @@ export class PlayApp extends App {
     private getSkinForUid = (uid: string) => {
         const player = this.players[uid]
         if (!player) return
+        this.emitVideoProfile(uid)
+    }
 
+    private emitVideoProfile = (uid: string) => {
+        const player = this.players[uid]
+        if (!player) return
         signal.emit('video-skin', {
             skin: player.skin,
             uid: uid,
+            name: player.username,
         })
     }
 
