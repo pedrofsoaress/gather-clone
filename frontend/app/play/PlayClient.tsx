@@ -8,6 +8,7 @@ import signal from '@/utils/signal'
 import IntroScreen from './IntroScreen'
 import VideoBar from '@/components/VideoChat/VideoBar'
 import { AgoraVideoChatProvider } from '../hooks/useVideoChat'
+import OfficeHud from './OfficeHud'
 
 type PlayClientProps = {
     mapData: RealmData
@@ -69,6 +70,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
                     initialSkin={skin} 
                 />
                 <PlayNavbar username={username} skin={skin}/>
+                <OfficeHud objects={mapData.rooms[mapData.spawnpoint.roomIndex].interactions ?? []} />
             </div>}
             {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={username} setShowIntroScreen={setShowIntroScreen}/>}    
         </AgoraVideoChatProvider>

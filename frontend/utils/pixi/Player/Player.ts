@@ -169,6 +169,13 @@ export class Player {
         this.currentTilePosition = { x, y }
     }
 
+    public isAtTile(x: number, y: number): boolean {
+        const position = this.convertTilePosToPlayerPos(x, y)
+        return this.targetPosition === null &&
+            Math.abs(this.parent.x - position.x) < 1 &&
+            Math.abs(this.parent.y - position.y) < 1
+    }
+
     private convertTilePosToPlayerPos = (x: number, y: number) => {
         return {
             x: (x * 32) + 16,
@@ -183,8 +190,8 @@ export class Player {
         }
     }
 
-    public moveToTile = (x: number, y: number) => {
-        if (this.strikes > 25) return
+    public moveToTile = (x: number, y: number): boolean => {
+        if (this.strikes > 25) return false
 
         const start: Coordinate = [this.currentTilePosition.x, this.currentTilePosition.y]
         const end: Coordinate = [x, y]
@@ -194,7 +201,7 @@ export class Player {
             if (!path && !this.isLocal) {
                 this.strikes++
             }
-            return
+            return false
         }
 
         PIXI.Ticker.shared.remove(this.move)
@@ -207,6 +214,7 @@ export class Player {
         if (this.isLocal) {
             server.socket.emit('movePlayer', { x, y })
         }
+        return true
     }
 
     private move = ({ deltaTime }: { deltaTime: number }) => {
@@ -233,6 +241,10 @@ export class Player {
         if (distance < speed) {
             this.parent.x = this.targetPosition.x
             this.parent.y = this.targetPosition.y
+
+            if (this.isLocal) {
+                this.playApp.onLocalPlayerTileChanged(this.currentTilePosition)
+            }
 
             this.pathIndex++
             if (this.pathIndex < this.path.length) {
@@ -319,6 +331,7 @@ export class Player {
 
         if (this.isLocal) {
             this.changeAnimationState(`idle_${this.direction}` as AnimationState)
+            this.playApp.onLocalPlayerStopped()
         } else {
             // if player doesnt move for x secs, do idle animation
             setTimeout(() => {

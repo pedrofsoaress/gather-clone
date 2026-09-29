@@ -39,7 +39,8 @@ const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, access_t
             await app.init()
             setModal('None')
             const pixiApp = app.getApp()
-            
+            pixiApp.canvas.tabIndex = 0
+            pixiApp.canvas.setAttribute('aria-label', 'Escritório virtual Matte')
             document.getElementById('app-container')!.appendChild(pixiApp.canvas)
         }
 
