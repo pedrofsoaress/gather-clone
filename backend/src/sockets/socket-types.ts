@@ -23,6 +23,10 @@ export const Teleport = z.object({
 export const ChangedSkin = z.string()
 
 export const NewMessage = z.string()
+export const ChatMessage = z.object({
+    channel: z.enum(['public', 'nearby']),
+    text: z.string().trim().min(1).max(300).regex(/^[^\u0000-\u001f\u007f]+$/u),
+})
 
 export const OfficeStep = z.object({ x: z.number().int(), y: z.number().int() })
 export const OfficeAction = z.object({

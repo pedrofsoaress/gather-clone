@@ -5,6 +5,7 @@ import { useEffect } from 'react'
 import { RealmData } from '@/utils/pixi/types'
 import { useModal } from '../hooks/useModal'
 import { server } from '@/utils/backend/server'
+import signal from '@/utils/signal'
 
 type PixiAppProps = {
     className?: string
@@ -41,6 +42,7 @@ const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, access_t
             await app.init()
             if (cancelled) return
             setModal('None')
+            signal.emit('officeReady')
             const pixiApp = app.getApp()
             pixiApp.canvas.tabIndex = 0
             pixiApp.canvas.setAttribute('aria-label', 'Escritório virtual Matte')

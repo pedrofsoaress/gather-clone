@@ -63,8 +63,14 @@ export default function OfficeHud({ objects, uid }: OfficeHudProps) {
     const act = (objectId: string, action: 'occupy' | 'release' | 'drink' | 'snack' | 'startGame' | 'joinGame' | 'returnBall' | 'leaveGame') => {
         if (busy) return
         setBusy(true)
-        server.socket.timeout(8000).emit('officeAction', { objectId, action }, (timeout: Error | null, result: { ok: boolean, error?: string }) => {
+        server.socket.timeout(8000).emit('officeAction', { objectId, action }, (timeout: Error | null, result: { ok: boolean, error?: string, verifiedPosition?: { x: number, y: number } }) => {
             setBusy(false)
+            if (!timeout && !result?.ok && action === 'occupy' && result?.error === 'Aproxime-se do objeto.' && result.verifiedPosition) {
+                setOpenId(null)
+                signal.emit('disableInput', false)
+                signal.emit('officeResync', { objectId, position: result.verifiedPosition })
+                return
+            }
             if (timeout || !result?.ok) setFeedback(result?.error || 'Não foi possível completar a ação.')
         })
     }

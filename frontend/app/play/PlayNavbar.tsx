@@ -1,5 +1,5 @@
 import React from 'react'
-import { TShirt } from '@phosphor-icons/react'
+import { TShirt, MonitorArrowUp } from '@phosphor-icons/react'
 import { useModal } from '../hooks/useModal'
 import signal from '@/utils/signal'
 import { ArrowLeftEndOnRectangleIcon } from '@heroicons/react/24/outline'
@@ -7,7 +7,7 @@ import Link from 'next/link'
 import MicAndCameraButtons from '@/components/VideoChat/MicAndCameraButtons'
 import { useVideoChat } from '../hooks/useVideoChat'
 import AnimatedCharacter from './SkinMenu/AnimatedCharacter'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { videoChat } from '@/utils/video-chat/video-chat'
 
 type PlayNavbarProps = {
@@ -19,7 +19,8 @@ type PlayNavbarProps = {
 const PlayNavbar:React.FC<PlayNavbarProps> = ({ username, skin }) => {
 
     const { setModal } = useModal()
-    const { isCameraMuted } = useVideoChat()
+    const { isCameraMuted, isScreenSharing, toggleScreenShare } = useVideoChat()
+    const [screenError, setScreenError] = useState('')
     function onClickSkinButton() {
         setModal('Skin')
         signal.emit('requestSkin')
@@ -47,6 +48,8 @@ const PlayNavbar:React.FC<PlayNavbarProps> = ({ username, skin }) => {
                 </div>
             </div>
             <MicAndCameraButtons />
+            <button type="button" onClick={() => { setScreenError(''); void toggleScreenShare().catch(error => setScreenError(error instanceof Error ? error.message : 'Não foi possível compartilhar a tela.')) }} aria-label={isScreenSharing ? 'Parar compartilhamento de tela' : 'Compartilhar tela'} title={isScreenSharing ? 'Parar compartilhamento' : 'Compartilhar tela na chamada'} className={`flex h-10 items-center gap-2 rounded-lg px-2 text-sm text-white outline-none hover:bg-light-secondary ${isScreenSharing ? 'bg-teal-700' : 'bg-secondary'}`}><MonitorArrowUp size={24}/><span className="hidden md:inline">{isScreenSharing ? 'Parar tela' : 'Compartilhar tela'}</span></button>
+            {screenError && <p role="status" className="absolute bottom-16 left-3 max-w-sm rounded-lg bg-slate-950 px-3 py-2 text-sm text-amber-200 shadow-lg">{screenError}</p>}
             <button className='aspect-square grid place-items-center rounded-lg p-1 outline-none bg-secondary hover:bg-light-secondary ml-auto animate-colors' onClick={onClickSkinButton}>
                 <TShirt className='h-8 w-8'/>
             </button>

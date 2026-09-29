@@ -238,12 +238,8 @@ export class Player {
         const currentPos = this.convertPlayerPosToTilePos(this.parent.x, this.parent.y)
         this.checkIfShouldJoinChannel(currentPos)
 
-        this.currentTilePosition = {
-            x: this.path[this.pathIndex][0],
-            y: this.path[this.pathIndex][1]
-        }
-
-        if (this.isLocal && this.playApp.hasTeleport(this.currentTilePosition.x, this.currentTilePosition.y) && this.movementMode === 'keyboard') {
+        const arrivingTile = { x: this.path[this.pathIndex][0], y: this.path[this.pathIndex][1] }
+        if (this.isLocal && this.playApp.hasTeleport(arrivingTile.x, arrivingTile.y) && this.movementMode === 'keyboard') {
             this.setFrozen(true)
         }
 
@@ -256,6 +252,7 @@ export class Player {
         if (distance < speed) {
             this.parent.x = this.targetPosition.x
             this.parent.y = this.targetPosition.y
+            this.currentTilePosition = arrivingTile
 
             if (this.isLocal) {
                 this.playApp.onLocalPlayerTileChanged(this.currentTilePosition)

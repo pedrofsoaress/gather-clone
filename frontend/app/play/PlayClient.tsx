@@ -9,6 +9,7 @@ import IntroScreen from './IntroScreen'
 import VideoBar from '@/components/VideoChat/VideoBar'
 import { AgoraVideoChatProvider } from '../hooks/useVideoChat'
 import OfficeHud from './OfficeHud'
+import OfficeChat from './OfficeChat'
 
 const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 
@@ -79,6 +80,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
                 />
                 <PlayNavbar username={displayName} skin={skin}/>
                 <OfficeHud objects={mapData.rooms[mapData.spawnpoint.roomIndex].interactions ?? []} uid={uid} />
+                <OfficeChat uid={uid} />
             </div>}
             {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={(chosenName) => {
                 window.localStorage.setItem(`matte-office-name:${uid}`, chosenName)

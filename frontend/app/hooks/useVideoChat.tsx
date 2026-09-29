@@ -11,6 +11,8 @@ interface VideoChatContextType {
     toggleMicrophone: () => void
     isCameraMuted: boolean
     isMicMuted: boolean
+    isScreenSharing: boolean
+    toggleScreenShare: () => Promise<void>
 }
 
 const VideoChatContext = createContext<VideoChatContextType | undefined>(undefined)
@@ -43,6 +45,13 @@ export const AgoraVideoChatProvider: React.FC<AgoraVideoChatProviderProps> = ({ 
 const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
     const [isCameraMuted, setIsCameraMuted] = useState(true)
     const [isMicMuted, setIsMicMuted] = useState(true)
+    const [isScreenSharing, setIsScreenSharing] = useState(false)
+
+    useEffect(() => {
+        const onChange = (sharing: boolean) => setIsScreenSharing(sharing)
+        signal.on('screen-share-changed', onChange)
+        return () => { signal.off('screen-share-changed', onChange) }
+    }, [])
 
     useEffect(() => {
         return () => {
@@ -60,11 +69,18 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
         setIsMicMuted(muted)
     }
 
+    const toggleScreenShare = async () => {
+        if (isScreenSharing) await videoChat.stopScreenShare()
+        else await videoChat.startScreenShare()
+    }
+
     const value: VideoChatContextType = {
         toggleCamera,
         toggleMicrophone,
         isCameraMuted,
         isMicMuted,
+        isScreenSharing,
+        toggleScreenShare,
     }
 
     return (

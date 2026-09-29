@@ -1,4 +1,4 @@
-import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IAgoraRTCRemoteUser, IDataChannelConfig } from 'agora-rtc-sdk-ng'
+import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IAgoraRTCRemoteUser, IDataChannelConfig, ILocalVideoTrack } from 'agora-rtc-sdk-ng'
 import signal from '../signal'
 import { createHash } from 'crypto'
 import { generateToken } from './generateToken'
@@ -7,6 +7,7 @@ export class VideoChat {
     private client: IAgoraRTCClient = AgoraRTC.createClient({ codec: "vp8", mode: "rtc" })
     private microphoneTrack: IMicrophoneAudioTrack | null = null
     private cameraTrack: ICameraVideoTrack | null = null
+    private screenTrack: ILocalVideoTrack | null = null
     private currentChannel: string = ''
 
     private remoteUsers: { [uid: string]: IAgoraRTCRemoteUser } = {}
@@ -49,6 +50,7 @@ export class VideoChat {
         if (mediaType === 'audio') {
             user.audioTrack?.stop()
         }
+        if (mediaType === 'video') signal.emit('user-info-updated', user)
     }
 
     public onUserLeft = (user: IAgoraRTCRemoteUser, reason: string) => {
@@ -61,7 +63,7 @@ export class VideoChat {
             this.cameraTrack = await AgoraRTC.createCameraVideoTrack()
             this.cameraTrack.play('local-video')
 
-            if (this.client.connectionState === 'CONNECTED') {
+            if (this.client.connectionState === 'CONNECTED' && !this.screenTrack) {
                 await this.client.publish([this.cameraTrack])
             }
 
@@ -69,7 +71,7 @@ export class VideoChat {
         }
         await this.cameraTrack.setEnabled(!this.cameraTrack.enabled)
 
-        if (this.client.connectionState === 'CONNECTED' && this.cameraTrack.enabled) {
+        if (this.client.connectionState === 'CONNECTED' && this.cameraTrack.enabled && !this.screenTrack) {
             await this.client.publish([this.cameraTrack])
         }
 
@@ -99,6 +101,35 @@ export class VideoChat {
         }
     }
 
+    public get isConnected() { return this.client.connectionState === 'CONNECTED' }
+
+    public async startScreenShare() {
+        if (this.screenTrack) return
+        if (!this.isConnected) throw new Error('Aproxime-se de alguém para iniciar uma chamada antes de compartilhar a tela.')
+        const track = await AgoraRTC.createScreenVideoTrack({}, 'disable')
+        try {
+            if (this.cameraTrack?.enabled) await this.client.unpublish(this.cameraTrack)
+            await this.client.publish(track)
+            this.screenTrack = track
+            track.on('track-ended', () => { void this.stopScreenShare() })
+            signal.emit('screen-share-changed', true)
+        } catch (error) {
+            track.close()
+            if (this.cameraTrack?.enabled && this.isConnected) await this.client.publish(this.cameraTrack).catch(() => {})
+            throw error
+        }
+    }
+
+    public async stopScreenShare() {
+        const track = this.screenTrack
+        if (!track) return
+        this.screenTrack = null
+        if (this.isConnected) await this.client.unpublish(track).catch(() => {})
+        track.close()
+        if (this.cameraTrack?.enabled && this.isConnected) await this.client.publish(this.cameraTrack).catch(() => {})
+        signal.emit('screen-share-changed', false)
+    }
+
     private resetRemoteUsers() {
         this.remoteUsers = {}
         signal.emit('reset-users')
@@ -126,7 +157,9 @@ export class VideoChat {
             if (this.microphoneTrack && this.microphoneTrack.enabled) {
                 await this.client.publish([this.microphoneTrack])
             }
-            if (this.cameraTrack && this.cameraTrack.enabled) {
+            if (this.screenTrack) {
+                await this.client.publish(this.screenTrack)
+            } else if (this.cameraTrack && this.cameraTrack.enabled) {
                 await this.client.publish([this.cameraTrack])
             }
         }, 1000)
@@ -140,6 +173,8 @@ export class VideoChat {
         this.channelTimeout = setTimeout(async () => {
             if (this.currentChannel === '') return
 
+            await this.stopScreenShare()
+
             if (this.client.connectionState === 'CONNECTED') {
                 await this.client.leave()
                 this.currentChannel = ''
@@ -150,6 +185,11 @@ export class VideoChat {
     }
 
     public destroy() {
+        if (this.screenTrack) {
+            this.screenTrack.close()
+            this.screenTrack = null
+            signal.emit('screen-share-changed', false)
+        }
         if (this.cameraTrack) {
             this.cameraTrack.stop()
             this.cameraTrack.close()

@@ -484,6 +484,7 @@ export class PlayApp extends App {
         signal.on('message', this.onMessage)
         signal.on('getSkinForUid', this.getSkinForUid)
         signal.on('officeRequest', this.onOfficeRequest)
+        signal.on('officeResync', this.onOfficeResync)
     }
 
     private removeSignalListeners = () => {
@@ -493,10 +494,17 @@ export class PlayApp extends App {
         signal.off('message', this.onMessage)
         signal.off('getSkinForUid', this.getSkinForUid)
         signal.off('officeRequest', this.onOfficeRequest)
+        signal.off('officeResync', this.onOfficeResync)
     }
 
     private onOfficeRequest = ({ objectId }: { objectId: string }) => {
         this.requestOfficeObject(objectId)
+    }
+
+    private onOfficeResync = ({ objectId, position }: { objectId: string, position: Point }) => {
+        this.player.setPosition(position.x, position.y)
+        this.onLocalPlayerTileChanged(position)
+        requestAnimationFrame(() => this.requestOfficeObject(objectId))
     }
 
     private onRequestSkin = () => {

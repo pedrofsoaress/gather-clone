@@ -1,5 +1,5 @@
 import { Server } from 'socket.io'
-import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, OfficeStep, OfficeAction, OfficeReadNotes, OfficeAddNote } from './socket-types'
+import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, ChatMessage, OfficeStep, OfficeAction, OfficeReadNotes, OfficeAddNote } from './socket-types'
 import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
@@ -8,6 +8,8 @@ import { removeExtraSpaces } from '../utils'
 import { kickPlayer } from './helpers'
 import { formatEmailToName } from '../utils'
 import { OfficeNotes, validNoteObject } from '../office/OfficeNotes'
+import { canReceiveNearbyChat } from '../office/chat'
+import { randomUUID } from 'crypto'
 
 const joiningInProgress = new Set<string>()
 const officeNotes = new OfficeNotes(supabase)
@@ -211,7 +213,7 @@ export function sockets(io: Server) {
             const session = sessionManager.getPlayerSession(uid)
             if (!parsed.success || !session || session.getPlayer(uid)?.socketId !== socket.id) return ack({ ok: false, error: 'Ação inválida.' })
             const result = session.officeState.apply(uid, parsed.data)
-            ack(result)
+            ack(result.ok ? result : { ...result, verifiedPosition: session.officeState.verifiedPosition(uid) })
             if (result.changed) io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
             if (result.ok && result.effect) io.to(session.id).emit('officeEffect', {
                 objectId: parsed.data.objectId, effect: result.effect, uid, name: session.getPlayer(uid).username,
@@ -330,6 +332,34 @@ export function sockets(io: Server) {
 
             const uid = socket.handshake.query.uid as string
             emit('receiveMessage', { uid, message })
+        })
+
+        let lastChatAt = 0
+        socket.on('sendChatMessage', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const parsed = ChatMessage.safeParse(raw)
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            const sender = session?.getPlayer(uid)
+            if (!parsed.success || !session || !sender || sender.socketId !== socket.id) {
+                return ack({ ok: false, error: 'Mensagem inválida.' })
+            }
+            if (Date.now() - lastChatAt < 500) return ack({ ok: false, error: 'Aguarde um instante antes de enviar outra mensagem.' })
+            const { channel } = parsed.data
+            const text = removeExtraSpaces(parsed.data.text)
+            const senderPosition = session.officeState.verifiedPosition(uid)
+            const recipients = session.getPlayersInRoom(sender.room).filter(recipient => {
+                if (channel === 'public') return true
+                return canReceiveNearbyChat(senderPosition, session.officeState.verifiedPosition(recipient.uid))
+            })
+            if (channel === 'nearby' && recipients.length < 2) {
+                return ack({ ok: false, error: 'Não há ninguém perto para receber esta mensagem.' })
+            }
+            const message = { id: randomUUID(), channel, text, uid, name: sender.username, sentAt: Date.now() }
+            lastChatAt = Date.now()
+            emitToSocketIds(recipients.map(recipient => recipient.socketId), 'receiveChatMessage', message)
+            ack({ ok: true })
         })
     })
 }

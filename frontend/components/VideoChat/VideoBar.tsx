@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
 import signal from '@/utils/signal'
-import { MicrophoneSlash } from '@phosphor-icons/react'
+import { ArrowsOut, ArrowsIn, MicrophoneSlash } from '@phosphor-icons/react'
 import AnimatedCharacter from '@/app/play/SkinMenu/AnimatedCharacter'
 
 interface RemoteUser {
@@ -64,6 +64,7 @@ function RemoteUser({ user }: { user: RemoteUser }) {
     const containerRef = useRef<HTMLDivElement>(null)
     const [skin, setSkin] = useState<string>('')
     const [name, setName] = useState<string>('Visitante')
+    const [expanded, setExpanded] = useState(false)
 
     useEffect(() => {
         const onVideoSkin = (data: { skin: string, uid: string, name?: string }) => {
@@ -95,7 +96,7 @@ function RemoteUser({ user }: { user: RemoteUser }) {
     }, [user])
 
     return (
-        <div className='w-[233px] h-[130px] bg-[#0f0f1d] bg-opacity-90 rounded-lg overflow-hidden relative'>
+        <div className={`${expanded ? 'fixed left-1/2 top-1/2 z-50 h-[min(70vh,700px)] w-[min(90vw,1200px)] -translate-x-1/2 -translate-y-1/2 shadow-2xl' : 'relative h-[130px] w-[233px]'} overflow-hidden rounded-lg bg-[#0f0f1d] bg-opacity-90`}>
             <div className='absolute w-full h-full grid place-items-center'>
                 <div className='w-[48px] h-[48px] bg-[#222222] rounded-full border-2 border-[#424A61] grid place-items-center overflow-hidden'>
                     {skin && <AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className='w-full h-full relative bottom-1'/>}
@@ -106,6 +107,7 @@ function RemoteUser({ user }: { user: RemoteUser }) {
                 {!user.micEnabled && <MicrophoneSlash className='w-3 h-3 text-[#FF2F49]' />}
                 {name}
             </p>
+            {user.cameraEnabled && <button type="button" aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo ou tela compartilhada'} onClick={() => setExpanded(value => !value)} className="absolute right-2 top-2 z-10 rounded-lg bg-black/70 p-2 text-white hover:bg-black">{expanded ? <ArrowsIn size={18}/> : <ArrowsOut size={18}/>}</button>}
         </div>
     )
 }
