@@ -49,6 +49,7 @@ export class Player {
     public username: string = ''
     public parent: PIXI.Container = new PIXI.Container()
     private textMessage: PIXI.Text = new PIXI.Text({})
+    private usernameText: PIXI.Text | null = null
     private textTimeout: NodeJS.Timeout | null = null
 
     private animationState: AnimationState = 'idle_down'
@@ -70,6 +71,10 @@ export class Player {
     private currentChannel: string = 'local'
     private seatMask: PIXI.Graphics | null = null
     private seatTween: gsap.core.Tween | null = null
+    private directionBeforeSeat: Direction | null = null
+    private currentSeatKey: string | null = null
+    private seatOffset: Point = { x: 0, y: 0 }
+    private pendingSeatVisual: { x: number, y: number, facing?: Direction } | null = null
 
     constructor(skin: string, playApp: PlayApp, username: string, isLocal: boolean = false) {
         this.skin = skin
@@ -120,6 +125,7 @@ export class Player {
         text.scale.set(0.07)
         text.y = 8
         this.parent.addChild(text)
+        this.usernameText = text
     }
 
     public setMessage(message: string) {
@@ -145,7 +151,8 @@ export class Player {
         text.anchor.x = 0.5
         text.anchor.y = 0
         text.scale.set(0.07)
-        text.y = -text.height - 42
+        text.x = this.seatOffset.x
+        text.y = this.seatOffset.y - text.height - 42
         this.parent.addChild(text)
         this.textMessage = text
 
@@ -349,6 +356,11 @@ export class Player {
                 }
             }, 100)
         }
+        if (this.pendingSeatVisual) {
+            const visual = this.pendingSeatVisual
+            this.pendingSeatVisual = null
+            this.setSeatedVisual(visual)
+        }
     }
 
     private teleportIfOnTeleporter = (movementMode: 'keyboard' | 'mouse') => {
@@ -368,32 +380,55 @@ export class Player {
         animatedSprite.play()
     }
 
-    public setSeatedVisual = (visual: { x: number, y: number } | null) => {
+    public setSeatedVisual = (visual: { x: number, y: number, facing?: Direction } | null) => {
         if (!this.initialized) return
+        this.pendingSeatVisual = visual && this.targetPosition ? visual : null
+        if (this.pendingSeatVisual) return
+        const seatKey = visual ? `${visual.x},${visual.y},${visual.facing ?? ''},${this.currentTilePosition.x},${this.currentTilePosition.y}` : null
+        if (seatKey === this.currentSeatKey) return
+        this.currentSeatKey = seatKey
         const sprite = this.parent.children[0] as PIXI.AnimatedSprite
         this.seatTween?.kill()
         this.seatTween = null
         if (this.seatMask) {
+            sprite.mask = null
             this.parent.removeChild(this.seatMask)
             this.seatMask.destroy()
             this.seatMask = null
         }
         if (!visual) {
             sprite.position.set(0, 0)
+            sprite.scale.set(AVATAR_SCALE)
+            this.seatOffset = { x: 0, y: 0 }
+            this.usernameText?.position.set(0, 8)
+            this.textMessage.position.set(0, -this.textMessage.height - 42)
+            if (this.directionBeforeSeat) {
+                this.direction = this.directionBeforeSeat
+                this.directionBeforeSeat = null
+                this.changeAnimationState(`idle_${this.direction}` as AnimationState)
+            }
             return
         }
-        const x = (visual.x - this.currentTilePosition.x) * 32
-        const y = (visual.y - this.currentTilePosition.y) * 32
+        const seatPosition = this.convertTilePosToPlayerPos(visual.x, visual.y)
+        const x = seatPosition.x - this.parent.x
+        const y = seatPosition.y - this.parent.y
+        this.seatOffset = { x, y }
+        if (!this.directionBeforeSeat) this.directionBeforeSeat = this.direction
+        this.direction = visual.facing ?? this.direction
         this.changeAnimationState(`idle_${this.direction}` as AnimationState)
         this.seatTween = gsap.to(sprite.position, {
             x, y, duration: 0.22, ease: 'power2.out',
             onComplete: () => {
                 const mask = new PIXI.Graphics()
-                mask.roundRect(x - 15, y + 6, 30, 12, 3)
-                mask.fill({ color: 0x536c92, alpha: 0.98 })
+                mask.rect(x - 36, y - 72, 72, 57)
+                mask.fill(0xffffff)
                 mask.eventMode = 'none'
                 this.parent.addChild(mask)
+                sprite.scale.set(AVATAR_SCALE, AVATAR_SCALE * 0.86)
+                sprite.mask = mask
                 this.seatMask = mask
+                this.usernameText?.position.set(x, y - 68)
+                this.textMessage.position.set(x, y - this.textMessage.height - 78)
                 this.seatTween = null
             }
         })
@@ -444,5 +479,6 @@ export class Player {
     public destroy() {
         PIXI.Ticker.shared.remove(this.move)
         this.seatTween?.kill()
+        this.seatMask?.destroy()
     }
 }

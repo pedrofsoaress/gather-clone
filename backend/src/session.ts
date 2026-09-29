@@ -36,7 +36,7 @@ export interface OfficeObject {
     label: string,
     bounds: { x: number, y: number, width: number, height: number },
     approach: { x: number, y: number },
-    seatVisual?: { x: number, y: number },
+    seatVisual?: { x: number, y: number, facing?: 'up' | 'down' | 'left' | 'right' },
     effect?: 'coffee' | 'water' | 'snack',
 }
 
