@@ -41,6 +41,7 @@ export class InteractionLayer {
             hitArea.on('pointerout', () => {
                 this.hovered = null
                 this.hoverRing.clear()
+                this.updateBadgeVisibility()
                 onHover(null)
             })
             this.container.addChild(hitArea)
@@ -51,6 +52,7 @@ export class InteractionLayer {
             badge.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 3)
             badge.fill(0xffffff)
             badge.eventMode = 'none'
+            badge.visible = object.kind !== 'seat' && object.kind !== 'desk'
             this.container.addChild(badge)
             this.badges.set(object.id, badge)
 
@@ -71,10 +73,20 @@ export class InteractionLayer {
 
     private showObject(object: OfficeObject) {
         this.hovered = object
+        this.updateBadgeVisibility()
         const { x, y, width } = object.bounds
         this.hoverRing.clear()
         this.hoverRing.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 12)
         this.hoverRing.stroke({ width: 2, color: 0x62e2c7, alpha: 0.8 })
+    }
+
+    private updateBadgeVisibility() {
+        for (const [id, badge] of this.badges) {
+            const object = this.objects.find(item => item.id === id)
+            if (!object) continue
+            const isSeat = object.kind === 'seat' || object.kind === 'desk'
+            badge.visible = !this.occupancy[id] && (!isSeat || this.hovered?.id === id)
+        }
     }
 
     public setOccupancy(occupancy: Record<string, { uid: string, name: string }>) {
@@ -84,7 +96,6 @@ export class InteractionLayer {
             if (!object) continue
             // The occupied seat itself shows who is there. A badge at the top of
             // its hit area otherwise lands directly on the seated avatar's head.
-            badge.visible = !occupancy[id]
             const { x, y, width } = object.bounds
             badge.clear()
             badge.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 7)
@@ -92,6 +103,7 @@ export class InteractionLayer {
             badge.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 3)
             badge.fill(0xffffff)
         }
+        this.updateBadgeVisibility()
         if (this.hovered) this.showObject(this.hovered)
     }
 
