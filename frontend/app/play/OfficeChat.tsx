@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import { ChatCircleDots, PaperPlaneTilt, X } from '@phosphor-icons/react'
 import signal from '@/utils/signal'
 import { server } from '@/utils/backend/server'
+import { setOfficeInputLock } from '@/utils/pixi/office/input-locks'
 
 type Channel = 'public' | 'nearby'
 type ChatMessage = { id: string, channel: Channel, text: string, uid: string, name: string, sentAt: number }
@@ -45,7 +46,10 @@ export default function OfficeChat({ uid, meetingMode = false, open, onOpenChang
     }, [])
 
     useEffect(() => { if (open) { setUnread(0); endRef.current?.scrollIntoView({ block: 'end' }) } }, [open, channel, messages])
-    useEffect(() => { signal.emit('disableInput', open) }, [open])
+    useEffect(() => {
+        setOfficeInputLock('chat', open)
+        return () => setOfficeInputLock('chat', false)
+    }, [open])
 
     const send = (event: FormEvent) => {
         event.preventDefault()

@@ -39,5 +39,8 @@ export const OfficeExternalGet = z.object({ objectId: z.string().min(1).max(64) 
 export const OfficeExternalSetRoom = z.object({ objectId: z.string().min(1).max(64), url: z.string().min(1).max(2048), revision: z.number().int().min(0) })
 export const PresentationTarget = z.object({ objectId: z.string().min(1).max(64) })
 export const PresentationSlide = PresentationTarget.extend({ index: z.number().int().min(0), revision: z.number().int().min(0) })
+export const SpeakerTarget = z.object({ objectId: z.string().min(1).max(64) })
+export const AvatarAction = z.object({ action: z.enum(['idle', 'dance', 'pet']), objectId: z.string().min(1).max(64).optional() })
+export const AvatarRun = z.object({ running: z.boolean() })
 
 export type OnEventCallback = (args: { session: Session, data?: any }) => void

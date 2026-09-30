@@ -4,6 +4,8 @@ import { OfficeState } from './office/OfficeState'
 import { validateOfficeMap } from './office/object-config'
 import { OfficeSharedObjects } from './office/OfficeSharedObjects'
 import { PresentationState } from './office/PresentationState'
+import { SpeakerState } from './office/SpeakerState'
+import { AvatarActions } from './office/AvatarActions'
 
 export type RealmData = {
     spawnpoint: {
@@ -23,6 +25,7 @@ export interface Room {
             above_floor?: string,
             object?: string,
             impassable?: boolean
+            privateAreaId?: string
             teleporter?: {
                 roomIndex: number,
                 x: number,
@@ -143,14 +146,22 @@ export class Session {
     public officeState: OfficeState
     public externalObjects: OfficeSharedObjects
     public presentations: PresentationState
+    public speakers: SpeakerState
+    public readonly roomFeatures: { office: OfficeState, external: OfficeSharedObjects, presentations: PresentationState, speakers: SpeakerState, avatars: AvatarActions }[]
 
     constructor(id: string, mapData: RealmData) {
         validateOfficeMap(mapData)
         this.id = id
         this.map_data = mapData 
-        this.officeState = new OfficeState(mapData.rooms[mapData.spawnpoint.roomIndex])
-        this.externalObjects = new OfficeSharedObjects(mapData.rooms[mapData.spawnpoint.roomIndex], this.officeState)
-        this.presentations = new PresentationState(mapData.rooms[mapData.spawnpoint.roomIndex], this.officeState)
+        this.roomFeatures = mapData.rooms.map(room => {
+            const office = new OfficeState(room)
+            return { office, external: new OfficeSharedObjects(room, office), presentations: new PresentationState(room, office), speakers: new SpeakerState(room, office), avatars: new AvatarActions(room, office) }
+        })
+        const spawn = this.roomFeatures[mapData.spawnpoint.roomIndex]
+        this.officeState = spawn.office
+        this.externalObjects = spawn.external
+        this.presentations = spawn.presentations
+        this.speakers = spawn.speakers
 
         for (let i = 0; i < mapData.rooms.length; i++) {
             this.playerRooms[i] = new Set<string>()
@@ -187,8 +198,11 @@ export class Session {
 
     public removePlayer(uid: string): void {
         if (!this.players[uid]) return
-        this.presentations.removePlayer(uid)
-        this.officeState.removePlayer(uid)
+        const features = this.featuresFor(uid)
+        features.presentations.removePlayer(uid)
+        features.speakers.removePlayer(uid)
+        features.avatars.removePlayer(uid)
+        features.office.removePlayer(uid)
 
         const player = this.players[uid]
         this.playerRooms[player.room].delete(uid)
@@ -203,8 +217,11 @@ export class Session {
         if (!this.players[uid]) return []
 
         const player = this.players[uid]
-        this.presentations.removePlayer(uid)
-        this.officeState.removePlayer(uid)
+        const features = this.featuresFor(uid)
+        features.presentations.removePlayer(uid)
+        features.speakers.removePlayer(uid)
+        features.avatars.removePlayer(uid)
+        features.office.removePlayer(uid)
 
         this.playerRooms[player.room].delete(uid)
         this.playerRooms[roomIndex].add(uid)
@@ -215,9 +232,11 @@ export class Session {
         }
 
         player.room = roomIndex
-        if (roomIndex === this.map_data.spawnpoint.roomIndex) this.officeState.addPlayer(uid, { x, y }, player.username)
+        this.roomFeatures[roomIndex].office.addPlayer(uid, { x, y }, player.username)
         return this.movePlayer(uid, x, y)
     }
+
+    public featuresFor(uid: string) { return this.roomFeatures[this.players[uid].room] }
 
     public getPlayersInRoom(roomIndex: number): Player[] {
         const players = Array.from(this.playerRooms[roomIndex] || [])
@@ -266,52 +285,69 @@ export class Session {
         return this.setProximityIdsWithPlayer(uid)
     }
 
-    public setProximityIdsWithPlayer(uid: string): string[] {
-        const player = this.players[uid]
-        const proximityTiles = this.getProximityTiles(player.x, player.y)
-        const changedPlayers: Set<string> = new Set<string>()
-        const originalProximityId = player.proximityId
-        let otherPlayersExist = false
-        for (const tile of proximityTiles) {
-            const playersInTile = this.playerPositions[player.room][tile]
-            if (!playersInTile) continue
-            // iterate over players in tile
-            for (const otherUid of playersInTile) {
-                if (otherUid === uid) continue
-                otherPlayersExist = true
-
-                const otherPlayer = this.players[otherUid]
-                if (otherPlayer.proximityId === null) {
-                    if (player.proximityId === null) {
-                        // set the proximity id to a uuid
-                        player.proximityId = uuidv4()
-                        // Only add uid if proximityId changed
-                        if (player.proximityId !== originalProximityId) {
-                            changedPlayers.add(uid)
-                        }
-                    }
-
-                    otherPlayer.proximityId = player.proximityId
-                    changedPlayers.add(otherUid)
-                } else if (player.proximityId !== otherPlayer.proximityId) {
-                    player.proximityId = otherPlayer.proximityId
-                    // Only add uid if proximityId changed
-                    if (player.proximityId !== originalProximityId) {
-                        changedPlayers.add(uid)
-                    }
-                } 
-            }
+    public setProximityIdsWithPlayer(_uid: string): string[] {
+        // A movement can split or merge an entire conversation. Rebuild all
+        // current groups so stationary people and the room just left also update.
+        // This deliberately supports an already-removed uid after disconnection.
+        const players = Object.values(this.players).sort((a, b) => a.uid.localeCompare(b.uid))
+        const byRoomTile = new Map<number, Map<string, Player[]>>()
+        const zoneOf = (player: Player) => this.map_data.rooms[player.room].tilemap[`${player.x}, ${player.y}`]?.privateAreaId ?? null
+        for (const player of players) {
+            if (!byRoomTile.has(player.room)) byRoomTile.set(player.room, new Map())
+            const roomTiles = byRoomTile.get(player.room)!
+            const tile = `${player.x}, ${player.y}`
+            roomTiles.set(tile, [...(roomTiles.get(tile) ?? []), player])
         }
 
-        if (!otherPlayersExist) {
-            player.proximityId = null
-            // Only add uid if proximityId changed
-            if (originalProximityId !== null) {
-                changedPlayers.add(uid)
+        const visited = new Set<string>()
+        const groups: Player[][] = []
+        for (const seed of players) {
+            if (visited.has(seed.uid)) continue
+            const group = [seed]
+            const zone = zoneOf(seed)
+            visited.add(seed.uid)
+            for (let index = 0; index < group.length; index++) {
+                const member = group[index]
+                for (const tile of this.getProximityTiles(member.x, member.y)) {
+                    for (const neighbor of byRoomTile.get(member.room)?.get(tile) ?? []) {
+                        if (visited.has(neighbor.uid) || zoneOf(neighbor) !== zone) continue
+                        visited.add(neighbor.uid)
+                        group.push(neighbor)
+                    }
+                }
             }
+            groups.push(group)
         }
 
-        return Array.from(changedPlayers)
+        // Preserve the largest overlap with each existing conversation. An old
+        // channel can survive in only one component after a split; merging uses
+        // one existing channel rather than forcing everyone onto a new UUID.
+        const candidates: { groupIndex: number, id: string, overlap: number }[] = []
+        groups.forEach((group, groupIndex) => {
+            if (group.length < 2) return
+            const counts = new Map<string, number>()
+            for (const player of group) if (player.proximityId) counts.set(player.proximityId, (counts.get(player.proximityId) ?? 0) + 1)
+            for (const [id, overlap] of counts) candidates.push({ groupIndex, id, overlap })
+        })
+        candidates.sort((a, b) => b.overlap - a.overlap || groups[b.groupIndex].length - groups[a.groupIndex].length || a.id.localeCompare(b.id) || a.groupIndex - b.groupIndex)
+        const assigned = new Map<number, string>()
+        const usedIds = new Set<string>()
+        for (const candidate of candidates) {
+            if (assigned.has(candidate.groupIndex) || usedIds.has(candidate.id)) continue
+            assigned.set(candidate.groupIndex, candidate.id)
+            usedIds.add(candidate.id)
+        }
+
+        const changed: string[] = []
+        groups.forEach((group, groupIndex) => {
+            const id = group.length < 2 ? null : assigned.get(groupIndex) ?? uuidv4()
+            for (const player of group) {
+                if (player.proximityId === id) continue
+                player.proximityId = id
+                changed.push(player.uid)
+            }
+        })
+        return changed.sort()
     }
 
     private getProximityTiles(x: number, y: number): string[] {

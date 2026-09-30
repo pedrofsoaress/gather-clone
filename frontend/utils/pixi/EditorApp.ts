@@ -376,7 +376,10 @@ export class EditorApp extends App {
         signal.on('redo', this.redo)
         signal.on('upsertOfficeObject', this.onUpsertOfficeObject)
         signal.on('deleteOfficeObject', this.onDeleteOfficeObject)
+        signal.on('requestOfficeObjects', this.onRequestOfficeObjects)
     }
+
+    private onRequestOfficeObjects = () => signal.emit('officeObjectsChanged', this.realmData.rooms[this.currentRoomIndex].interactions ?? [])
 
     private onUpsertOfficeObject = (object: OfficeObject) => {
         const next = this.getRealmDataCopy()
@@ -1282,6 +1285,7 @@ export class EditorApp extends App {
         signal.off('selectPalette', this.onSelectPalette)
         signal.off('upsertOfficeObject', this.onUpsertOfficeObject)
         signal.off('deleteOfficeObject', this.onDeleteOfficeObject)
+        signal.off('requestOfficeObjects', this.onRequestOfficeObjects)
         signal.off('undo', this.undo)
         signal.off('redo', this.redo)
         window.removeEventListener('beforeunload', this.onBeforeUnload)

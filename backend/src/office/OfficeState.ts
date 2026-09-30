@@ -65,17 +65,17 @@ export class OfficeState {
     return this.objects.get(objectId)
   }
 
-  step(uid: string, next: OfficePosition): OfficeResult {
+  step(uid: string, next: OfficePosition, minimumStepMs = 120): OfficeResult {
     const visitor = this.visitors.get(uid)
     if (!visitor) return { ok: false, error: 'Visitante não encontrado.' }
     if (!Number.isInteger(next.x) || !Number.isInteger(next.y) || next.x < 0 || next.y < 0 || next.x >= this.width || next.y >= this.height) {
       return { ok: false, error: 'Posição inválida.' }
     }
-    if (this.room.tilemap[`${next.x}, ${next.y}`]?.impassable) return { ok: false, error: 'Passagem bloqueada.' }
+    if (!this.room.tilemap[`${next.x}, ${next.y}`] || this.room.tilemap[`${next.x}, ${next.y}`]?.impassable) return { ok: false, error: 'Passagem bloqueada.' }
     const distance = Math.abs(visitor.position.x - next.x) + Math.abs(visitor.position.y - next.y)
     if (distance !== 1) return { ok: false, error: 'Movimento inválido.' }
     const at = this.now()
-    if (at - visitor.lastStepAt < 70) return { ok: false, error: 'Movimento rápido demais.' }
+    if (at - visitor.lastStepAt < Math.max(80, minimumStepMs)) return { ok: false, error: 'Movimento rápido demais.' }
     visitor.position = { ...next }
     visitor.lastStepAt = at
     const occupied = this.objectOccupiedBy(uid)

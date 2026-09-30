@@ -9,6 +9,10 @@ import OfficeBoard from './OfficeBoard'
 import PingPongPanel from './PingPongPanel'
 import ExternalObjectPanel from './ExternalObjectPanel'
 import PresentationPanel from './PresentationPanel'
+import SpeakerPanel from './SpeakerPanel'
+import PetPanel from './PetPanel'
+import LightPanel from './LightPanel'
+import { setOfficeInputLock } from '@/utils/pixi/office/input-locks'
 
 type OfficeHudProps = { objects: OfficeObject[], uid: string, presentations: PresentationSnapshot, onPresentationFocus: (id: string) => void }
 
@@ -16,7 +20,7 @@ export default function OfficeHud({ objects, uid, presentations, onPresentationF
     const [openId, setOpenId] = useState<string | null>(null)
     const [nearbyId, setNearbyId] = useState<string | null>(null)
     const [hoverId, setHoverId] = useState<string | null>(null)
-    const [feedback, setFeedback] = useState('')
+    const setFeedback = (message: string) => signal.emit('officeFeedback', { message })
     const [snapshot, setSnapshot] = useState<OfficeSnapshot>({ occupancy: {}, games: {} })
     const [busy, setBusy] = useState(false)
     const headingRef = useRef<HTMLHeadingElement>(null)
@@ -25,33 +29,27 @@ export default function OfficeHud({ objects, uid, presentations, onPresentationF
         const onOpen = ({ objectId }: { objectId: string }) => setOpenId(objectId)
         const onNearby = ({ objectId }: { objectId: string | null }) => setNearbyId(objectId)
         const onHover = ({ objectId }: { objectId: string | null }) => setHoverId(objectId)
-        const onFeedback = ({ message }: { message: string }) => setFeedback(message)
+        const onClose = () => setOpenId(null)
         const onSnapshot = (next: OfficeSnapshot) => setSnapshot(next)
         signal.on('officeOpen', onOpen)
         signal.on('officeNearby', onNearby)
         signal.on('officeHover', onHover)
-        signal.on('officeFeedback', onFeedback)
+        signal.on('officeClose', onClose)
         signal.on('officeSnapshot', onSnapshot)
         return () => {
             signal.off('officeOpen', onOpen)
             signal.off('officeNearby', onNearby)
             signal.off('officeHover', onHover)
-            signal.off('officeFeedback', onFeedback)
+            signal.off('officeClose', onClose)
             signal.off('officeSnapshot', onSnapshot)
-            signal.emit('disableInput', false)
+            setOfficeInputLock('object', false)
         }
     }, [])
 
     useEffect(() => {
-        signal.emit('disableInput', Boolean(openId))
+        setOfficeInputLock('object', Boolean(openId))
         if (openId) requestAnimationFrame(() => headingRef.current?.focus())
     }, [openId])
-
-    useEffect(() => {
-        if (!feedback) return
-        const timeout = window.setTimeout(() => setFeedback(''), 4000)
-        return () => window.clearTimeout(timeout)
-    }, [feedback])
 
     const close = () => {
         setOpenId(null)
@@ -69,7 +67,7 @@ export default function OfficeHud({ objects, uid, presentations, onPresentationF
             setBusy(false)
             if (!timeout && !result?.ok && action === 'occupy' && result?.error === 'Aproxime-se do objeto.' && result.verifiedPosition) {
                 setOpenId(null)
-                signal.emit('disableInput', false)
+                setOfficeInputLock('object', false)
                 signal.emit('officeResync', { objectId, position: result.verifiedPosition })
                 return
             }
@@ -88,7 +86,6 @@ export default function OfficeHud({ objects, uid, presentations, onPresentationF
             className="absolute bottom-20 right-3 z-20 rounded-xl bg-teal-500 px-4 py-3 font-semibold text-slate-950 shadow-xl sm:hidden"
             onClick={() => signal.emit('officeRequest', { objectId: nearby.id })}
         >Interagir · {nearby.label}</button>}
-        {feedback && <p role="status" className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-lg bg-slate-950 px-4 py-2 text-white shadow-lg">{feedback}</p>}
         {active && <div className="absolute inset-0 z-30 grid place-items-center bg-slate-950/55 p-4" onMouseDown={(event) => event.stopPropagation()}>
             <section role="dialog" aria-modal="true" aria-labelledby="office-action-title"
                 onKeyDown={(event) => { if (event.key === 'Escape') close() }}
@@ -122,6 +119,9 @@ export default function OfficeHud({ objects, uid, presentations, onPresentationF
                 {['board', 'desk', 'guestbook'].includes(active.kind) && <OfficeBoard key={active.id} object={active} />}
                 {active.kind === 'external' && <ExternalObjectPanel key={active.id} object={active} />}
                 {active.kind === 'presentation' && <PresentationPanel object={active} session={presentations[active.id]} uid={uid} onFocus={() => onPresentationFocus(active.id)} onClose={close} />}
+                {active.kind === 'speaker' && <SpeakerPanel key={active.id} object={active} uid={uid} />}
+                {active.kind === 'pet' && <PetPanel key={active.id} object={active} />}
+                {active.kind === 'light' && <LightPanel key={active.id} object={active} />}
             </section>
         </div>}
     </>

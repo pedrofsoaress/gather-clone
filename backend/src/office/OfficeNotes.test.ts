@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { OfficeNotes, validNoteObject } from './OfficeNotes'
+import { OfficeNotes, validNoteObject, noteStorageKey } from './OfficeNotes'
 import type { Room } from '../session'
 
 function fakeDb() {
@@ -23,6 +23,13 @@ const room: Room = { name: 'Matte', tilemap: {}, interactions: [
   { id: 'project-table', kind: 'board', label: 'Mesa', bounds: { x: 0, y: 0, width: 1, height: 1 }, approach: { x: 1, y: 1 } },
   { id: 'lounge-sofa', kind: 'seat', label: 'Sofá', bounds: { x: 2, y: 0, width: 1, height: 1 }, approach: { x: 2, y: 1 } },
 ] }
+
+test('note keys preserve legacy spawn notes and isolate identical objects in other rooms', () => {
+  assert.equal(noteStorageKey(0, 0, 'board'), 'board')
+  assert.notEqual(noteStorageKey(1, 0, 'board'), noteStorageKey(2, 0, 'board'))
+  assert.notEqual(noteStorageKey(1, 0, 'board'), noteStorageKey(1, 0, 'desk'))
+  assert.ok(noteStorageKey(1, 0, 'a'.repeat(64)).length <= 64)
+})
 
 test('list filters by realm and object, newest first, capped at 100', async () => {
   const { db, calls } = fakeDb()

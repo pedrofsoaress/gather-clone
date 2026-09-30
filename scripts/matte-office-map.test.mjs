@@ -4,7 +4,7 @@ import { map } from './matte-office-map.mjs'
 
 test('every functional Matte fixture has a distinct hotspot', () => {
   const interactions = map.rooms[0].interactions
-  assert.equal(interactions.length, 55)
+  assert.equal(interactions.length, 60)
   assert.equal(new Set(interactions.map((item) => item.id)).size, interactions.length)
   for (const id of ['boardroom-table', 'project-table', 'workbench', 'reception', 'pingpong']) {
     assert.ok(interactions.some(item => item.id === id), id)
@@ -12,6 +12,9 @@ test('every functional Matte fixture has a distinct hotspot', () => {
   assert.equal(interactions.find(item => item.id === 'collab-board')?.kind, 'external')
   assert.equal(interactions.find(item => item.id === 'shared-piano')?.kind, 'external')
   assert.equal(interactions.find(item => item.id === 'boardroom-screen')?.kind, 'presentation')
+  assert.equal(interactions.find(item => item.id === 'lounge-speaker')?.kind, 'speaker')
+  assert.equal(interactions.find(item => item.id === 'caju')?.kind, 'pet')
+  assert.equal(interactions.filter(item => item.kind === 'light').length, 3)
 })
 
 test('every hotspot fits the art and has a reachable approach tile', () => {

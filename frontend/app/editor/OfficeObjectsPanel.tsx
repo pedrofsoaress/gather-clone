@@ -5,6 +5,7 @@ import signal from '@/utils/signal'
 import type { OfficeObject, RealmData } from '@/utils/pixi/types'
 import { OfficeObjectSchema } from '@/utils/pixi/zod'
 import PresentationDeckEditor from './PresentationDeckEditor'
+import { objectKindDefaults, observeOfficeObjects } from '@/utils/pixi/office/object-editor'
 
 type Kind = OfficeObject['kind']
 const kinds: { value: Kind, label: string }[] = [
@@ -55,13 +56,13 @@ export default function OfficeObjectsPanel({ realmData, roomIndex }: { realmData
         const onError = (message: string) => setError(message)
         const onSaved = (id: string) => { setSelectedId(id); setError(''); setDraft(null) }
         const onRoomChanged = () => { setSelectedId(null); setDraft(null); setError('') }
-        signal.on('officeObjectsChanged', onObjects)
+        const stopObserving = observeOfficeObjects(signal, onObjects)
         signal.on('coordinates', onCursor)
         signal.on('officeObjectError', onError)
         signal.on('officeObjectSaved', onSaved)
         signal.on('roomChanged', onRoomChanged)
         return () => {
-            signal.off('officeObjectsChanged', onObjects)
+            stopObserving()
             signal.off('coordinates', onCursor)
             signal.off('officeObjectError', onError)
             signal.off('officeObjectSaved', onSaved)
@@ -99,7 +100,7 @@ export default function OfficeObjectsPanel({ realmData, roomIndex }: { realmData
         {current && <div className="space-y-3">
             <label className="block">ID<input value={current.id} disabled={Boolean(selected)} onChange={event => change({ id: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1 disabled:opacity-60" /></label>
             <label className="block">Nome<input value={current.label} onChange={event => change({ label: event.target.value })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1" /></label>
-            <label className="block">Tipo<select value={current.kind} onChange={event => { const kind = event.target.value as Kind; change({ kind, config: configFor(kind), seatVisual: undefined, effect: undefined }) }} className="mt-1 w-full rounded bg-slate-800 px-2 py-1">{kinds.map(kind => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
+            <label className="block">Tipo<select value={current.kind} onChange={event => { const kind = event.target.value as Kind; change({ kind, config: configFor(kind), ...objectKindDefaults(kind, current.bounds) }) }} className="mt-1 w-full rounded bg-slate-800 px-2 py-1">{kinds.map(kind => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
             <fieldset className="grid grid-cols-2 gap-2"><legend className="mb-1">Área no mapa</legend>
                 {(['x', 'y', 'width', 'height'] as const).map(key => <label key={key}>{key}<input type="number" step={['seat', 'desk'].includes(current.kind) ? '0.1' : '1'} value={current.bounds[key]} onChange={event => changeBounds(key, Number(event.target.value))} className="w-full rounded bg-slate-800 px-2 py-1" /></label>)}
                 <button type="button" onClick={() => change({ bounds: { ...current.bounds, x: cursor.x, y: cursor.y } })} className="col-span-2 rounded bg-slate-700 px-2 py-1">Usar cursor na área</button>

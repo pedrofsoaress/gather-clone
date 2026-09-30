@@ -63,7 +63,7 @@ test('verified steps reject blocked, distant, and too-fast movement', () => {
   assert.equal(state.step('u1', { x: 12, y: 6 }).ok, true)
   assert.equal(state.step('u1', { x: 12, y: 7 }).ok, false)
   assert.equal(state.step('u1', { x: 13, y: 6 }).ok, false)
-  now = 180
+  now = 260
   assert.equal(state.step('u1', { x: 11, y: 6 }).ok, true)
 })
 
@@ -82,7 +82,7 @@ test('a visitor holds at most one place and walking away releases it', () => {
   assert.equal(state.occupy('u1', 'desk').ok, true)
   assert.equal(state.snapshot().occupancy['lounge-sofa'], undefined)
   for (const y of [7, 8, 9]) {
-    now += 100
+    now += 160
     assert.equal(state.step('u1', { x: 11, y }).ok, true)
   }
   assert.deepEqual(state.snapshot().occupancy, {})
@@ -94,18 +94,32 @@ test('walking up to a free chair seats the visitor automatically and leaving fre
   state.addPlayer('u1', { x: 10, y: 9 }, 'Ana')
   now = 100
   assert.equal(state.step('u1', { x: 10, y: 8 }).ok, true)
-  now = 200
+  now = 260
   assert.equal(state.step('u1', { x: 10, y: 7 }).ok, true)
   assert.deepEqual(state.snapshot().occupancy.desk, { uid: 'u1', name: 'Ana' })
   state.addPlayer('u2', { x: 10, y: 9 }, 'Bruno')
-  now = 300
+  now = 420
   assert.equal(state.step('u2', { x: 10, y: 8 }).ok, true)
-  now = 400
+  now = 580
   assert.equal(state.step('u2', { x: 10, y: 7 }).ok, true)
   assert.deepEqual(state.snapshot().occupancy.desk, { uid: 'u1', name: 'Ana' })
   for (const y of [8, 9]) {
-    now += 100
+    now += 160
     assert.equal(state.step('u1', { x: 10, y }).ok, true)
   }
   assert.equal(state.snapshot().occupancy.desk, undefined)
+})
+
+test('walking and approved running have different bounded step intervals', () => {
+  let now = 0
+  const state = new OfficeState(room, () => now)
+  state.addPlayer('walker', { x: 0, y: 0 })
+  assert.equal(state.step('walker', { x: 1, y: 0 }).ok, true)
+  now = 80
+  assert.equal(state.step('walker', { x: 2, y: 0 }).ok, false)
+  assert.equal(state.step('walker', { x: 2, y: 0 }, 80).ok, true)
+  now = 150
+  assert.equal(state.step('walker', { x: 3, y: 0 }, 80).ok, false)
+  now = 260
+  assert.equal(state.step('walker', { x: 3, y: 0 }).ok, true)
 })

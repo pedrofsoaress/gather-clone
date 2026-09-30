@@ -105,6 +105,11 @@ const interactions = [
   officeObject('workbench', 'board', 'Bancada de ideias', [5, 22, 7, 3], [8, 25]),
   officeObject('collab-board', 'external', 'Quadro colaborativo', [12, 22, 2, 2], [14, 24], { config: { url: 'https://miro.com/', allowedHosts: ['miro.com'], roomEditable: true } }),
   officeObject('shared-piano', 'external', 'Piano compartilhado', [2, 7, 2, 1], [4, 8], { config: { url: 'https://musiclab.chromeexperiments.com/Shared-Piano/', allowedHosts: ['musiclab.chromeexperiments.com'], roomEditable: true } }),
+  officeObject('lounge-speaker', 'speaker', 'Caixa de som do lounge', [13, 4, 1, 1], [13, 5], { config: { rangeTiles: 7 } }),
+  officeObject('caju', 'pet', 'Caju · gato do escritório', [29, 24, 1, 1], [30, 24], { config: { animationSet: 'matte-cat' } }),
+  officeObject('light-lounge', 'light', 'Luz do lounge', [14, 2, 1, 1], [14, 3], { config: { radiusTiles: 7, color: '#fff2bb', intensity: 0.6 } }),
+  officeObject('light-boardroom', 'light', 'Luz da reunião', [30, 1, 1, 1], [30, 2], { config: { radiusTiles: 8, color: '#d6eaff', intensity: 0.5 } }),
+  officeObject('light-work', 'light', 'Luz da área de trabalho', [30, 14, 1, 1], [30, 15], { config: { radiusTiles: 9, color: '#e4fff1', intensity: 0.5 } }),
   officeObject('reception', 'guestbook', 'Recepção', [21, 20, 8, 3], [25, 19]),
   officeObject('pingpong', 'pingpong', 'Pingue-pongue', [35, 21, 4, 5], [34, 23]),
 

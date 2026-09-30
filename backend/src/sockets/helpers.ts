@@ -18,5 +18,15 @@ export function kickPlayer(uid: string, reason: string) {
     io.sockets.sockets.get(player.socketId)?.leave(session.id)
     // player is already in session, kick them
     sessionManager.logOutPlayer(uid)
-    io.to(session.id).emit('presentationState', session.presentations.snapshot())
+    for (const changedUid of session.setProximityIdsWithPlayer(uid)) {
+        const changed = session.getPlayer(changedUid)
+        io.to(changed.socketId).emit('proximityUpdate', { proximityId: changed.proximityId })
+    }
+    const features = session.roomFeatures[room]
+    for (const remaining of session.getPlayersInRoom(room)) {
+        io.to(remaining.socketId).emit('presentationState', features.presentations.snapshot())
+        io.to(remaining.socketId).emit('speakerState', features.speakers.snapshotFor(remaining.uid))
+        io.to(remaining.socketId).emit('avatarState', features.avatars.snapshot())
+        io.to(remaining.socketId).emit('officeStateChanged', features.office.snapshot())
+    }
 }

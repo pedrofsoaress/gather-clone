@@ -13,6 +13,8 @@ import OfficeChat from './OfficeChat'
 import PresentationViewer from './PresentationViewer'
 import type { PresentationSnapshot } from '@/utils/pixi/office/types'
 import { server } from '@/utils/backend/server'
+import SpeakerRuntime from './SpeakerRuntime'
+import OfficeNotifications from './OfficeNotifications'
 
 const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 
@@ -35,6 +37,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
     const [displayName, setDisplayName] = useState(username)
     const [meetingMode, setMeetingMode] = useState(false)
     const [chatOpen, setChatOpen] = useState(false)
+    const [roomIndex, setRoomIndex] = useState(mapData.spawnpoint.roomIndex)
     const [presentations, setPresentations] = useState<PresentationSnapshot>({})
     const [selectedPresentationId, setSelectedPresentationId] = useState<string | null>(null)
     const knownPresentations = useRef<string[]>([])
@@ -43,22 +46,38 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
         const onSnapshot = (snapshot: PresentationSnapshot) => {
             const ids = Object.keys(snapshot)
             const started = ids.find(id => !knownPresentations.current.includes(id))
+            const ended = knownPresentations.current.some(id => !ids.includes(id))
             knownPresentations.current = ids
             setPresentations(snapshot)
+            if (started) signal.emit('officeNotice', { message: 'Uma apresentação começou no escritório.', key: `presentation-${started}` })
+            if (ended) signal.emit('officeNotice', { message: 'A apresentação foi encerrada.', key: 'presentation-ended' })
             setSelectedPresentationId(current => current && snapshot[current] ? current : started ?? null)
         }
+        const refresh = () => server.socket.timeout(8000).emit('presentationGetSnapshot', (timeout: Error | null, result: { ok: boolean, snapshot?: PresentationSnapshot }) => {
+            if (!timeout && result?.ok && result.snapshot) onSnapshot(result.snapshot)
+        })
         const onReady = () => {
             server.socket.on('presentationState', onSnapshot)
-            server.socket.timeout(8000).emit('presentationGetSnapshot', (timeout: Error | null, result: { ok: boolean, snapshot?: PresentationSnapshot }) => {
-                if (!timeout && result?.ok && result.snapshot) onSnapshot(result.snapshot)
-            })
+            server.socket.on('joinedRealm', refresh)
+            refresh()
+        }
+        const onRoom = ({ roomIndex }: { roomIndex: number }) => {
+            setRoomIndex(roomIndex)
+            setSelectedPresentationId(null)
+            setPresentations({})
+            knownPresentations.current = []
         }
         signal.on('officeReady', onReady)
+        signal.on('officeRoomChanged', onRoom)
+        signal.on('officeRoomReady', refresh)
         signal.on('video-channel-left', onCallLeft)
         return () => {
             signal.off('officeReady', onReady)
+            signal.off('officeRoomChanged', onRoom)
+            signal.off('officeRoomReady', refresh)
             signal.off('video-channel-left', onCallLeft)
             server.socket?.off?.('presentationState', onSnapshot)
+            server.socket?.off?.('joinedRealm', refresh)
         }
         function onCallLeft() { setMeetingMode(false) }
     }, [])
@@ -69,11 +88,16 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
     }, [uid])
 
     const [skin, setSkin] = useState(initialSkin)
-    const presentationObject = mapData.rooms[mapData.spawnpoint.roomIndex].interactions?.find(object => object.id === selectedPresentationId)
+    const presentationObject = mapData.rooms[roomIndex].interactions?.find(object => object.id === selectedPresentationId)
     const presentationSession = selectedPresentationId ? presentations[selectedPresentationId] : undefined
     const presentation = presentationObject && presentationSession ? <PresentationViewer
         object={presentationObject} session={presentationSession} uid={uid} compact={!meetingMode}
         onExpand={() => setMeetingMode(true)} onClose={() => setSelectedPresentationId(null)} /> : undefined
+
+    useEffect(() => {
+        signal.emit('officePresentationFocus', { active: Boolean(presentationSession) })
+        return () => signal.emit('officePresentationFocus', { active: false })
+    }, [Boolean(presentationSession)])
 
     useEffect(() => {
         const onShowKickedModal = (message: string) => {
@@ -116,7 +140,9 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
                     initialSkin={skin}
                 />
                 <PlayNavbar username={displayName} skin={skin}/>
-                <OfficeHud objects={mapData.rooms[mapData.spawnpoint.roomIndex].interactions ?? []} uid={uid} presentations={presentations} onPresentationFocus={setSelectedPresentationId} />
+                <SpeakerRuntime uid={uid} />
+                <OfficeNotifications meetingMode={meetingMode} />
+                <OfficeHud key={roomIndex} objects={mapData.rooms[roomIndex].interactions ?? []} uid={uid} presentations={presentations} onPresentationFocus={setSelectedPresentationId} />
                 <OfficeChat uid={uid} meetingMode={meetingMode} open={chatOpen} onOpenChange={setChatOpen} />
             </div>}
             {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={(chosenName) => {

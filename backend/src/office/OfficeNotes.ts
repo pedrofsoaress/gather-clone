@@ -1,5 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Room } from '../session'
+import { createHash } from 'crypto'
+
+export function noteStorageKey(roomIndex: number, spawnRoomIndex: number, objectId: string): string {
+  if (roomIndex === spawnRoomIndex) return objectId
+  return `room:${createHash('sha256').update(JSON.stringify([roomIndex, objectId])).digest('hex').slice(0, 59)}`
+}
 
 export type OfficeNote = { id: string, objectId: string, author: string, body: string, createdAt: string }
 export type NoteKind = 'board' | 'desk' | 'guestbook'

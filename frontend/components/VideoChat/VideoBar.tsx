@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
 import signal from '@/utils/signal'
 import { ArrowsOut, ArrowsIn, MicrophoneSlash, MapTrifold, SpeakerHigh, SpeakerSlash } from '@phosphor-icons/react'
@@ -29,6 +30,11 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
     const screens = peers.filter(user => user.uid.endsWith('-screen'))
     const cameras = peers.filter(user => !user.uid.endsWith('-screen'))
     const personCount = cameras.length + 1
+
+    useEffect(() => {
+        signal.emit('officeAudioBusy', peers.length > 0)
+        return () => signal.emit('officeAudioBusy', false)
+    }, [peers.length > 0])
 
     useEffect(() => {
         const onUserInfoUpdated = (user: IAgoraRTCRemoteUser) => {
@@ -63,7 +69,7 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
         </button>
         <div className="pointer-events-auto flex max-w-full gap-2 overflow-x-auto rounded-xl bg-slate-950/80 p-2 shadow-xl">
             {presentation && <div className="h-[112px] w-[220px] shrink-0">{presentation}</div>}
-            {(cameras.length ? cameras : screens).map(user => <RemoteUser key={user.uid} user={user} meetingMode={false} localUid={localUid} localName={localName} localSkin={localSkin} className="relative h-[112px] w-[200px] shrink-0" />)}
+            {[...cameras, ...screens].map(user => <RemoteUser key={user.uid} user={user} meetingMode={false} localUid={localUid} localName={localName} localSkin={localSkin} className="relative h-[112px] w-[200px] shrink-0" />)}
         </div>
     </div>
 
@@ -117,6 +123,34 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     const [expanded, setExpanded] = useState(false)
     const [audioMenuOpen, setAudioMenuOpen] = useState(false)
     const [audioState, setAudioState] = useState(() => videoChat.getRemoteAudio(user.uid))
+    const audioButton = useRef<HTMLButtonElement>(null)
+    const audioMenu = useRef<HTMLDivElement>(null)
+    const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
+
+    useEffect(() => {
+        if (!audioMenuOpen) return
+        const close = (event: PointerEvent) => { if (!audioMenu.current?.contains(event.target as Node) && !audioButton.current?.contains(event.target as Node)) setAudioMenuOpen(false) }
+        const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setAudioMenuOpen(false); audioButton.current?.focus() } }
+        const position = () => {
+            const bounds = audioButton.current?.getBoundingClientRect()
+            if (!bounds) return
+            if (bounds.bottom < 0 || bounds.top > window.innerHeight || bounds.right < 0 || bounds.left > window.innerWidth) { setAudioMenuOpen(false); return }
+            const height = audioMenu.current?.offsetHeight ?? 150
+            setMenuPosition({ top: Math.max(8, Math.min(bounds.bottom + 6, window.innerHeight - height - 8)), left: Math.max(8, Math.min(bounds.right - 192, window.innerWidth - 200)) })
+        }
+        const focusFrame = requestAnimationFrame(() => { position(); audioMenu.current?.querySelector('button')?.focus() })
+        window.addEventListener('pointerdown', close)
+        window.addEventListener('keydown', escape)
+        window.addEventListener('resize', position)
+        window.addEventListener('scroll', position, true)
+        return () => {
+            cancelAnimationFrame(focusFrame)
+            window.removeEventListener('pointerdown', close)
+            window.removeEventListener('keydown', escape)
+            window.removeEventListener('resize', position)
+            window.removeEventListener('scroll', position, true)
+        }
+    }, [audioMenuOpen])
 
     useEffect(() => {
         if (isLocalScreen) {
@@ -155,11 +189,15 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
         <p className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-xs">{isScreen ? `Tela de ${name}` : <>{!user.micEnabled && <MicrophoneSlash size={13} className="text-red-400" />}{name}</>}</p>
         {meetingMode && user.cameraEnabled && <button type="button" aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo ou tela compartilhada'} onClick={() => setExpanded(value => !value)} className="absolute right-2 top-2 z-10 rounded-lg bg-black/70 p-2 text-white hover:bg-black">{expanded ? <ArrowsIn size={18} /> : <ArrowsOut size={18} />}</button>}
         {!isScreen && <div className={`absolute ${meetingMode && user.cameraEnabled ? 'right-12' : 'right-2'} top-2 z-20`}>
-            <button type="button" aria-label={`Áudio de ${name}`} onClick={() => setAudioMenuOpen(value => !value)} className="rounded-lg bg-black/70 p-2 text-white hover:bg-black">{audioState.muted ? <SpeakerSlash size={18} /> : <SpeakerHigh size={18} />}</button>
-            {audioMenuOpen && <div className="absolute right-0 top-10 w-48 space-y-2 rounded-lg bg-slate-900 p-3 text-xs shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+            <button ref={audioButton} type="button" aria-label={`Áudio de ${name}`} aria-expanded={audioMenuOpen} onClick={() => {
+                const bounds = audioButton.current?.getBoundingClientRect()
+                if (bounds) setMenuPosition({ top: Math.min(bounds.bottom + 6, window.innerHeight - 150), left: Math.max(8, Math.min(bounds.right - 192, window.innerWidth - 200)) })
+                setAudioMenuOpen(value => !value)
+            }} className="rounded-lg bg-black/70 p-2 text-white hover:bg-black">{audioState.muted ? <SpeakerSlash size={18} /> : <SpeakerHigh size={18} />}</button>
+            {audioMenuOpen && createPortal(<div ref={audioMenu} role="group" aria-label={`Controles de áudio de ${name}`} style={menuPosition} className="fixed z-[70] w-48 space-y-2 rounded-lg border border-slate-600 bg-slate-900 p-3 text-xs text-white shadow-2xl" onMouseDown={event => event.stopPropagation()}>
                 <button type="button" onClick={() => videoChat.setRemoteMuted(user.uid, !audioState.muted)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">{audioState.muted ? 'Ativar áudio para mim' : 'Silenciar só para mim'}</button>
                 <label className="block">Volume · {audioState.volume}%<input type="range" min="0" max="100" value={audioState.volume} onChange={event => videoChat.setRemoteVolume(user.uid, Number(event.target.value))} className="w-full" /></label>
-            </div>}
+            </div>, document.body)}
         </div>}
     </div>
 }

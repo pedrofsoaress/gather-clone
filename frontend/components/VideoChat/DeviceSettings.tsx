@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { videoChat } from '@/utils/video-chat/video-chat'
 import type { MediaPreferences } from '@/utils/video-chat/AudioPreference'
+import signal from '@/utils/signal'
+import { setOfficeInputLock } from '@/utils/pixi/office/input-locks'
 
 type DeviceKind = 'audioinput' | 'videoinput' | 'audiooutput'
 
@@ -12,12 +14,27 @@ export default function DeviceSettings({ onClose }: { onClose: () => void }) {
     const [error, setError] = useState('')
     const [busy, setBusy] = useState(false)
     const heading = useRef<HTMLHeadingElement>(null)
+    const panel = useRef<HTMLElement>(null)
+    const closeRef = useRef(onClose)
+    closeRef.current = onClose
     useEffect(() => {
-        const refresh = () => { void videoChat.listDevices().then(next => { setDevices(next); setPreferences(videoChat.getDevicePreferences()) }).catch(reason => setError(reason instanceof Error ? reason.message : 'Não foi possível listar dispositivos.')) }
+        let disposed = false
+        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        setOfficeInputLock('devices', true)
+        const onDevices = (next: MediaDeviceInfo[]) => { if (!disposed) { setDevices(next); setPreferences(videoChat.getDevicePreferences()) } }
+        const refresh = () => { void videoChat.listDevices().then(onDevices).catch(reason => { if (!disposed) setError(reason instanceof Error ? reason.message : 'Não foi possível listar dispositivos.') }) }
         refresh()
         heading.current?.focus()
-        navigator.mediaDevices?.addEventListener?.('devicechange', refresh)
-        return () => navigator.mediaDevices?.removeEventListener?.('devicechange', refresh)
+        signal.on('media-devices-changed', onDevices)
+        const close = () => closeRef.current()
+        signal.on('officeClose', close)
+        return () => {
+            disposed = true
+            signal.off('media-devices-changed', onDevices)
+            signal.off('officeClose', close)
+            setOfficeInputLock('devices', false)
+            if (previousFocus?.isConnected) previousFocus.focus()
+        }
     }, [])
     const choose = async (kind: DeviceKind, value: string) => {
         setBusy(true)
@@ -37,7 +54,16 @@ export default function DeviceSettings({ onClose }: { onClose: () => void }) {
         </select>
     </label>
     return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4" onMouseDown={event => event.stopPropagation()}>
-        <section role="dialog" aria-modal="true" aria-labelledby="device-settings-title" onKeyDown={event => { if (event.key === 'Escape') onClose() }} className="w-full max-w-md space-y-4 rounded-2xl border border-teal-400/40 bg-slate-900 p-5 text-white shadow-2xl">
+        <section ref={panel} role="dialog" aria-modal="true" aria-labelledby="device-settings-title" onKeyDown={event => {
+            event.stopPropagation()
+            if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+            if (event.key !== 'Tab') return
+            const items = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex="0"]') ?? [])
+            const first = items[0], last = items[items.length - 1]
+            if (!first) { event.preventDefault(); return }
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === heading.current)) { event.preventDefault(); last.focus() }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+        }} className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl border border-teal-400/40 bg-slate-900 p-5 text-white shadow-2xl">
             <div className="flex justify-between gap-3"><h2 ref={heading} tabIndex={-1} id="device-settings-title" className="text-lg font-bold outline-none">Dispositivos da chamada</h2><button type="button" onClick={onClose} className="rounded bg-slate-700 px-3 py-1">Fechar</button></div>
             {selection('audioinput', 'Microfone', preferences.microphoneId)}
             {selection('videoinput', 'Câmera', preferences.cameraId)}

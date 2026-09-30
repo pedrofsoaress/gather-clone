@@ -7,11 +7,12 @@ import { defaultSkin } from './Player/skins'
 import signal from '../signal'
 import { createClient } from '../supabase/client'
 import { gsap } from 'gsap'
-import { bfs } from './pathfinding'
-import { canApproach } from './office/approach.mjs'
 import { isWithinMap, nearestObject } from './office/geometry'
 import { InteractionLayer } from './office/InteractionLayer'
 import type { OfficeSnapshot } from './office/types'
+import { LightingLayer } from './office/LightingLayer'
+import { GamepadController, type GamepadInput } from './office/GamepadController'
+import type { AvatarSnapshot } from './Player/avatar-actions'
 
 export class PlayApp extends App {
     private scale: number = 1.5
@@ -38,6 +39,16 @@ export class PlayApp extends App {
     private officeSnapshot: OfficeSnapshot = { occupancy: {}, games: {} }
     private cameraDrag: { pointerId: number, startX: number, startY: number, pivotX: number, pivotY: number } | null = null
     private cameraManuallyPanned = false
+    private lightingLayer: LightingLayer | null = null
+    private presentationFocused = false
+    private gamepad: GamepadController | null = null
+    private gamepadDirection: string | null = null
+    private keyboardKeys = new Set<string>()
+    private gamepadRunning = false
+    private keyboardRunning = false
+    private avatarSnapshot: AvatarSnapshot = {}
+    private eventsRemoved = false
+    private roomTransitioning = false
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -50,14 +61,32 @@ export class PlayApp extends App {
     }
 
     override async loadRoom(index: number) {
+        this.releaseMovement()
+        for (const player of Object.values(this.players)) player.destroy()
+        this.currentRoomIndex = index
         this.players = {}
+        this.avatarSnapshot = {}
+        this.officeSnapshot = { occupancy: {}, games: {} }
         await super.loadRoom(index)
+        this.setUpLighting()
         this.setUpRoomInteractions()
         this.setUpBlockedTiles()
         this.setUpFadeTiles()
         await this.spawnLocalPlayer()
-        await this.syncOtherPlayers()
+        this.player.applyAvatarState()
+        this.player.setSeatedVisual(null)
+        if (!this.roomTransitioning) await this.syncOtherPlayers()
+        signal.emit('officeRoomChanged', { roomIndex: index, objects: this.realmData.rooms[index].interactions ?? [] })
         this.displayInitialChatMessage()
+    }
+
+    private setUpLighting = () => {
+        this.lightingLayer?.destroy()
+        const room = this.realmData.rooms[this.currentRoomIndex]
+        this.lightingLayer = new LightingLayer(room.interactions ?? [], room.backgroundImage?.width ?? 1600, room.backgroundImage?.height ?? 960)
+        this.lightingLayer.setPresentation(this.presentationFocused)
+        // Keep world effects under both interaction hit areas and transition overlays.
+        this.app.stage.addChildAt(this.lightingLayer.container, this.app.stage.getChildIndex(this.layers.object) + 1)
     }
 
     private setUpRoomInteractions = () => {
@@ -74,7 +103,7 @@ export class PlayApp extends App {
         )
         this.interactionLayer.setOccupancy(this.officeSnapshot.occupancy)
         this.interactionLayer.setGames(this.officeSnapshot.games)
-        this.app.stage.addChild(this.interactionLayer.container)
+        this.app.stage.addChildAt(this.interactionLayer.container, this.app.stage.getChildIndex(this.lightingLayer!.container) + 1)
     }
 
     public requestOfficeObject = (id: string): boolean => {
@@ -82,9 +111,7 @@ export class PlayApp extends App {
         const room = this.realmData.rooms[this.currentRoomIndex]
         const object = room.interactions?.find((item) => item.id === id)
         if (!object) return false
-        const width = room.backgroundImage ? Math.ceil(room.backgroundImage.width / 32) : 50
-        const height = room.backgroundImage ? Math.ceil(room.backgroundImage.height / 32) : 30
-        if (!isWithinMap(object.approach.x, object.approach.y, width, height)) return false
+        if (!room.tilemap[`${object.approach.x}, ${object.approach.y}`]) return false
 
         this.pendingOfficeObjectId = null
         this.keysDown = []
@@ -94,13 +121,7 @@ export class PlayApp extends App {
             return true
         }
 
-        const canReach = canApproach(
-            this.player.currentTilePosition,
-            object.approach,
-            this.blocked,
-            bfs,
-        )
-        if (!canReach || !this.player.moveToTile(object.approach.x, object.approach.y)) {
+        if (!this.player.moveToTile(object.approach.x, object.approach.y)) {
             signal.emit('officeFeedback', { message: 'Não consigo chegar até esse objeto.' })
             return false
         }
@@ -112,9 +133,11 @@ export class PlayApp extends App {
         const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
         const nearby = nearestObject(objects, position.x, position.y, 2)
         signal.emit('officeNearby', { objectId: nearby?.id ?? null })
+        signal.emit('officePosition', { ...position, roomIndex: this.currentRoomIndex })
     }
 
     private onOfficeStateChanged = (snapshot: OfficeSnapshot) => {
+        if (this.roomTransitioning) return
         if (!snapshot || !snapshot.occupancy) return
         this.officeSnapshot = snapshot
         this.interactionLayer?.setOccupancy(snapshot.occupancy)
@@ -152,6 +175,10 @@ export class PlayApp extends App {
     }
 
     private setUpFadeTiles = () => {
+        this.fadeAnimation?.kill()
+        this.fadeAnimation = null
+        this.currentPrivateAreaTiles = []
+        this.fadeTileContainer.alpha = 0
         this.fadeTiles = {}
         this.fadeTileContainer.removeChildren()
 
@@ -226,10 +253,7 @@ export class PlayApp extends App {
             return
         }
 
-        for (const player of data.players) {
-            if (player.uid === this.uid) continue
-            this.updatePlayer(player.uid, player)
-        }
+        await Promise.all(data.players.filter((player: { uid: string }) => player.uid !== this.uid).map((player: any) => this.updatePlayer(player.uid, player)))
 
         this.sortObjectsByY()
     }
@@ -253,6 +277,7 @@ export class PlayApp extends App {
         otherPlayer.setPosition(x, y)
         this.layers.object.addChild(otherPlayer.parent)
         this.players[uid] = otherPlayer
+        otherPlayer.applyAvatarState(this.avatarSnapshot[uid])
         this.emitVideoProfile(uid)
         const occupiedId = Object.keys(this.officeSnapshot.occupancy).find(id => this.officeSnapshot.occupancy[id].uid === uid)
         const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find(item => item.id === occupiedId)
@@ -275,9 +300,11 @@ export class PlayApp extends App {
         this.setUpFadeOverlay()
         this.setUpSignalListeners()
         this.setUpSocketEvents()
-        // The room join precedes these listeners. Reannounce the spawn tile so
-        // both newly joined neighbors receive their proximity channel.
-        server.socket.emit('movePlayer', this.player.currentTilePosition)
+        this.gamepad = new GamepadController(this.onGamepadInput, status => signal.emit('officeGamepad', status))
+        signal.emit('officeNotice', { message: `Bem-vindo ao ${this.realmData.rooms[this.currentRoomIndex].name}.`, key: 'office-welcome' })
+        server.socket.emit('avatarGetSnapshot', (response: { ok: boolean, snapshot?: AvatarSnapshot }) => {
+            if (response?.ok && response.snapshot) this.onAvatarState(response.snapshot)
+        })
         server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => {
             if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot)
         })
@@ -367,6 +394,7 @@ export class PlayApp extends App {
         canvas.addEventListener('pointerup', this.endCameraDrag)
         canvas.addEventListener('pointercancel', this.endCameraDrag)
         window.addEventListener('blur', this.cancelCameraDrag)
+        window.addEventListener('blur', this.releaseMovement)
     }
 
     private preventCanvasContextMenu = (event: MouseEvent) => event.preventDefault()
@@ -414,10 +442,17 @@ export class PlayApp extends App {
     }
 
     private keydown = (event: KeyboardEvent) => {
-        if (this.keysDown.includes(event.key) || this.disableInput) return
+        const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
+        if (event.repeat || this.keysDown.includes(key) || this.disableInput) return
         const target = event.target
-        if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable="true"]')) return
+        if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) return
 
+        if (event.key.toLowerCase() === 'z') { this.player.requestDance(); return }
+        if (event.key === 'Shift') {
+            this.keyboardRunning = true
+            this.player.requestRunning(true)
+            return
+        }
         if (event.key.toLowerCase() === 'e') {
             const position = this.player.currentTilePosition
             const object = nearestObject(this.realmData.rooms[this.currentRoomIndex].interactions ?? [], position.x, position.y, 2)
@@ -425,14 +460,60 @@ export class PlayApp extends App {
             return
         }
 
-        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(event.key)) return
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(key)) return
+        event.preventDefault()
         this.pendingOfficeObjectId = null
         this.player.keydown(event)
-        this.keysDown.push(event.key)
+        this.keyboardKeys.add(key)
+        this.keysDown.push(key)
     }
 
     private keyup = (event: KeyboardEvent) => {
-        this.keysDown = this.keysDown.filter((key) => key !== event.key)
+        if (event.key === 'Shift') {
+            this.keyboardRunning = false
+            this.player.requestRunning(this.gamepadRunning)
+        }
+        const released = event.key.length === 1 ? event.key.toLowerCase() : event.key
+        this.keyboardKeys.delete(released)
+        if (this.gamepadDirection !== released) this.keysDown = this.keysDown.filter((key) => key !== released)
+    }
+
+    private onGamepadInput = (input: GamepadInput) => {
+        if (input.back && !document.hidden) signal.emit('officeClose')
+        const target = document.activeElement
+        const editing = target instanceof HTMLElement && Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+        const blocked = this.disableInput || this.player.frozen || editing
+        const running = !blocked && input.running
+        if (running !== this.gamepadRunning) {
+            this.gamepadRunning = running
+            this.player.requestRunning(this.keyboardRunning || running)
+        }
+        if (!blocked && input.dance) this.player.requestDance()
+        const direction = blocked ? null : input.direction
+        if (direction !== this.gamepadDirection) {
+            if (this.gamepadDirection && !this.keyboardKeys.has(this.gamepadDirection)) this.keysDown = this.keysDown.filter(key => key !== this.gamepadDirection)
+            this.gamepadDirection = direction
+            if (direction) {
+                this.pendingOfficeObjectId = null
+                this.keysDown = this.keysDown.filter(key => key !== direction)
+                this.keysDown.push(direction)
+                this.player.keydown(new KeyboardEvent('keydown', { key: direction }))
+            }
+        }
+        if (!blocked && input.action) {
+            const position = this.player.currentTilePosition
+            const object = nearestObject(this.realmData.rooms[this.currentRoomIndex].interactions ?? [], position.x, position.y, 2)
+            if (object) this.requestOfficeObject(object.id)
+        }
+    }
+
+    private releaseMovement = () => {
+        if (this.keyboardRunning || this.gamepadRunning) this.player.requestRunning(false)
+        this.keyboardRunning = false
+        this.gamepadRunning = false
+        this.keyboardKeys.clear()
+        this.gamepadDirection = null
+        this.keysDown = []
     }
 
     public teleportIfOnTeleportSquare = (x: number, y: number) => {
@@ -446,20 +527,36 @@ export class PlayApp extends App {
     }
 
     private teleport = async (roomIndex: number, x: number, y: number) => {
+        if (this.roomTransitioning) return
+        this.roomTransitioning = true
         this.player.setFrozen(true)
+        this.releaseMovement()
         await this.fadeIn()
-        if (this.currentRoomIndex === roomIndex) {
-            this.player.setPosition(x, y)
-            this.moveCameraToPlayer()
+        type Result = { ok: boolean, error?: string, proximityId?: string | null, roomIndex?: number, verifiedPosition?: Point }
+        const result = await new Promise<Result>(resolve => server.socket.timeout(8000).emit('teleport', { x, y, roomIndex }, (timeout: Error | null, response: Result) => resolve(timeout ? { ok: false, error: 'Não foi possível atravessar a passagem.' } : response)))
+        if (!result?.ok) {
+            if (result?.verifiedPosition) this.player.setPosition(result.verifiedPosition.x, result.verifiedPosition.y)
+            signal.emit('officeFeedback', { message: result?.error ?? 'Passagem indisponível.' })
         } else {
-            this.teleportLocation = { x, y }
-            this.currentRoomIndex = roomIndex
-            this.player.changeAnimationState('idle_down')
-            await this.loadRoom(roomIndex)
+            this.player.resetConversation()
+            if (this.currentRoomIndex === roomIndex) {
+                this.player.setPosition(x, y)
+                this.moveCameraToPlayer()
+            } else {
+                this.teleportLocation = { x, y }
+                this.player.changeAnimationState('idle_down')
+                await this.loadRoom(roomIndex)
+            }
+            this.proximityId = result.proximityId ?? null
         }
-
-        server.socket.emit('teleport', { x, y, roomIndex })
-
+        this.roomTransitioning = false
+        if (result?.ok) {
+            await this.syncOtherPlayers()
+            server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => { if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot) })
+            server.socket.emit('avatarGetSnapshot', (response: { ok: boolean, snapshot?: AvatarSnapshot }) => { if (response?.ok && response.snapshot) this.onAvatarState(response.snapshot) })
+            signal.emit('officeRoomReady')
+            this.player.checkIfShouldJoinChannel(this.player.verifiedPosition)
+        }
         this.player.setFrozen(false)
         this.fadeOut()
     }
@@ -514,10 +611,13 @@ export class PlayApp extends App {
     }
 
     private onPlayerJoinedRoom = (playerData: any) => {
+        if (this.roomTransitioning) return
         this.updatePlayer(playerData.uid, playerData)
+        signal.emit('officeNotice', { message: `${playerData.username || 'Uma pessoa'} entrou no escritório.`, key: `joined:${playerData.uid}` })
     }
 
     private onPlayerMoved = (data: any) => {
+        if (this.roomTransitioning) return
         if (this.blocked.has(`${data.x}, ${data.y}`)) return
 
         const player = this.players[data.uid]
@@ -553,6 +653,8 @@ export class PlayApp extends App {
         signal.on('getSkinForUid', this.getSkinForUid)
         signal.on('officeRequest', this.onOfficeRequest)
         signal.on('officeResync', this.onOfficeResync)
+        signal.on('officePresentationFocus', this.onPresentationFocus)
+        signal.on('officeLightPreference', this.onLightPreference)
     }
 
     private removeSignalListeners = () => {
@@ -563,6 +665,17 @@ export class PlayApp extends App {
         signal.off('getSkinForUid', this.getSkinForUid)
         signal.off('officeRequest', this.onOfficeRequest)
         signal.off('officeResync', this.onOfficeResync)
+        signal.off('officePresentationFocus', this.onPresentationFocus)
+        signal.off('officeLightPreference', this.onLightPreference)
+    }
+
+    private onPresentationFocus = ({ active }: { active: boolean }) => {
+        this.presentationFocused = active
+        this.lightingLayer?.setPresentation(active)
+    }
+
+    private onLightPreference = ({ objectId, enabled }: { objectId: string, enabled: boolean }) => {
+        this.lightingLayer?.setLightEnabled(objectId, enabled)
     }
 
     private onOfficeRequest = ({ objectId }: { objectId: string }) => {
@@ -602,7 +715,7 @@ export class PlayApp extends App {
 
     private onDisableInput = (disable: boolean) => {
         this.disableInput = disable
-        this.keysDown = []
+        this.releaseMovement()
     }
 
     private onKicked = (message: string) => {
@@ -643,9 +756,20 @@ export class PlayApp extends App {
     }
 
     private onProximityUpdate = (data: any) => {
+        if (this.roomTransitioning) return
         this.proximityId = data.proximityId
-        if (this.proximityId) {
-            this.player.checkIfShouldJoinChannel(this.player.currentTilePosition)
+        this.player.checkIfShouldJoinChannel(this.player.verifiedPosition)
+    }
+
+    private onAvatarState = (snapshot: AvatarSnapshot) => {
+        if (this.roomTransitioning) return
+        if (!snapshot || typeof snapshot !== 'object') return
+        const previous = this.avatarSnapshot
+        this.avatarSnapshot = snapshot
+        this.player.applyAvatarState(snapshot[this.uid])
+        for (const [uid, player] of Object.entries(this.players)) player.applyAvatarState(snapshot[uid])
+        for (const [uid, state] of Object.entries(snapshot)) {
+            if (state.action === 'pet' && state.objectId && state.expiresAt !== previous[uid]?.expiresAt) this.interactionLayer?.playPetEffect(state.objectId)
         }
     }
 
@@ -657,6 +781,7 @@ export class PlayApp extends App {
     }
 
     private setUpSocketEvents = () => {
+        server.socket.on('avatarState', this.onAvatarState)
         server.socket.on('officeStateChanged', this.onOfficeStateChanged)
         server.socket.on('officeEffect', this.onOfficeEffect)
         server.socket.on('playerLeftRoom', this.onPlayerLeftRoom)
@@ -671,6 +796,7 @@ export class PlayApp extends App {
     }
 
     private removeSocketEvents = () => {
+        server.socket.off('avatarState', this.onAvatarState)
         server.socket.off('officeStateChanged', this.onOfficeStateChanged)
         server.socket.off('officeEffect', this.onOfficeEffect)
         server.socket.off('playerLeftRoom', this.onPlayerLeftRoom)
@@ -685,6 +811,8 @@ export class PlayApp extends App {
     }
 
     private removeEvents = () => {
+        if (this.eventsRemoved) return
+        this.eventsRemoved = true
         if (this.initialized) {
             this.cancelCameraDrag()
             this.app.canvas.removeEventListener('contextmenu', this.preventCanvasContextMenu)
@@ -693,7 +821,17 @@ export class PlayApp extends App {
             this.app.canvas.removeEventListener('pointerup', this.endCameraDrag)
             this.app.canvas.removeEventListener('pointercancel', this.endCameraDrag)
             window.removeEventListener('blur', this.cancelCameraDrag)
+            window.removeEventListener('blur', this.releaseMovement)
         }
+        this.gamepad?.destroy()
+        this.gamepad = null
+        this.lightingLayer?.destroy()
+        this.lightingLayer = null
+        this.interactionLayer?.destroy()
+        this.interactionLayer = null
+        this.fadeAnimation?.kill()
+        this.fadeAnimation = null
+        PIXI.Ticker.shared.remove(this.fadeOutTicker)
         this.removeSocketEvents()
         this.destroyPlayers()
         server.disconnect()

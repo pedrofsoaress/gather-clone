@@ -5,12 +5,15 @@ import AgoraRTC, {
 import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
 import signal from '../../utils/signal'
 import { videoChat } from '../../utils/video-chat/video-chat'
+import { mediaErrorMessage } from '../../utils/video-chat/AudioPreference'
 
 interface VideoChatContextType {
     toggleCamera: () => void
     toggleMicrophone: () => void
     isCameraMuted: boolean
     isMicMuted: boolean
+    isCameraBusy: boolean
+    isMicBusy: boolean
     isScreenSharing: boolean
     toggleScreenShare: () => Promise<void>
 }
@@ -46,27 +49,49 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
     const [isCameraMuted, setIsCameraMuted] = useState(true)
     const [isMicMuted, setIsMicMuted] = useState(true)
     const [isScreenSharing, setIsScreenSharing] = useState(false)
+    const [isCameraBusy, setIsCameraBusy] = useState(false)
+    const [isMicBusy, setIsMicBusy] = useState(false)
+    const pendingCamera = useRef(false)
+    const pendingMicrophone = useRef(false)
 
     useEffect(() => {
         const onChange = (sharing: boolean) => setIsScreenSharing(sharing)
+        const onCamera = (muted: boolean) => setIsCameraMuted(muted)
+        const onMicrophone = (muted: boolean) => setIsMicMuted(muted)
         signal.on('screen-share-changed', onChange)
-        return () => { signal.off('screen-share-changed', onChange) }
+        signal.on('local-camera-changed', onCamera)
+        signal.on('local-microphone-changed', onMicrophone)
+        return () => {
+            signal.off('screen-share-changed', onChange)
+            signal.off('local-camera-changed', onCamera)
+            signal.off('local-microphone-changed', onMicrophone)
+        }
     }, [])
 
     useEffect(() => {
+        const stopMonitoring = videoChat.startDeviceMonitoring()
         return () => {
+            stopMonitoring()
             videoChat.destroy()
         }
     }, [])
 
     const toggleCamera = async () => {
-        const muted = await videoChat.toggleCamera()
-        setIsCameraMuted(muted)
+        if (pendingCamera.current) return
+        pendingCamera.current = true
+        setIsCameraBusy(true)
+        try { setIsCameraMuted(await videoChat.toggleCamera()) }
+        catch (error) { signal.emit('officeFeedback', { message: mediaErrorMessage(error, 'câmera') }) }
+        finally { pendingCamera.current = false; setIsCameraBusy(false) }
     }
 
     const toggleMicrophone = async () => {
-        const muted = await videoChat.toggleMicrophone()
-        setIsMicMuted(muted)
+        if (pendingMicrophone.current) return
+        pendingMicrophone.current = true
+        setIsMicBusy(true)
+        try { setIsMicMuted(await videoChat.toggleMicrophone()) }
+        catch (error) { signal.emit('officeFeedback', { message: mediaErrorMessage(error, 'microfone') }) }
+        finally { pendingMicrophone.current = false; setIsMicBusy(false) }
     }
 
     const toggleScreenShare = async () => {
@@ -79,6 +104,8 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
         toggleMicrophone,
         isCameraMuted,
         isMicMuted,
+        isCameraBusy,
+        isMicBusy,
         isScreenSharing,
         toggleScreenShare,
     }

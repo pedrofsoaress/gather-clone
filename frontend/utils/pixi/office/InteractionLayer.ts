@@ -2,6 +2,7 @@ import * as PIXI from 'pixi.js'
 import type { OfficeObject } from '../types'
 import type { OfficeSnapshot } from './types'
 import { gsap } from 'gsap'
+import { PetSprite } from './PetSprite'
 
 const TILE_SIZE = 32
 
@@ -11,6 +12,7 @@ export class InteractionLayer {
     private readonly badges = new Map<string, PIXI.Graphics>()
     private readonly gameBalls = new Map<string, PIXI.Graphics>()
     private readonly gameTweens = new Map<string, gsap.core.Tween>()
+    private readonly pets = new Map<string, PetSprite>()
     private occupancy: Record<string, { uid: string, name: string }> = {}
     private hovered: OfficeObject | null = null
 
@@ -55,6 +57,24 @@ export class InteractionLayer {
             badge.visible = object.kind !== 'seat' && object.kind !== 'desk'
             this.container.addChild(badge)
             this.badges.set(object.id, badge)
+
+            if (object.kind === 'pet') {
+                const pet = new PetSprite()
+                pet.container.position.set((x + width / 2) * TILE_SIZE, (y + height / 2 + 0.4) * TILE_SIZE)
+                this.container.addChild(pet.container)
+                this.pets.set(object.id, pet)
+            }
+
+            if (object.kind === 'speaker') {
+                const speaker = new PIXI.Graphics()
+                speaker.roundRect(-11, -14, 22, 31, 3).fill(0x263248).stroke({ color: 0x6ddbc5, width: 2 })
+                speaker.circle(0, -6, 4).fill(0x0d1423).stroke({ color: 0x738399, width: 1 })
+                speaker.circle(0, 7, 7).fill(0x0d1423).stroke({ color: 0x738399, width: 1 })
+                speaker.circle(0, 7, 3).fill(0x4a6078)
+                speaker.position.set((x + width / 2) * TILE_SIZE, (y + height / 2) * TILE_SIZE)
+                speaker.eventMode = 'none'
+                this.container.addChild(speaker)
+            }
 
             if (object.kind === 'pingpong') {
                 const ball = new PIXI.Graphics()
@@ -144,8 +164,12 @@ export class InteractionLayer {
         })
     }
 
+    public playPetEffect(objectId: string) { this.pets.get(objectId)?.pet() }
+
     public destroy() {
         for (const tween of this.gameTweens.values()) tween.kill()
+        for (const pet of this.pets.values()) pet.destroy()
+        this.pets.clear()
         gsap.killTweensOf(this.container.children)
         this.container.destroy({ children: true })
     }

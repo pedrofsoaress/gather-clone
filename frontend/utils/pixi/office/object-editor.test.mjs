@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { upsertObject, removeObject } from './object-editor.ts'
+import { upsertObject, removeObject, objectKindDefaults, observeOfficeObjects } from './object-editor.ts'
+import signal from '../../signal.ts'
 
 const room = {
   name: 'Matte', tilemap: { '1, 1': { floor: '1' } }, interactions: [
@@ -24,4 +25,26 @@ test('deleting an object preserves other objects and the map', () => {
   const next = removeObject(upsertObject(room, added), 'quadro')
   assert.deepEqual(next.interactions.map(item => item.id), ['old'])
   assert.deepEqual(next.tilemap, room.tilemap)
+})
+
+test('new seats and appliances save usable defaults even when their fields are untouched', () => {
+  assert.equal(objectKindDefaults('drink', added.bounds).effect, 'water')
+  assert.equal(objectKindDefaults('snack', added.bounds).effect, 'snack')
+  assert.deepEqual(objectKindDefaults('seat', added.bounds).seatVisual, { x: 1, y: 1, facing: 'down' })
+  assert.equal(objectKindDefaults('external', added.bounds).seatVisual, undefined)
+})
+
+test('reopening the objects panel requests the latest editor snapshot', () => {
+  let current = room.interactions
+  const provide = () => signal.emit('officeObjectsChanged', current)
+  signal.on('requestOfficeObjects', provide)
+  let received
+  const stop = observeOfficeObjects(signal, objects => { received = objects })
+  assert.deepEqual(received, current)
+  stop()
+  current = upsertObject(room, added).interactions
+  const stopAgain = observeOfficeObjects(signal, objects => { received = objects })
+  assert.equal(received.length, 2)
+  stopAgain()
+  signal.off('requestOfficeObjects', provide)
 })

@@ -1,6 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { agoraUidForProfile } from './agoraIdentity.ts'
+import { agoraUidForProfile, isConversationTokenRequest } from './agoraIdentity.ts'
+
+test('conversation tokens cannot impersonate another user or authorize a speaker channel', () => {
+  const uid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  assert.equal(isConversationTokenRequest('0123456789abcdef', uid, uid), true)
+  assert.equal(isConversationTokenRequest('0123456789abcdef', `${uid}-screen`, uid), true)
+  assert.equal(isConversationTokenRequest('speaker-secret', uid, uid), false)
+  assert.equal(isConversationTokenRequest('0123456789abcdef', 'another-user', uid), false)
+})
 
 const uid = '123e4567-e89b-42d3-a456-426614174000'
 

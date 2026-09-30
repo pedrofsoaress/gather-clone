@@ -2,13 +2,15 @@ import * as PIXI from 'pixi.js'
 import playerSpriteSheetData from './PlayerSpriteSheetData'
 import { Point, Coordinate, AnimationState, Direction } from '../types'
 import { PlayApp } from '../PlayApp'
-import { bfs } from '../pathfinding'
+import { findWalkablePath } from '../office/walkable-path'
+import { MovementAuthority } from './movement-authority'
 import { server } from '../../backend/server'
 import { defaultSkin, skins } from './skins'
 import signal from '@/utils/signal'
 import { videoChat } from '@/utils/video-chat/video-chat'
 import { agoraUidForProfile } from '@/utils/video-chat/agoraIdentity'
 import { gsap } from 'gsap'
+import { actionFrames, actionPose, movementSpeed, type AvatarActionState } from './avatar-actions'
 const AVATAR_SCALE = 1.5
 function formatText(message: string, maxLength: number): string {
     message = message.trim()
@@ -55,7 +57,7 @@ export class Player {
     private animationState: AnimationState = 'idle_down'
     private direction: Direction = 'down'
     private animationSpeed: number = 0.1
-    private movementSpeed: number = 3.5
+    private movementSpeed: number = movementSpeed(false)
     public currentTilePosition: Point = { x: 0, y: 0 }
     private isLocal: boolean = false
     private playApp: PlayApp
@@ -76,6 +78,12 @@ export class Player {
     private activeSeatVisual: { x: number, y: number, facing?: Direction } | null = null
     private seatedTextures: Partial<Record<Direction, PIXI.Texture>> = {}
     private pendingSeatVisual: { x: number, y: number, facing?: Direction } | null = null
+    private avatarAction: AvatarActionState = { action: 'idle', running: false, expiresAt: null }
+    private actionStartedAt = 0
+    private actionRemainingMs = 0
+    private runRequest = 0
+    private readonly movementAuthority = new MovementAuthority()
+    public get verifiedPosition(): Point { return this.movementAuthority.position }
 
     constructor(skin: string, playApp: PlayApp, username: string, isLocal: boolean = false) {
         this.skin = skin
@@ -119,6 +127,7 @@ export class Player {
             sprite.gotoAndStop(0)
         }
         previousSeatedTextures.forEach(texture => texture.destroy())
+        if (this.avatarAction.action !== 'idle') this.startActionVisual()
     }
 
     private addUsername() {
@@ -185,6 +194,11 @@ export class Player {
     }
 
     public setPosition(x: number, y: number) {
+        PIXI.Ticker.shared.remove(this.move)
+        this.targetPosition = null
+        this.path = []
+        this.pendingSeatVisual = null
+        this.movementAuthority.reset({ x, y })
         const pos = this.convertTilePosToPlayerPos(x, y)
         this.parent.x = pos.x
         this.parent.y = pos.y
@@ -218,7 +232,7 @@ export class Player {
         const start: Coordinate = [this.currentTilePosition.x, this.currentTilePosition.y]
         const end: Coordinate = [x, y]
 
-        const path: Coordinate[] | null = bfs(start, end, this.playApp.blocked)
+        const path: Coordinate[] | null = findWalkablePath(start, end, this.playApp.realmData.rooms[this.playApp.currentRoomIndex].tilemap, this.playApp.blocked)
         if (!path || path.length === 0) {
             if (!path && !this.isLocal) {
                 this.strikes++
@@ -226,6 +240,7 @@ export class Player {
             return false
         }
 
+        this.stopActionVisual()
         this.setSeatedVisual(null)
 
         PIXI.Ticker.shared.remove(this.move)
@@ -235,17 +250,11 @@ export class Player {
         this.targetPosition = this.convertTilePosToPlayerPos(this.path[this.pathIndex][0], this.path[this.pathIndex][1])
         PIXI.Ticker.shared.add(this.move)
 
-        if (this.isLocal) {
-            server.socket.emit('movePlayer', { x, y })
-        }
         return true
     }
 
     private move = ({ deltaTime }: { deltaTime: number }) => {
         if (!this.targetPosition) return
-
-        const currentPos = this.convertPlayerPosToTilePos(this.parent.x, this.parent.y)
-        this.checkIfShouldJoinChannel(currentPos)
 
         const arrivingTile = { x: this.path[this.pathIndex][0], y: this.path[this.pathIndex][1] }
         if (this.isLocal && this.playApp.hasTeleport(arrivingTile.x, arrivingTile.y) && this.movementMode === 'keyboard') {
@@ -265,7 +274,26 @@ export class Player {
 
             if (this.isLocal) {
                 this.playApp.onLocalPlayerTileChanged(this.currentTilePosition)
-                server.socket.emit('officeStep', this.currentTilePosition)
+                const epoch = this.movementAuthority.begin()
+                const room = this.playApp.currentRoomIndex
+                server.socket.timeout(8000).emit('officeStep', this.currentTilePosition, (timeout: Error | null, result: { ok: boolean, error?: string, roomIndex?: number, verifiedPosition?: Point }) => {
+                    if (!this.initialized || room !== this.playApp.currentRoomIndex) return
+                    const confirmation = this.movementAuthority.settle(epoch, !timeout && result?.ok === true, result?.verifiedPosition)
+                    if (!confirmation) return
+                    if (confirmation.recovering) {
+                        PIXI.Ticker.shared.remove(this.move)
+                        this.targetPosition = null
+                        this.playApp.keysDown = []
+                        this.setFrozen(true)
+                        if (confirmation.settled) {
+                            this.setPosition(this.verifiedPosition.x, this.verifiedPosition.y)
+                            this.setFrozen(false)
+                            this.playApp.onLocalPlayerTileChanged(this.currentTilePosition)
+                            signal.emit('officeFeedback', { message: result?.error ?? 'Posição ajustada. Tente caminhar novamente.' })
+                        }
+                    }
+                    this.checkIfShouldJoinChannel(this.verifiedPosition)
+                })
             }
 
             this.pathIndex++
@@ -283,7 +311,7 @@ export class Player {
                 }
 
                 if ((movementInput.x !== 0 || movementInput.y !== 0) && !this.playApp.blocked.has(`${newTilePosition.x}, ${newTilePosition.y}`)) {
-                    this.moveToTile(newTilePosition.x, newTilePosition.y)
+                    if (!this.moveToTile(newTilePosition.x, newTilePosition.y)) this.stop()
                 } else {
                     this.stop()
 
@@ -329,14 +357,14 @@ export class Player {
         if (tile && tile.privateAreaId) {
             if (tile.privateAreaId !== this.currentChannel) {
                 this.currentChannel = tile.privateAreaId
-                videoChat.joinChannel(tile.privateAreaId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId)
+                videoChat.joinChannel(tile.privateAreaId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId, this.playApp.currentRoomIndex)
                 this.playApp.fadeInTiles(tile.privateAreaId)
             }
         } else {
             if (this.playApp.proximityId) {
                 if (this.playApp.proximityId !== this.currentChannel) {
                     this.currentChannel = this.playApp.proximityId
-                    videoChat.joinChannel(this.playApp.proximityId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId)
+                    videoChat.joinChannel(this.playApp.proximityId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId, this.playApp.currentRoomIndex)
                     this.playApp.fadeOutTiles()
                 }
             } else if (this.currentChannel !== 'local') {
@@ -345,6 +373,12 @@ export class Player {
                 this.playApp.fadeOutTiles()
             }
         }
+    }
+
+    public resetConversation = () => {
+        this.currentChannel = 'local'
+        this.playApp.proximityId = null
+        void videoChat.leaveChannel()
     }
 
     private stop = () => {
@@ -383,7 +417,85 @@ export class Player {
         this.animationState = state
         const animatedSprite = this.parent.children[0] as PIXI.AnimatedSprite
         animatedSprite.textures = this.sheet.animations[state]
+        animatedSprite.animationSpeed = this.animationSpeed * (this.avatarAction.running && state.startsWith('walk_') ? 1.65 : 1)
         animatedSprite.play()
+    }
+
+    public applyAvatarState = (state?: AvatarActionState) => {
+        const next: AvatarActionState = state ?? { action: 'idle', running: false, expiresAt: null }
+        const repeated = next.action === this.avatarAction.action && next.expiresAt === this.avatarAction.expiresAt && next.objectId === this.avatarAction.objectId
+        this.avatarAction = { ...next }
+        this.movementSpeed = movementSpeed(next.running)
+        if (!this.initialized) return
+        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        sprite.animationSpeed = this.animationSpeed * (next.running ? 1.65 : 1)
+        if (repeated) return
+        if (next.action === 'idle' || this.activeSeatVisual || this.targetPosition) {
+            this.stopActionVisual()
+            return
+        }
+        this.actionRemainingMs = Math.max(0, Math.min(next.action === 'dance' ? 10000 : 2500, (next.expiresAt ?? Date.now()) - Date.now()))
+        this.startActionVisual()
+    }
+
+    private startActionVisual = () => {
+        if (!this.initialized || this.activeSeatVisual) return
+        if (this.avatarAction.action === 'pet') {
+            const object = this.playApp.realmData.rooms[this.playApp.currentRoomIndex].interactions?.find(item => item.id === this.avatarAction.objectId)
+            if (object) {
+                const dx = object.bounds.x + object.bounds.width / 2 - this.currentTilePosition.x
+                const dy = object.bounds.y + object.bounds.height / 2 - this.currentTilePosition.y
+                this.direction = Math.abs(dx) > Math.abs(dy) ? dx > 0 ? 'right' : 'left' : dy > 0 ? 'down' : 'up'
+            }
+        }
+        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const frames = actionFrames<PIXI.Texture>(this.sheet.animations, this.avatarAction.action, this.direction)
+        if (frames.length) { sprite.textures = frames; sprite.animationSpeed = this.avatarAction.action === 'dance' ? 0.14 : 0.06; sprite.play() }
+        this.actionStartedAt = performance.now()
+        PIXI.Ticker.shared.remove(this.animateAction)
+        PIXI.Ticker.shared.add(this.animateAction)
+    }
+
+    private animateAction = () => {
+        const elapsed = performance.now() - this.actionStartedAt
+        if (this.activeSeatVisual || this.targetPosition || elapsed >= this.actionRemainingMs) { this.stopActionVisual(); return }
+        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const pose = actionPose(this.avatarAction.action, elapsed)
+        sprite.position.set(pose.x, pose.y)
+        sprite.rotation = pose.rotation
+        sprite.scale.set(AVATAR_SCALE, AVATAR_SCALE * pose.scaleY)
+    }
+
+    private stopActionVisual = () => {
+        PIXI.Ticker.shared.remove(this.animateAction)
+        this.avatarAction = { action: 'idle', running: this.avatarAction.running, expiresAt: null }
+        if (!this.initialized || this.activeSeatVisual) return
+        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        sprite.position.set(0, 0)
+        sprite.rotation = 0
+        sprite.scale.set(AVATAR_SCALE)
+        if (!this.targetPosition) this.changeAnimationState(`idle_${this.direction}` as AnimationState, true)
+    }
+
+    public requestDance = () => {
+        if (!this.isLocal || this.frozen || this.targetPosition) return
+        const action = this.avatarAction.action === 'dance' ? 'idle' : 'dance'
+        server.socket.timeout(8000).emit('avatarAction', { action }, (error: Error | null, result: { ok: boolean, state?: AvatarActionState, error?: string }) => {
+            if (error || !result?.ok) { signal.emit('officeFeedback', { message: result?.error ?? 'Não foi possível dançar agora.' }); return }
+            this.applyAvatarState(result.state)
+        })
+    }
+
+    public requestRunning = (running: boolean) => {
+        if (!this.isLocal || (running && this.frozen)) return
+        const request = ++this.runRequest
+        // Releasing Shift slows down immediately; speeding up requires acknowledgement.
+        if (!running) this.applyAvatarState({ ...this.avatarAction, running: false })
+        server.socket.timeout(8000).emit('avatarRun', { running }, (error: Error | null, result: { ok: boolean, state?: AvatarActionState, error?: string }) => {
+            if (request !== this.runRequest) return
+            if (error || !result?.ok) { if (running) signal.emit('officeFeedback', { message: result?.error ?? 'Não foi possível correr agora.' }); return }
+            this.applyAvatarState(result.state)
+        })
     }
 
     public setSeatedVisual = (visual: { x: number, y: number, facing?: Direction } | null) => {
@@ -392,6 +504,11 @@ export class Player {
         if (this.pendingSeatVisual) return
         const seatKey = visual ? `${visual.x},${visual.y},${visual.facing ?? ''},${this.currentTilePosition.x},${this.currentTilePosition.y}` : null
         if (seatKey === this.currentSeatKey) return
+        if (visual) {
+            this.stopActionVisual()
+            this.avatarAction.running = false
+            this.movementSpeed = movementSpeed(false)
+        }
         this.currentSeatKey = seatKey
         const sprite = this.parent.children[0] as PIXI.AnimatedSprite
         this.seatTween?.kill()
@@ -460,18 +577,19 @@ export class Player {
         if (this.frozen) return
 
         this.setMovementMode('keyboard')
+        const key = event.key.toLowerCase()
         const movementInput = { x: 0, y: 0 }
         let facing: Direction | null = null
-        if (event.key === 'ArrowUp' || event.key === 'w') {
+        if (key === 'arrowup' || key === 'w') {
             movementInput.y -= 1
             facing = 'up'
-        } else if (event.key === 'ArrowDown' || event.key === 's') {
+        } else if (key === 'arrowdown' || key === 's') {
             movementInput.y += 1
             facing = 'down'
-        } else if (event.key === 'ArrowLeft' || event.key === 'a') {
+        } else if (key === 'arrowleft' || key === 'a') {
             movementInput.x -= 1
             facing = 'left'
-        } else if (event.key === 'ArrowRight' || event.key === 'd') {
+        } else if (key === 'arrowright' || key === 'd') {
             movementInput.x += 1
             facing = 'right'
         }
@@ -490,14 +608,14 @@ export class Player {
 
     private getMovementInput = () => {
         const movementInput = { x: 0, y: 0 }
-        const latestKey = this.playApp.keysDown[this.playApp.keysDown.length - 1]
-        if (latestKey === 'ArrowUp' || latestKey === 'w') {
+        const latestKey = this.playApp.keysDown[this.playApp.keysDown.length - 1]?.toLowerCase()
+        if (latestKey === 'arrowup' || latestKey === 'w') {
             movementInput.y -= 1
-        } else if (latestKey === 'ArrowDown' || latestKey === 's') {
+        } else if (latestKey === 'arrowdown' || latestKey === 's') {
             movementInput.y += 1
-        } else if (latestKey === 'ArrowLeft' || latestKey === 'a') {
+        } else if (latestKey === 'arrowleft' || latestKey === 'a') {
             movementInput.x -= 1
-        } else if (latestKey === 'ArrowRight' || latestKey === 'd') {
+        } else if (latestKey === 'arrowright' || latestKey === 'd') {
             movementInput.x += 1
         }
 
@@ -510,6 +628,10 @@ export class Player {
 
     public destroy() {
         PIXI.Ticker.shared.remove(this.move)
+        PIXI.Ticker.shared.remove(this.animateAction)
+        this.initialized = false
+        this.runRequest++
+        if (this.textTimeout) clearTimeout(this.textTimeout)
         this.seatTween?.kill()
         Object.values(this.seatedTextures).forEach(texture => texture.destroy())
         this.seatedTextures = {}
