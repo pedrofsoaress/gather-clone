@@ -58,14 +58,6 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
         if (peers.length === 0) onMeetingModeChange(false)
     }, [peers.length, onMeetingModeChange])
 
-    useEffect(() => {
-        const onScreenShareChanged = (sharing: boolean) => {
-            if (sharing) onMeetingModeChange(false)
-        }
-        signal.on('screen-share-changed', onScreenShareChanged)
-        return () => signal.off('screen-share-changed', onScreenShareChanged)
-    }, [onMeetingModeChange])
-
     if (peers.length === 0) return null
 
     if (!meetingMode) return <div className="pointer-events-none absolute right-3 top-3 z-30 flex max-w-[calc(100vw-24px)] flex-col items-end gap-2 text-white">
