@@ -2,6 +2,7 @@ import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IA
 import signal from '../signal'
 import { createHash } from 'crypto'
 import { generateToken } from './generateToken'
+import { clampRemoteVolume, readMediaPreferences, resolveDevicePreference, saveMediaPreferences, type MediaPreferences } from './AudioPreference'
 
 export class VideoChat {
     private client: IAgoraRTCClient = AgoraRTC.createClient({ codec: "vp8", mode: "rtc" })
@@ -12,6 +13,9 @@ export class VideoChat {
     private currentChannel: string = ''
     private currentAgoraChannel: string = ''
     private currentUid: string = ''
+    private preferences: MediaPreferences | null = null
+    private readonly remoteVolumes = new Map<string, number>()
+    private readonly remoteMuted = new Set<string>()
 
     private remoteUsers: { [uid: string]: IAgoraRTCRemoteUser } = {}
 
@@ -42,6 +46,7 @@ export class VideoChat {
 
         if (mediaType === 'audio') {
             user.audioTrack?.play()
+            await this.applyRemoteAudio(user)
         }
 
         if (mediaType === 'audio' || mediaType === 'video') {
@@ -63,7 +68,7 @@ export class VideoChat {
 
     public async toggleCamera() {
         if (!this.cameraTrack) {
-            this.cameraTrack = await AgoraRTC.createCameraVideoTrack()
+            this.cameraTrack = await AgoraRTC.createCameraVideoTrack(this.getPreferences().cameraId ? { cameraId: this.getPreferences().cameraId } : undefined)
             this.cameraTrack.play('local-video')
 
             if (this.client.connectionState === 'CONNECTED') {
@@ -74,10 +79,6 @@ export class VideoChat {
         }
         await this.cameraTrack.setEnabled(!this.cameraTrack.enabled)
 
-        if (this.client.connectionState === 'CONNECTED' && this.cameraTrack.enabled) {
-            await this.client.publish([this.cameraTrack])
-        }
-
         return !this.cameraTrack.enabled
     }
 
@@ -85,7 +86,7 @@ export class VideoChat {
 
     public async toggleMicrophone() {
         if (!this.microphoneTrack) {
-            this.microphoneTrack = await AgoraRTC.createMicrophoneAudioTrack()
+            this.microphoneTrack = await AgoraRTC.createMicrophoneAudioTrack(this.getPreferences().microphoneId ? { microphoneId: this.getPreferences().microphoneId } : undefined)
 
             if (this.client.connectionState === 'CONNECTED') {
                 await this.client.publish([this.microphoneTrack])
@@ -96,6 +97,88 @@ export class VideoChat {
         await this.microphoneTrack.setMuted(!this.microphoneTrack.muted)
 
         return this.microphoneTrack.muted
+    }
+
+    private getPreferences(): MediaPreferences {
+        if (!this.preferences) this.preferences = readMediaPreferences()
+        return this.preferences
+    }
+
+    public getDevicePreferences(): MediaPreferences { return { ...this.getPreferences() } }
+
+    public async listDevices(): Promise<MediaDeviceInfo[]> {
+        if (!navigator.mediaDevices?.enumerateDevices) throw new Error('Este navegador não permite listar dispositivos de mídia.')
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const preferences = this.getPreferences()
+        const next = {
+            microphoneId: resolveDevicePreference(preferences.microphoneId, 'audioinput', devices),
+            cameraId: resolveDevicePreference(preferences.cameraId, 'videoinput', devices),
+            outputId: resolveDevicePreference(preferences.outputId, 'audiooutput', devices),
+        }
+        if (JSON.stringify(preferences) !== JSON.stringify(next)) {
+            this.preferences = next
+            saveMediaPreferences(next)
+            if (preferences.microphoneId && !next.microphoneId && this.microphoneTrack) await this.microphoneTrack.setDevice('default').catch(() => {})
+            if (preferences.cameraId && !next.cameraId && this.cameraTrack) await this.cameraTrack.setDevice('default').catch(() => {})
+            if (preferences.outputId && !next.outputId) await this.applyAllRemoteAudio()
+        }
+        return devices
+    }
+
+    public async selectMicrophone(deviceId: string): Promise<void> {
+        const devices = await this.listDevices()
+        if (deviceId && resolveDevicePreference(deviceId, 'audioinput', devices) !== deviceId) throw new Error('Microfone indisponível.')
+        if (this.microphoneTrack) await this.microphoneTrack.setDevice(deviceId || 'default')
+        this.preferences = { ...this.getPreferences(), microphoneId: deviceId }
+        saveMediaPreferences(this.preferences)
+    }
+
+    public async selectCamera(deviceId: string): Promise<void> {
+        const devices = await this.listDevices()
+        if (deviceId && resolveDevicePreference(deviceId, 'videoinput', devices) !== deviceId) throw new Error('Câmera indisponível.')
+        if (this.cameraTrack) await this.cameraTrack.setDevice(deviceId || 'default')
+        this.preferences = { ...this.getPreferences(), cameraId: deviceId }
+        saveMediaPreferences(this.preferences)
+    }
+
+    public get outputSupported(): boolean { return typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype }
+
+    public async selectOutput(deviceId: string): Promise<void> {
+        if (!this.outputSupported) throw new Error('Seu navegador não oferece seleção de saída de áudio.')
+        const devices = await this.listDevices()
+        if (deviceId && resolveDevicePreference(deviceId, 'audiooutput', devices) !== deviceId) throw new Error('Saída de áudio indisponível.')
+        for (const user of Object.values(this.remoteUsers)) if (user.audioTrack) await user.audioTrack.setPlaybackDevice(deviceId || 'default')
+        this.preferences = { ...this.getPreferences(), outputId: deviceId }
+        saveMediaPreferences(this.preferences)
+    }
+
+    public getRemoteAudio(uid: string): { muted: boolean, volume: number, speaking: boolean } {
+        const user = this.remoteUsers[uid]
+        return { muted: this.remoteMuted.has(uid), volume: this.remoteVolumes.get(uid) ?? 100, speaking: Boolean(user?.audioTrack && user.audioTrack.getVolumeLevel() > 0.2) }
+    }
+
+    public setRemoteMuted(uid: string, muted: boolean): void {
+        if (muted) this.remoteMuted.add(uid)
+        else this.remoteMuted.delete(uid)
+        void this.applyRemoteAudio(this.remoteUsers[uid])
+        signal.emit('remote-audio-preference-changed', uid)
+    }
+
+    public setRemoteVolume(uid: string, volume: number): void {
+        this.remoteVolumes.set(uid, clampRemoteVolume(volume))
+        void this.applyRemoteAudio(this.remoteUsers[uid])
+        signal.emit('remote-audio-preference-changed', uid)
+    }
+
+    private async applyRemoteAudio(user?: IAgoraRTCRemoteUser): Promise<void> {
+        if (!user?.audioTrack) return
+        const uid = String(user.uid)
+        user.audioTrack.setVolume(this.remoteMuted.has(uid) ? 0 : this.remoteVolumes.get(uid) ?? 100)
+        if (this.outputSupported) await user.audioTrack.setPlaybackDevice(this.getPreferences().outputId || 'default').catch(() => {})
+    }
+
+    private async applyAllRemoteAudio(): Promise<void> {
+        await Promise.all(Object.values(this.remoteUsers).map(user => this.applyRemoteAudio(user)))
     }
 
     public playVideoTrackAtElementId(elementId: string) {

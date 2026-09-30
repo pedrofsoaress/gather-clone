@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
 import signal from '@/utils/signal'
-import { ArrowsOut, ArrowsIn, MicrophoneSlash, MapTrifold } from '@phosphor-icons/react'
+import { ArrowsOut, ArrowsIn, MicrophoneSlash, MapTrifold, SpeakerHigh, SpeakerSlash } from '@phosphor-icons/react'
 import AnimatedCharacter from '@/app/play/SkinMenu/AnimatedCharacter'
 import { useVideoChat } from '@/app/hooks/useVideoChat'
 import { videoChat } from '@/utils/video-chat/video-chat'
@@ -115,6 +115,8 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     const [skin, setSkin] = useState(isLocalScreen ? localSkin : '')
     const [name, setName] = useState(isLocalScreen ? localName : 'Visitante')
     const [expanded, setExpanded] = useState(false)
+    const [audioMenuOpen, setAudioMenuOpen] = useState(false)
+    const [audioState, setAudioState] = useState(() => videoChat.getRemoteAudio(user.uid))
 
     useEffect(() => {
         if (isLocalScreen) {
@@ -138,10 +140,26 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
         else containerRef.current?.replaceChildren()
     }, [user, meetingMode, isScreen])
 
-    return <div className={`${expanded ? 'fixed left-1/2 top-1/2 z-50 h-[min(70vh,700px)] w-[min(90vw,1200px)] -translate-x-1/2 -translate-y-1/2 shadow-2xl' : className} overflow-hidden rounded-xl bg-[#252b42]`}>
+    useEffect(() => {
+        if (isScreen) return
+        const refresh = () => setAudioState(videoChat.getRemoteAudio(user.uid))
+        const onPreference = (uid: string) => { if (uid === user.uid) refresh() }
+        signal.on('remote-audio-preference-changed', onPreference)
+        const timer = window.setInterval(refresh, 250)
+        return () => { signal.off('remote-audio-preference-changed', onPreference); window.clearInterval(timer) }
+    }, [isScreen, user.uid])
+
+    return <div className={`${expanded ? 'fixed left-1/2 top-1/2 z-50 h-[min(70vh,700px)] w-[min(90vw,1200px)] -translate-x-1/2 -translate-y-1/2 shadow-2xl' : className} rounded-xl bg-[#252b42] ${audioState.speaking && !isScreen ? 'ring-2 ring-teal-400' : ''}`}>
         <div className="absolute inset-0 grid place-items-center"><div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full bg-slate-700">{skin && <AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className="h-16 w-16" />}</div></div>
-        <div ref={containerRef} id={`remote-user-${user.uid}`} className="absolute inset-0" />
+        <div ref={containerRef} id={`remote-user-${user.uid}`} className="absolute inset-0 overflow-hidden rounded-xl" />
         <p className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-xs">{isScreen ? `Tela de ${name}` : <>{!user.micEnabled && <MicrophoneSlash size={13} className="text-red-400" />}{name}</>}</p>
         {meetingMode && user.cameraEnabled && <button type="button" aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo ou tela compartilhada'} onClick={() => setExpanded(value => !value)} className="absolute right-2 top-2 z-10 rounded-lg bg-black/70 p-2 text-white hover:bg-black">{expanded ? <ArrowsIn size={18} /> : <ArrowsOut size={18} />}</button>}
+        {!isScreen && <div className={`absolute ${meetingMode && user.cameraEnabled ? 'right-12' : 'right-2'} top-2 z-20`}>
+            <button type="button" aria-label={`Áudio de ${name}`} onClick={() => setAudioMenuOpen(value => !value)} className="rounded-lg bg-black/70 p-2 text-white hover:bg-black">{audioState.muted ? <SpeakerSlash size={18} /> : <SpeakerHigh size={18} />}</button>
+            {audioMenuOpen && <div className="absolute right-0 top-10 w-48 space-y-2 rounded-lg bg-slate-900 p-3 text-xs shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+                <button type="button" onClick={() => videoChat.setRemoteMuted(user.uid, !audioState.muted)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">{audioState.muted ? 'Ativar áudio para mim' : 'Silenciar só para mim'}</button>
+                <label className="block">Volume · {audioState.volume}%<input type="range" min="0" max="100" value={audioState.volume} onChange={event => videoChat.setRemoteVolume(user.uid, Number(event.target.value))} className="w-full" /></label>
+            </div>}
+        </div>}
     </div>
 }

@@ -1,5 +1,5 @@
 import React from 'react'
-import { TShirt, MonitorArrowUp } from '@phosphor-icons/react'
+import { TShirt, MonitorArrowUp, GearSix } from '@phosphor-icons/react'
 import { useModal } from '../hooks/useModal'
 import signal from '@/utils/signal'
 import { ArrowLeftEndOnRectangleIcon } from '@heroicons/react/24/outline'
@@ -9,6 +9,7 @@ import { useVideoChat } from '../hooks/useVideoChat'
 import AnimatedCharacter from './SkinMenu/AnimatedCharacter'
 import { useEffect, useState } from 'react'
 import { videoChat } from '@/utils/video-chat/video-chat'
+import DeviceSettings from '@/components/VideoChat/DeviceSettings'
 
 type PlayNavbarProps = {
     username: string
@@ -21,6 +22,7 @@ const PlayNavbar:React.FC<PlayNavbarProps> = ({ username, skin }) => {
     const { setModal } = useModal()
     const { isCameraMuted, isScreenSharing, toggleScreenShare } = useVideoChat()
     const [screenError, setScreenError] = useState('')
+    const [deviceSettingsOpen, setDeviceSettingsOpen] = useState(false)
     function onClickSkinButton() {
         setModal('Skin')
         signal.emit('requestSkin')
@@ -50,9 +52,11 @@ const PlayNavbar:React.FC<PlayNavbarProps> = ({ username, skin }) => {
             <MicAndCameraButtons />
             <button type="button" onClick={() => { setScreenError(''); void toggleScreenShare().catch(error => setScreenError(error instanceof Error && error.message.startsWith('Aproxime-se') ? error.message : 'Não foi possível iniciar a captura. Mantenha esta aba ativa e permita o compartilhamento no navegador.')) }} aria-label={isScreenSharing ? 'Parar compartilhamento de tela' : 'Compartilhar tela'} title={isScreenSharing ? 'Parar compartilhamento' : 'Compartilhar tela na chamada'} className={`flex h-10 items-center gap-2 rounded-lg px-2 text-sm text-white outline-none hover:bg-light-secondary ${isScreenSharing ? 'bg-teal-700' : 'bg-secondary'}`}><MonitorArrowUp size={24}/><span className="hidden md:inline">{isScreenSharing ? 'Parar tela' : 'Compartilhar tela'}</span></button>
             {screenError && <p role="status" className="absolute bottom-16 left-3 max-w-sm rounded-lg bg-slate-950 px-3 py-2 text-sm text-amber-200 shadow-lg">{screenError}</p>}
+            <button type="button" aria-label="Configurar microfone, câmera e áudio" title="Dispositivos" onClick={() => setDeviceSettingsOpen(true)} className="aspect-square grid place-items-center rounded-lg bg-secondary p-2 text-white hover:bg-light-secondary"><GearSix size={27} /></button>
             <button className='aspect-square grid place-items-center rounded-lg p-1 outline-none bg-secondary hover:bg-light-secondary ml-auto animate-colors' onClick={onClickSkinButton}>
                 <TShirt className='h-8 w-8'/>
             </button>
+            {deviceSettingsOpen && <DeviceSettings onClose={() => setDeviceSettingsOpen(false)} />}
         </div>
     )
 }
