@@ -1,5 +1,5 @@
 import { Server } from 'socket.io'
-import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, ChatMessage, OfficeStep, OfficeAction, OfficeReadNotes, OfficeAddNote } from './socket-types'
+import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, ChatMessage, OfficeStep, OfficeAction, OfficeReadNotes, OfficeAddNote, OfficeExternalGet, OfficeExternalSetRoom } from './socket-types'
 import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
@@ -218,6 +218,33 @@ export function sockets(io: Server) {
             if (result.ok && result.effect) io.to(session.id).emit('officeEffect', {
                 objectId: parsed.data.objectId, effect: result.effect, uid, name: session.getPlayer(uid).username,
             })
+        })
+
+        const externalTarget = (objectId: string) => {
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            const player = session?.getPlayer(uid)
+            if (!session || !player || player.socketId !== socket.id || player.room !== session.map_data.spawnpoint.roomIndex) return null
+            return { uid, session, objectId, room: player.room }
+        }
+
+        socket.on('officeExternalGet', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const parsed = OfficeExternalGet.safeParse(raw)
+            const target = parsed.success ? externalTarget(parsed.data.objectId) : null
+            ack(target ? target.session.externalObjects.get(target.uid, target.objectId) : { ok: false, error: 'Aproxime-se do quadro.' })
+        })
+
+        socket.on('officeExternalSetRoom', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const parsed = OfficeExternalSetRoom.safeParse(raw)
+            const target = parsed.success ? externalTarget(parsed.data.objectId) : null
+            if (!target || !parsed.success) return ack({ ok: false, error: 'Aproxime-se do quadro.' })
+            const result = target.session.externalObjects.setRoom(target.uid, target.objectId, parsed.data.url, parsed.data.revision)
+            ack(result)
+            if (result.ok) emitToSocketIds(sessionManager.getSocketIdsInRoom(target.session.id, target.room), 'officeExternalState', { objectId: target.objectId, url: result.url, revision: result.revision })
         })
 
         const noteTarget = (objectId: string) => {

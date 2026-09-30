@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { RealmDataSchema } from '../zod.ts'
+import { map as matteMap } from '../../../../scripts/matte-office-map.mjs'
 
 const map = (interactions = []) => ({
   spawnpoint: { roomIndex: 0, x: 0, y: 0 },
@@ -18,6 +19,10 @@ const external = (id = 'quadro') => ({
 test('old office maps stay valid when new object kinds are introduced', () => {
   const old = { id: 'mesa', kind: 'desk', label: 'Mesa', bounds: { x: 1, y: 1, width: 1, height: 1 }, approach: { x: 1, y: 2 } }
   assert.equal(RealmDataSchema.safeParse(map([old])).success, true)
+})
+
+test('the public Matte office with fractional chair bounds stays saveable', () => {
+  assert.equal(RealmDataSchema.safeParse(matteMap).success, true)
 })
 
 test('external objects require an approved HTTPS URL', () => {

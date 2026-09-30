@@ -7,6 +7,7 @@ import { server } from '@/utils/backend/server'
 import type { OfficeSnapshot } from '@/utils/pixi/office/types'
 import OfficeBoard from './OfficeBoard'
 import PingPongPanel from './PingPongPanel'
+import ExternalObjectPanel from './ExternalObjectPanel'
 
 type OfficeHudProps = { objects: OfficeObject[], uid: string }
 
@@ -90,7 +91,7 @@ export default function OfficeHud({ objects, uid }: OfficeHudProps) {
         {active && <div className="absolute inset-0 z-30 grid place-items-center bg-slate-950/55 p-4" onMouseDown={(event) => event.stopPropagation()}>
             <section role="dialog" aria-modal="true" aria-labelledby="office-action-title"
                 onKeyDown={(event) => { if (event.key === 'Escape') close() }}
-                className="w-full max-w-md rounded-2xl border border-teal-300/40 bg-slate-900 p-5 text-white shadow-2xl">
+                className={`max-h-[calc(100vh-2rem)] w-full overflow-y-auto rounded-2xl border border-teal-300/40 bg-slate-900 p-5 text-white shadow-2xl ${active.kind === 'external' ? 'max-w-5xl' : 'max-w-md'}`}>
                 <div className="flex items-start justify-between gap-4">
                     <h2 ref={headingRef} tabIndex={-1} id="office-action-title" className="text-xl font-bold outline-none">{active.label}</h2>
                     <button type="button" aria-label="Fechar interação" className="rounded-lg bg-slate-700 px-3 py-1 hover:bg-slate-600" onClick={close}>Fechar</button>
@@ -118,6 +119,7 @@ export default function OfficeHud({ objects, uid }: OfficeHudProps) {
                 {active.kind === 'pingpong' && <PingPongPanel game={snapshot.games[active.id]} uid={uid} busy={busy}
                     onAction={action => act(active.id, action)} />}
                 {['board', 'desk', 'guestbook'].includes(active.kind) && <OfficeBoard key={active.id} object={active} />}
+                {active.kind === 'external' && <ExternalObjectPanel key={active.id} object={active} />}
             </section>
         </div>}
     </>

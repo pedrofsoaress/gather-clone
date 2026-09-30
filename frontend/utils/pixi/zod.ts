@@ -42,8 +42,8 @@ export const OfficeObjectSchema = z.object({
   kind: z.enum(['guide', 'seat', 'desk', 'board', 'drink', 'snack', 'guestbook', 'pingpong', 'external', 'presentation', 'speaker', 'pet', 'light']),
   label: z.string().min(1).max(48),
   bounds: z.object({
-    x: z.number().int(), y: z.number().int(),
-    width: z.number().int().positive(), height: z.number().int().positive(),
+    x: z.number().finite().nonnegative(), y: z.number().finite().nonnegative(),
+    width: z.number().finite().positive(), height: z.number().finite().positive(),
   }),
   approach: z.object({ x: z.number().int(), y: z.number().int() }),
   seatVisual: z.object({
@@ -61,6 +61,10 @@ export const OfficeObjectSchema = z.object({
     : object.kind === 'light' ? Boolean(config && 'radiusTiles' in config)
     : !config
   if (!valid) context.addIssue({ code: z.ZodIssueCode.custom, path: ['config'], message: 'Configuração incompatível com o objeto.' })
+  if (['external', 'presentation', 'speaker', 'pet', 'light'].includes(object.kind) &&
+      !Object.values(object.bounds).every(Number.isInteger)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['bounds'], message: 'Novos objetos precisam de área em tiles inteiros.' })
+  }
 })
 
 const RoomSchema = z.object({

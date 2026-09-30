@@ -70,7 +70,7 @@ Enter a display name before joining. Move with the arrow keys or WASD, or click/
 - Coffee, water and snack machines show a short effect to everyone nearby.
 - Ping-pong supports two players, a shared score, a three-second return timer and the `Space` key or **Rebater** button.
 
-The map has 22 interactive locations. To regenerate it for deployment, run `node scripts/matte-office-map.mjs` and update the Matte realm's `map_data` in Supabase. The art is `frontend/public/matte-office-v2.png`; the Socket.io backend must be restarted after changing the map because active realms are cached in memory.
+The map has 54 interactive hotspots, including the collaborative board and shared piano. To regenerate it for deployment, run `node scripts/matte-office-map.mjs` and update the Matte realm's `map_data` in Supabase. The art is `frontend/public/matte-office-v2.png`; the Socket.io backend must be restarted after changing the map because active realms are cached in memory. The board starts at the Miro homepage; the owner can set a specific board URL in the editor, and nearby participants can synchronize a room link when `roomEditable` is enabled. External sites may block embedding, so the panel also offers a direct link.
 
 The Next.js frontend runs on Vercel with `frontend` as the project root. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_BASE_URL`, `NEXT_PUBLIC_BACKEND_URL`, `SERVICE_ROLE`, `NEXT_PUBLIC_AGORA_APP_ID`, and `APP_CERTIFICATE` in the Vercel project. `SERVICE_ROLE` and `APP_CERTIFICATE` must remain server-side secrets.
 

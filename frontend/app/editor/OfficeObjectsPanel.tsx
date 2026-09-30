@@ -100,7 +100,7 @@ export default function OfficeObjectsPanel({ realmData, roomIndex }: { realmData
             <label className="block">Nome<input value={current.label} onChange={event => change({ label: event.target.value })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1" /></label>
             <label className="block">Tipo<select value={current.kind} onChange={event => { const kind = event.target.value as Kind; change({ kind, config: configFor(kind), seatVisual: undefined, effect: undefined }) }} className="mt-1 w-full rounded bg-slate-800 px-2 py-1">{kinds.map(kind => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
             <fieldset className="grid grid-cols-2 gap-2"><legend className="mb-1">Área no mapa</legend>
-                {(['x', 'y', 'width', 'height'] as const).map(key => <label key={key}>{key}<input type="number" value={current.bounds[key]} onChange={event => changeBounds(key, Number(event.target.value))} className="w-full rounded bg-slate-800 px-2 py-1" /></label>)}
+                {(['x', 'y', 'width', 'height'] as const).map(key => <label key={key}>{key}<input type="number" step={['seat', 'desk'].includes(current.kind) ? '0.1' : '1'} value={current.bounds[key]} onChange={event => changeBounds(key, Number(event.target.value))} className="w-full rounded bg-slate-800 px-2 py-1" /></label>)}
                 <button type="button" onClick={() => change({ bounds: { ...current.bounds, x: cursor.x, y: cursor.y } })} className="col-span-2 rounded bg-slate-700 px-2 py-1">Usar cursor na área</button>
             </fieldset>
             <fieldset className="grid grid-cols-2 gap-2"><legend className="mb-1">Ponto de aproximação</legend>

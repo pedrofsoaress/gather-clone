@@ -98,6 +98,8 @@ const interactions = [
   officeObject('project-table', 'board', 'Mesa de projetos', [22, 12, 7, 4], [25, 16]),
   officeObject('workshop-shelves', 'guide', 'Prateleiras da oficina', [2, 19, 4, 3], [6, 20]),
   officeObject('workbench', 'board', 'Bancada de ideias', [5, 22, 7, 3], [8, 25]),
+  officeObject('collab-board', 'external', 'Quadro colaborativo', [12, 22, 2, 2], [14, 24], { config: { url: 'https://miro.com/', allowedHosts: ['miro.com'], roomEditable: true } }),
+  officeObject('shared-piano', 'external', 'Piano compartilhado', [2, 7, 2, 1], [4, 8], { config: { url: 'https://musiclab.chromeexperiments.com/Shared-Piano/', allowedHosts: ['musiclab.chromeexperiments.com'], roomEditable: true } }),
   officeObject('reception', 'guestbook', 'Recepção', [21, 20, 8, 3], [25, 19]),
   officeObject('pingpong', 'pingpong', 'Pingue-pongue', [35, 21, 4, 5], [34, 23]),
 

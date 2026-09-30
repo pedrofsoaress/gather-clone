@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { OfficeState } from './office/OfficeState'
 import { validateOfficeMap } from './office/object-config'
+import { OfficeSharedObjects } from './office/OfficeSharedObjects'
 
 export type RealmData = {
     spawnpoint: {
@@ -139,12 +140,14 @@ export class Session {
     public id: string
     public map_data: RealmData 
     public officeState: OfficeState
+    public externalObjects: OfficeSharedObjects
 
     constructor(id: string, mapData: RealmData) {
         validateOfficeMap(mapData)
         this.id = id
         this.map_data = mapData 
         this.officeState = new OfficeState(mapData.rooms[mapData.spawnpoint.roomIndex])
+        this.externalObjects = new OfficeSharedObjects(mapData.rooms[mapData.spawnpoint.roomIndex], this.officeState)
 
         for (let i = 0; i < mapData.rooms.length; i++) {
             this.playerRooms[i] = new Set<string>()
