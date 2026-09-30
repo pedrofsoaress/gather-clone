@@ -352,10 +352,14 @@ export class Session {
 
     private getProximityTiles(x: number, y: number): string[] {
         const proximityTiles: string[] = []
-        const range = 6
+        // Keep spontaneous calls close to the avatars. A circular boundary
+        // prevents diagonal corners from reaching into distant workstations.
+        const radius = 2.5
+        const range = Math.floor(radius)
 
         for (let dx = -range; dx <= range; dx++) {
             for (let dy = -range; dy <= range; dy++) {
+                if (dx * dx + dy * dy > radius * radius) continue
                 const tileX = x + dx
                 const tileY = y + dy
                 proximityTiles.push(`${tileX}, ${tileY}`)
