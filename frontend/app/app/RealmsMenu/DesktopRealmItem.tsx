@@ -63,10 +63,11 @@ const DesktopRealmItem:React.FC<DesktopRealmItemProps> = ({ name, id, shareId, s
                     {/* Background pulse animation */}
                     <div className='animate-pulse bg-secondary absolute inset-0' />
                     
-                    {/* Thumbnail image */}
+                    {/* The public Matte space shows the actual office; other maps keep the generic fallback. */}
                     <img 
-                        src='/thumbnail.png' 
-                        className='absolute z-10' 
+                        src={id === '0d778bfd-8e16-49bc-832f-3aa60c5bef0c' ? '/matte-office-v2.png' : '/thumbnail.png'}
+                        alt={`Prévia de ${name}`}
+                        className='absolute inset-0 z-10 h-full w-full object-cover'
                         style={{imageRendering: 'pixelated'}} 
                     />
                     

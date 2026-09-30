@@ -9,17 +9,27 @@ const nunito = localFont({
     display: 'swap',
 })
 
-const defaultUrl = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : "http://localhost:3000"
+const publicUrl = process.env.VERCEL_ENV === 'production'
+  ? 'https://gather-clone-beta.vercel.app'
+  : process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : 'http://localhost:3000'
+
+const description = 'Entre no escritório virtual da Matte, encontre o time no mapa e converse por proximidade.'
 
 export const metadata: Metadata = {
-  metadataBase: new URL(defaultUrl),
+  metadataBase: new URL(publicUrl),
   title: "Matte | Escritório virtual",
-  description: "Entre no escritório virtual da Matte e converse com o time por proximidade.",
+  description,
   applicationName: 'Matte Office',
   appleWebApp: { capable: true, title: 'Matte Office', statusBarStyle: 'default' },
-  icons: { apple: '/pwa/apple-touch-icon.png' },
+  icons: { icon: '/brand/matte-icon.svg', shortcut: '/brand/matte-icon.svg', apple: '/pwa/apple-touch-icon.png' },
+  openGraph: {
+    type: 'website', locale: 'pt_BR', siteName: 'Matte',
+    title: 'Escritório virtual Matte', description,
+    images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'Mapa do escritório virtual da Matte' }],
+  },
+  twitter: { card: 'summary_large_image', title: 'Escritório virtual Matte', description, images: ['/opengraph-image'] },
 }
 
 export const viewport: Viewport = { themeColor: '#191e32' }

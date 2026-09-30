@@ -1,6 +1,7 @@
 import AnimatedCharacter from './play/SkinMenu/AnimatedCharacter'
 import Link from 'next/link'
 import BasicButton from '@/components/BasicButton'
+import Image from 'next/image'
 
 const officeUrl = '/play/0d778bfd-8e16-49bc-832f-3aa60c5bef0c?shareId=f2ac1499-532e-47aa-9244-5b48f8926283'
 
@@ -8,7 +9,10 @@ export default function Index() {
   return (
     <main className='min-h-screen gradient px-6 py-16 flex items-center justify-center'>
       <div className='w-full max-w-3xl rounded-3xl border border-white/20 bg-[#1b2344]/80 px-8 py-12 text-center shadow-2xl sm:px-16'>
-        <p className='mb-5 text-sm font-bold uppercase tracking-[0.35em] text-[#00d4b2]'>Matte</p>
+        <div className='mb-5 flex items-center justify-center gap-3'>
+          <Image src='/brand/matte-icon.svg' alt='' width={42} height={42} className='rounded-lg' priority />
+          <p className='text-sm font-bold uppercase tracking-[0.35em] text-white'>Matte</p>
+        </div>
         <h1 className='text-4xl font-bold sm:text-6xl'>Escritório virtual</h1>
         <p className='mx-auto mt-6 max-w-xl text-lg text-[#cad8ff]'>
           Encontre o time, circule pelo escritório e converse com quem estiver por perto.
