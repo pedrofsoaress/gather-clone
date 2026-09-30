@@ -461,16 +461,26 @@ export class Player {
 
         this.setMovementMode('keyboard')
         const movementInput = { x: 0, y: 0 }
+        let facing: Direction | null = null
         if (event.key === 'ArrowUp' || event.key === 'w') {
             movementInput.y -= 1
+            facing = 'up'
         } else if (event.key === 'ArrowDown' || event.key === 's') {
             movementInput.y += 1
+            facing = 'down'
         } else if (event.key === 'ArrowLeft' || event.key === 'a') {
             movementInput.x -= 1
+            facing = 'left'
         } else if (event.key === 'ArrowRight' || event.key === 'd') {
             movementInput.x += 1
+            facing = 'right'
         }
 
+        if (!facing) return
+        if (!this.activeSeatVisual) {
+            this.direction = facing
+            this.changeAnimationState(`idle_${facing}` as AnimationState)
+        }
         this.moveToTile(this.currentTilePosition.x + movementInput.x, this.currentTilePosition.y + movementInput.y)
     }
 

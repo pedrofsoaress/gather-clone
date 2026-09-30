@@ -109,7 +109,24 @@ export class VideoChat {
     public async startScreenShare() {
         if (this.screenTrack) return
         if (!this.isConnected) throw new Error('Aproxime-se de alguém para iniciar uma chamada antes de compartilhar a tela.')
-        const track = await AgoraRTC.createScreenVideoTrack({}, 'disable')
+        // Agora's built-in picker focuses the selected tab. Capture directly so
+        // browsers with Conditional Focus can keep this office tab in front.
+        const CaptureControllerClass = (window as Window & {
+            CaptureController?: new () => { setFocusBehavior: (behavior: 'no-focus-change') => void }
+        }).CaptureController
+        const controller = CaptureControllerClass ? new CaptureControllerClass() : undefined
+        controller?.setFocusBehavior('no-focus-change')
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false,
+            ...(controller ? { controller } : {}),
+        } as DisplayMediaStreamOptions)
+        const mediaTrack = stream.getVideoTracks()[0]
+        if (!mediaTrack) {
+            stream.getTracks().forEach(track => track.stop())
+            throw new Error('Nenhuma tela foi selecionada para compartilhar.')
+        }
+        const track = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: mediaTrack, optimizationMode: 'detail' })
         try {
             const screenUid = `${this.currentUid}-screen`
             const token = await generateToken(this.currentAgoraChannel, screenUid)
@@ -117,7 +134,7 @@ export class VideoChat {
             await this.screenClient.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, this.currentAgoraChannel, token, screenUid)
             await this.screenClient.publish(track)
             this.screenTrack = track
-            track.on('track-ended', () => { void this.stopScreenShare() })
+            mediaTrack.addEventListener('ended', () => { void this.stopScreenShare() }, { once: true })
             signal.emit('screen-share-changed', true)
         } catch (error) {
             if (this.screenClient.connectionState === 'CONNECTED') await this.screenClient.leave().catch(() => {})
