@@ -15,6 +15,8 @@ import type { PresentationSnapshot } from '@/utils/pixi/office/types'
 import { server } from '@/utils/backend/server'
 import SpeakerRuntime from './SpeakerRuntime'
 import OfficeNotifications from './OfficeNotifications'
+import { createClient } from '@/utils/supabase/client'
+import { skins } from '@/utils/pixi/Player/skins'
 
 const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 
@@ -83,8 +85,10 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
     }, [])
 
     useEffect(() => {
-        const savedName = window.localStorage.getItem(`matte-office-name:${uid}`)?.trim()
-        if (savedName && savedName.length <= 32) setDisplayName(savedName)
+        try {
+            const savedName = window.localStorage.getItem(`matte-office-name:${uid}`)?.trim()
+            if (savedName && savedName.length <= 32) setDisplayName(savedName)
+        } catch { /* The profile name remains available when storage is disabled. */ }
     }, [uid])
 
     const [skin, setSkin] = useState(initialSkin)
@@ -145,8 +149,14 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
                 <OfficeHud key={roomIndex} objects={mapData.rooms[roomIndex].interactions ?? []} uid={uid} presentations={presentations} onPresentationFocus={setSelectedPresentationId} />
                 <OfficeChat uid={uid} meetingMode={meetingMode} open={chatOpen} onOpenChange={setChatOpen} />
             </div>}
-            {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={(chosenName) => {
-                window.localStorage.setItem(`matte-office-name:${uid}`, chosenName)
+            {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={async (chosenName, chosenSkin) => {
+                if (!skins.includes(chosenSkin)) throw new Error('Invalid avatar')
+                // The server reads the profile when joining. Save first so everyone sees the chosen avatar.
+                const { data, error } = await createClient().from('profiles')
+                    .update({ skin: chosenSkin }).eq('id', uid).select('skin').single()
+                if (error || data?.skin !== chosenSkin) throw new Error('Avatar was not saved')
+                try { window.localStorage.setItem(`matte-office-name:${uid}`, chosenName) } catch { /* Joining works with storage disabled. */ }
+                setSkin(chosenSkin)
                 setDisplayName(chosenName)
                 setShowIntroScreen(false)
             }}/>}

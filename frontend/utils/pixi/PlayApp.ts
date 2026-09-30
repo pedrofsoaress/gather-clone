@@ -13,6 +13,7 @@ import type { OfficeSnapshot } from './office/types'
 import { LightingLayer } from './office/LightingLayer'
 import { GamepadController, type GamepadInput } from './office/GamepadController'
 import type { AvatarSnapshot } from './Player/avatar-actions'
+import { zoomAtCursor } from './office/camera-zoom.mjs'
 
 export class PlayApp extends App {
     private scale: number = 1.5
@@ -393,11 +394,38 @@ export class PlayApp extends App {
         canvas.addEventListener('pointermove', this.moveCameraDrag)
         canvas.addEventListener('pointerup', this.endCameraDrag)
         canvas.addEventListener('pointercancel', this.endCameraDrag)
+        canvas.addEventListener('wheel', this.zoomCamera, { passive: false })
         window.addEventListener('blur', this.cancelCameraDrag)
         window.addEventListener('blur', this.releaseMovement)
     }
 
     private preventCanvasContextMenu = (event: MouseEvent) => event.preventDefault()
+
+    private zoomCamera = (event: WheelEvent) => {
+        if (this.disableInput || this.player.frozen || this.roomTransitioning || !event.deltaY) return
+        const bounds = this.app.canvas.getBoundingClientRect()
+        if (!bounds.width || !bounds.height) return
+        // Listen only on the canvas: wheel events on chat, menus and video never
+        // reach this handler. Pixi's screen units can differ from CSS pixels.
+        event.preventDefault()
+        const cursor = {
+            x: (event.clientX - bounds.left) * this.app.screen.width / bounds.width,
+            y: (event.clientY - bounds.top) * this.app.screen.height / bounds.height,
+        }
+        const next = zoomAtCursor({ scale: this.scale, pivot: this.app.stage.pivot }, cursor, event.deltaY, event.deltaMode, this.app.screen.height)
+        if (next.scale === this.scale) return
+        this.setScale(next.scale)
+        this.app.stage.pivot.set(next.pivot.x, next.pivot.y)
+        this.cameraManuallyPanned = true
+        this.updateFadeOverlay(next.pivot.x, next.pivot.y)
+        if (this.cameraDrag) {
+            // Keep right-button dragging continuous if the wheel is used while held.
+            this.cameraDrag.startX = event.clientX
+            this.cameraDrag.startY = event.clientY
+            this.cameraDrag.pivotX = next.pivot.x
+            this.cameraDrag.pivotY = next.pivot.y
+        }
+    }
 
     private startCameraDrag = (event: PointerEvent) => {
         if (event.button !== 2 || this.disableInput) return
@@ -820,6 +848,8 @@ export class PlayApp extends App {
             this.app.canvas.removeEventListener('pointermove', this.moveCameraDrag)
             this.app.canvas.removeEventListener('pointerup', this.endCameraDrag)
             this.app.canvas.removeEventListener('pointercancel', this.endCameraDrag)
+            this.app.canvas.removeEventListener('wheel', this.zoomCamera)
+            this.app.renderer.off('resize', this.resizeEvent)
             window.removeEventListener('blur', this.cancelCameraDrag)
             window.removeEventListener('blur', this.releaseMovement)
         }
