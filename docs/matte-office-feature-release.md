@@ -24,6 +24,9 @@ Tokens de mídia exigem participação atual validada no backend; canais disting
 - Dois participantes temporários em Socket.io: dança sincronizada, recusa de ações distantes, apresentações/slide/pedido de fala, autorização da conversa privada, posse/volume/liberação do speaker e URL externa compartilhada.
 - Navegador: entrada com nome, mapa, carinho no pet e dispositivos; interface a 375px sem corte da barra de controles.
 - Builds de produção de frontend e backend.
+- Publicação confirmada: Render `dep-dauggkuk1f9s73boi2i0`, Vercel `dpl_8QCUoDgUaqpwBHHaDCTiuoXnNDh8`, commit `f22e62b`. O endereço público permanece `gather-clone-beta.vercel.app`.
+- Após publicação, dois navegadores conectaram no Agora com microfone/câmera desligados: chamada compacta e expansão manual verificadas. Não foi concluído um compartilhamento real de tela nem teste com câmera física nesta validação.
+- O mapa principal recebeu oito objetos por atualização aditiva; os 52 anteriores foram preservados. Backup local em `~/.config/gather-clone/matte-office-map-before-features-20260930.json`. Sala e contas temporárias de integração removidas.
 
 ## Limites da entrega
 
