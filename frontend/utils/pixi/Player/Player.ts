@@ -11,6 +11,8 @@ import { videoChat } from '@/utils/video-chat/video-chat'
 import { agoraUidForProfile } from '@/utils/video-chat/agoraIdentity'
 import { gsap } from 'gsap'
 import { actionFrames, actionPose, movementSpeed, type AvatarActionState } from './avatar-actions'
+import { outlineCanvas } from './outline-pixels'
+import { AvatarDecorations } from './AvatarDecorations'
 const AVATAR_SCALE = 1.5
 function formatText(message: string, maxLength: number): string {
     message = message.trim()
@@ -51,7 +53,9 @@ export class Player {
     public username: string = ''
     public parent: PIXI.Container = new PIXI.Container()
     private textMessage: PIXI.Text = new PIXI.Text({})
-    private usernameText: PIXI.Text | null = null
+    private avatarSprite: PIXI.AnimatedSprite | null = null
+    private decorations: AvatarDecorations | null = null
+    private rawAtlas: CanvasImageSource | null = null
     private textTimeout: NodeJS.Timeout | null = null
 
     private animationState: AnimationState = 'idle_down'
@@ -65,9 +69,11 @@ export class Player {
     private path: Coordinate[] = []
     private pathIndex: number = 0
     private sheet: any = null
+    private skinChangeQueue: Promise<void> = Promise.resolve()
     private movementMode: 'keyboard' | 'mouse' = 'mouse'
     public frozen: boolean = false
     private initialized: boolean = false
+    private destroyed = false
     private strikes: number = 0
 
     private currentChannel: string = 'local'
@@ -92,58 +98,76 @@ export class Player {
         this.isLocal = isLocal
     }
 
-    private async loadAnimations() {
-        const src = `/sprites/characters/Character_${this.skin}.png`
+    private async loadAnimations(skin = this.skin) {
+        const src = `/sprites/characters/Character_${skin}.png`
         await PIXI.Assets.load(src)
+        if (this.destroyed) return
 
         const spriteSheetData = JSON.parse(JSON.stringify(playerSpriteSheetData))
         spriteSheetData.meta.image = src
 
-        this.sheet = new PIXI.Spritesheet(PIXI.Texture.from(src), spriteSheetData)
-        await this.sheet.parse()
+        const source = PIXI.Texture.from(src)
+        const rawAtlas = source.source.resource as CanvasImageSource
+        const outlined = document.createElement('canvas')
+        outlined.width = 192
+        outlined.height = 192
+        const context = outlined.getContext('2d')!
+        context.imageSmoothingEnabled = false
+        context.drawImage(rawAtlas, 0, 0)
+        outlineCanvas(outlined)
+        const sheet = new PIXI.Spritesheet(PIXI.Texture.from(outlined), spriteSheetData)
+        try {
+            await sheet.parse()
+        } catch (error) {
+            sheet.destroy(true)
+            throw error
+        }
+        if (this.destroyed) { sheet.destroy(true); return }
+        this.rawAtlas = rawAtlas
+        this.sheet = sheet
 
-        const animatedSprite = new PIXI.AnimatedSprite(this.sheet.animations['idle_down'])
-        animatedSprite.scale.set(AVATAR_SCALE)
-        animatedSprite.animationSpeed = this.animationSpeed
-        animatedSprite.play()
-
-        if (!this.initialized) {
-            this.parent.addChild(animatedSprite)
+        if (!this.avatarSprite) {
+            this.avatarSprite = new PIXI.AnimatedSprite(this.sheet.animations['idle_down'])
+            this.avatarSprite.anchor.set(0.5, 1)
+            this.avatarSprite.scale.set(AVATAR_SCALE)
+            this.avatarSprite.animationSpeed = this.animationSpeed
+            this.avatarSprite.play()
+            this.parent.addChild(this.avatarSprite)
         }
     }
 
-    public changeSkin = async (skin: string) => {
-        if (!skins.includes(skin)) return
+    public changeSkin = (skin: string): Promise<void> => {
+        if (!skins.includes(skin) || this.destroyed) return Promise.resolve()
 
-        const previousSeatedTextures = Object.values(this.seatedTextures)
-        this.seatedTextures = {}
-        this.skin = skin
-        await this.loadAnimations()
-        // refresh animations
-        this.changeAnimationState(this.animationState, true)
-        if (this.activeSeatVisual) {
-            const sprite = this.parent.children[0] as PIXI.AnimatedSprite
-            sprite.textures = [this.getSeatedTexture(this.direction)]
-            sprite.gotoAndStop(0)
-        }
-        previousSeatedTextures.forEach(texture => texture.destroy())
-        if (this.avatarAction.action !== 'idle') this.startActionVisual()
+        // Remote skin events can arrive without awaiting the previous replacement.
+        // Each operation owns only the resources active when its turn begins.
+        const change = this.skinChangeQueue.then(async () => {
+            if (this.destroyed) return
+            const previousSheet = this.sheet
+            await this.loadAnimations(skin)
+            if (this.destroyed) return
+            const previousSeatedTextures = Object.values(this.seatedTextures)
+            this.seatedTextures = {}
+            this.skin = skin
+            this.changeAnimationState(this.animationState, true)
+            if (this.activeSeatVisual) {
+                const sprite = this.avatarSprite!
+                sprite.textures = [this.getSeatedTexture(this.direction)]
+                sprite.gotoAndStop(0)
+            }
+            previousSeatedTextures.forEach(texture => texture.destroy())
+            previousSheet?.destroy(true)
+            if (this.avatarAction.action !== 'idle') this.startActionVisual()
+        })
+        // A failed download must not prevent subsequent skin changes.
+        this.skinChangeQueue = change.catch(() => {})
+        return change
     }
 
     private addUsername() {
-        const text = new PIXI.Text({
-            text: this.username,
-            style: {
-                fontFamily: 'silkscreen',
-                fontSize: 128,
-                fill: 0xFFFFFF,
-            }
-        })
-        text.anchor.set(0.5)
-        text.scale.set(0.07)
-        text.y = 8
-        this.parent.addChild(text)
-        this.usernameText = text
+        this.decorations = new AvatarDecorations(this.username, this.isLocal)
+        this.parent.addChildAt(this.decorations.shadow, 0)
+        this.parent.addChild(this.decorations.nameplate)
     }
 
     public setMessage(message: string) {
@@ -170,7 +194,7 @@ export class Player {
         text.anchor.y = 0
         text.scale.set(0.07)
         text.x = this.seatOffset.x
-        text.y = this.seatOffset.y - text.height - 42
+        text.y = this.seatOffset.y - text.height - 84
         this.parent.addChild(text)
         this.textMessage = text
 
@@ -187,8 +211,9 @@ export class Player {
     }
 
     public async init() {
-        if (this.initialized) return
+        if (this.initialized || this.destroyed) return
         await this.loadAnimations()
+        if (this.destroyed) return
         this.addUsername()
         this.initialized = true
     }
@@ -391,7 +416,7 @@ export class Player {
         } else {
             // if player doesnt move for x secs, do idle animation
             setTimeout(() => {
-                if (!this.targetPosition) {
+                if (this.initialized && !this.targetPosition) {
                     this.changeAnimationState(`idle_${this.direction}` as AnimationState)
                 }
             }, 100)
@@ -415,7 +440,7 @@ export class Player {
         if (this.animationState === state && !force) return
 
         this.animationState = state
-        const animatedSprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const animatedSprite = this.avatarSprite!
         animatedSprite.textures = this.sheet.animations[state]
         animatedSprite.animationSpeed = this.animationSpeed * (this.avatarAction.running && state.startsWith('walk_') ? 1.65 : 1)
         animatedSprite.play()
@@ -427,7 +452,7 @@ export class Player {
         this.avatarAction = { ...next }
         this.movementSpeed = movementSpeed(next.running)
         if (!this.initialized) return
-        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const sprite = this.avatarSprite!
         sprite.animationSpeed = this.animationSpeed * (next.running ? 1.65 : 1)
         if (repeated) return
         if (next.action === 'idle' || this.activeSeatVisual || this.targetPosition) {
@@ -448,7 +473,7 @@ export class Player {
                 this.direction = Math.abs(dx) > Math.abs(dy) ? dx > 0 ? 'right' : 'left' : dy > 0 ? 'down' : 'up'
             }
         }
-        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const sprite = this.avatarSprite!
         const frames = actionFrames<PIXI.Texture>(this.sheet.animations, this.avatarAction.action, this.direction)
         if (frames.length) { sprite.textures = frames; sprite.animationSpeed = this.avatarAction.action === 'dance' ? 0.14 : 0.06; sprite.play() }
         this.actionStartedAt = performance.now()
@@ -459,7 +484,7 @@ export class Player {
     private animateAction = () => {
         const elapsed = performance.now() - this.actionStartedAt
         if (this.activeSeatVisual || this.targetPosition || elapsed >= this.actionRemainingMs) { this.stopActionVisual(); return }
-        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const sprite = this.avatarSprite!
         const pose = actionPose(this.avatarAction.action, elapsed)
         sprite.position.set(pose.x, pose.y)
         sprite.rotation = pose.rotation
@@ -470,7 +495,7 @@ export class Player {
         PIXI.Ticker.shared.remove(this.animateAction)
         this.avatarAction = { action: 'idle', running: this.avatarAction.running, expiresAt: null }
         if (!this.initialized || this.activeSeatVisual) return
-        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const sprite = this.avatarSprite!
         sprite.position.set(0, 0)
         sprite.rotation = 0
         sprite.scale.set(AVATAR_SCALE)
@@ -510,7 +535,7 @@ export class Player {
             this.movementSpeed = movementSpeed(false)
         }
         this.currentSeatKey = seatKey
-        const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+        const sprite = this.avatarSprite!
         this.seatTween?.kill()
         this.seatTween = null
         if (!visual) {
@@ -519,8 +544,8 @@ export class Player {
             sprite.anchor.set(0.5, 1)
             sprite.scale.set(AVATAR_SCALE)
             this.seatOffset = { x: 0, y: 0 }
-            this.usernameText?.position.set(0, 8)
-            this.textMessage.position.set(0, -this.textMessage.height - 42)
+            this.decorations?.position(0, 0, false)
+            this.textMessage.position.set(0, -this.textMessage.height - 84)
             if (this.directionBeforeSeat) {
                 this.direction = this.directionBeforeSeat
                 this.directionBeforeSeat = null
@@ -538,13 +563,14 @@ export class Player {
         this.changeAnimationState(`idle_${this.direction}` as AnimationState, true)
         this.seatTween = gsap.to(sprite.position, {
             x, y, duration: 0.22, ease: 'power2.out',
+            onUpdate: () => this.decorations?.position(sprite.x, sprite.y, true),
             onComplete: () => {
                 sprite.textures = [this.getSeatedTexture(this.direction)]
                 sprite.gotoAndStop(0)
                 sprite.anchor.set(0.5, 1)
                 sprite.scale.set(AVATAR_SCALE)
-                this.usernameText?.position.set(x, y - 68)
-                this.textMessage.position.set(x, y - this.textMessage.height - 78)
+                this.decorations?.position(x, y, true)
+                this.textMessage.position.set(x, y - this.textMessage.height - 84)
                 this.seatTween = null
             }
         })
@@ -558,7 +584,7 @@ export class Player {
         canvas.height = 48
         const context = canvas.getContext('2d')!
         context.imageSmoothingEnabled = false
-        const atlas = this.sheet.textureSource.resource as CanvasImageSource
+        const atlas = this.rawAtlas!
         const row = { down: 0, left: 1, right: 2, up: 3 }[facing]
         const frameY = row * 48
 
@@ -567,6 +593,7 @@ export class Player {
         context.drawImage(atlas, 48, frameY, 48, 36, 0, 0, 48, 36)
         const legShift = facing === 'left' ? -4 : facing === 'right' ? 4 : 0
         context.drawImage(atlas, 48, frameY + 36, 48, 12, legShift, 36, 48, 5)
+        outlineCanvas(canvas)
 
         const texture = PIXI.Texture.from(canvas)
         this.seatedTextures[facing] = texture
@@ -627,6 +654,7 @@ export class Player {
     }
 
     public destroy() {
+        this.destroyed = true
         PIXI.Ticker.shared.remove(this.move)
         PIXI.Ticker.shared.remove(this.animateAction)
         this.initialized = false
@@ -635,5 +663,11 @@ export class Player {
         this.seatTween?.kill()
         Object.values(this.seatedTextures).forEach(texture => texture.destroy())
         this.seatedTextures = {}
+        this.decorations?.destroy()
+        this.decorations = null
+        this.avatarSprite?.destroy()
+        this.avatarSprite = null
+        this.sheet?.destroy(true)
+        this.sheet = null
     }
 }
