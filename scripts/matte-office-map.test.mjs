@@ -2,18 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { map } from './matte-office-map.mjs'
 
-const expectedIds = [
-  'lounge-books', 'lounge-sofa', 'boardroom-table', 'coffee', 'water',
-  'vending', 'kitchen-table', 'desk-left-1', 'desk-left-2', 'desk-left-3',
-  'desk-left-4', 'desk-right-1', 'desk-right-2', 'desk-right-3',
-  'desk-right-4', 'project-table', 'workshop-shelves', 'workbench',
-  'reception', 'reception-seats', 'reception-chair-right', 'pingpong', 'games-sofa',
-]
-
 test('every functional Matte fixture has a distinct hotspot', () => {
   const interactions = map.rooms[0].interactions
-  assert.deepEqual(interactions.map((item) => item.id), expectedIds)
-  assert.equal(new Set(interactions.map((item) => item.id)).size, 23)
+  assert.equal(interactions.length, 52)
+  assert.equal(new Set(interactions.map((item) => item.id)).size, interactions.length)
+  for (const id of ['boardroom-table', 'project-table', 'workbench', 'reception', 'pingpong']) {
+    assert.ok(interactions.some(item => item.id === id), id)
+  }
 })
 
 test('every hotspot fits the art and has a reachable approach tile', () => {
@@ -60,6 +55,14 @@ test('desk seats pull the avatar onto the visible chair center', () => {
 
 test('every place to sit has a pose direction and the reception armchairs are separate', () => {
   const seats = map.rooms[0].interactions.filter((object) => object.kind === 'seat' || object.kind === 'desk')
+  assert.equal(seats.length, 42)
+  assert.equal(seats.filter(seat => seat.id.startsWith('boardroom-')).length, 8)
+  assert.equal(seats.filter(seat => seat.id.startsWith('project-')).length, 6)
+  assert.equal(seats.filter(seat => seat.id.startsWith('bar-stool-')).length, 3)
+  assert.equal(seats.filter(seat => seat.id.startsWith('workshop-stool-')).length, 3)
+  assert.equal(seats.filter(seat => seat.id.startsWith('desk-')).length, 8)
+  assert.equal(new Set(seats.map(seat => `${seat.approach.x},${seat.approach.y}`)).size, seats.length)
+  assert.equal(new Set(seats.map(seat => `${seat.seatVisual.x},${seat.seatVisual.y}`)).size, seats.length)
   for (const seat of seats) {
     assert.ok(seat.seatVisual, seat.id)
     assert.ok(['up', 'down', 'left', 'right'].includes(seat.seatVisual.facing), seat.id)

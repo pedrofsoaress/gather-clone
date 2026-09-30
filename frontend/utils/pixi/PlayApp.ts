@@ -90,7 +90,7 @@ export class PlayApp extends App {
         this.keysDown = []
         this.player.setMovementMode('mouse')
         if (this.player.isAtTile(object.approach.x, object.approach.y)) {
-            signal.emit('officeOpen', { objectId: id })
+            this.activateOfficeObject(id)
             return true
         }
 
@@ -134,8 +134,21 @@ export class PlayApp extends App {
         if (!id) return
         const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find((item) => item.id === id)
         if (object && this.player.isAtTile(object.approach.x, object.approach.y)) {
-            signal.emit('officeOpen', { objectId: id })
+            this.activateOfficeObject(id)
         }
+    }
+
+    private activateOfficeObject(id: string) {
+        const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find(item => item.id === id)
+        if (object?.kind === 'seat' || object?.kind === 'desk') {
+            // Walking past another chair may have occupied it automatically.
+            // The clicked chair wins once the verified path reaches its approach.
+            server.socket.timeout(8000).emit('officeAction', { objectId: id, action: 'occupy' },
+                (timeout: Error | null, result: { ok: boolean, error?: string }) => {
+                    if (timeout || !result?.ok) signal.emit('officeFeedback', { message: result?.error || 'Não foi possível ocupar este lugar.' })
+                })
+        }
+        signal.emit('officeOpen', { objectId: id })
     }
 
     private setUpFadeTiles = () => {

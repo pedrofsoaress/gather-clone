@@ -5,10 +5,13 @@ import { generateToken } from './generateToken'
 
 export class VideoChat {
     private client: IAgoraRTCClient = AgoraRTC.createClient({ codec: "vp8", mode: "rtc" })
+    private screenClient: IAgoraRTCClient = AgoraRTC.createClient({ codec: "vp8", mode: "rtc" })
     private microphoneTrack: IMicrophoneAudioTrack | null = null
     private cameraTrack: ICameraVideoTrack | null = null
     private screenTrack: ILocalVideoTrack | null = null
     private currentChannel: string = ''
+    private currentAgoraChannel: string = ''
+    private currentUid: string = ''
 
     private remoteUsers: { [uid: string]: IAgoraRTCRemoteUser } = {}
 
@@ -63,7 +66,7 @@ export class VideoChat {
             this.cameraTrack = await AgoraRTC.createCameraVideoTrack()
             this.cameraTrack.play('local-video')
 
-            if (this.client.connectionState === 'CONNECTED' && !this.screenTrack) {
+            if (this.client.connectionState === 'CONNECTED') {
                 await this.client.publish([this.cameraTrack])
             }
 
@@ -71,7 +74,7 @@ export class VideoChat {
         }
         await this.cameraTrack.setEnabled(!this.cameraTrack.enabled)
 
-        if (this.client.connectionState === 'CONNECTED' && this.cameraTrack.enabled && !this.screenTrack) {
+        if (this.client.connectionState === 'CONNECTED' && this.cameraTrack.enabled) {
             await this.client.publish([this.cameraTrack])
         }
 
@@ -108,14 +111,17 @@ export class VideoChat {
         if (!this.isConnected) throw new Error('Aproxime-se de alguém para iniciar uma chamada antes de compartilhar a tela.')
         const track = await AgoraRTC.createScreenVideoTrack({}, 'disable')
         try {
-            if (this.cameraTrack?.enabled) await this.client.unpublish(this.cameraTrack)
-            await this.client.publish(track)
+            const screenUid = `${this.currentUid}-screen`
+            const token = await generateToken(this.currentAgoraChannel, screenUid)
+            if (!token) throw new Error('Chamada indisponível para compartilhar a tela.')
+            await this.screenClient.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, this.currentAgoraChannel, token, screenUid)
+            await this.screenClient.publish(track)
             this.screenTrack = track
             track.on('track-ended', () => { void this.stopScreenShare() })
             signal.emit('screen-share-changed', true)
         } catch (error) {
+            if (this.screenClient.connectionState === 'CONNECTED') await this.screenClient.leave().catch(() => {})
             track.close()
-            if (this.cameraTrack?.enabled && this.isConnected) await this.client.publish(this.cameraTrack).catch(() => {})
             throw error
         }
     }
@@ -124,9 +130,8 @@ export class VideoChat {
         const track = this.screenTrack
         if (!track) return
         this.screenTrack = null
-        if (this.isConnected) await this.client.unpublish(track).catch(() => {})
+        if (this.screenClient.connectionState === 'CONNECTED') await this.screenClient.leave().catch(() => {})
         track.close()
-        if (this.cameraTrack?.enabled && this.isConnected) await this.client.publish(this.cameraTrack).catch(() => {})
         signal.emit('screen-share-changed', false)
     }
 
@@ -143,20 +148,35 @@ export class VideoChat {
         this.channelTimeout = setTimeout(async () => {
             if (channel === this.currentChannel) return
             const uniqueChannelId = this.createUniqueChannelId(realmId, channel)
-            const token = await generateToken(uniqueChannelId)
+            const token = await generateToken(uniqueChannelId, uid)
             if (!token) {
                 signal.emit('officeFeedback', { message: 'Chamada indisponível. O administrador precisa concluir a configuração do Agora.' })
                 return
             }
 
             try {
+                if (this.screenClient.connectionState === 'CONNECTED') await this.screenClient.leave()
                 if (this.client.connectionState === 'CONNECTED') await this.client.leave()
                 this.resetRemoteUsers()
                 await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, token, uid)
                 this.currentChannel = channel
+                this.currentAgoraChannel = uniqueChannelId
+                this.currentUid = uid
                 if (this.microphoneTrack && this.microphoneTrack.enabled) await this.client.publish([this.microphoneTrack])
-                if (this.screenTrack) await this.client.publish(this.screenTrack)
-                else if (this.cameraTrack && this.cameraTrack.enabled) await this.client.publish([this.cameraTrack])
+                if (this.cameraTrack && this.cameraTrack.enabled) await this.client.publish([this.cameraTrack])
+                if (this.screenTrack) {
+                    try {
+                        const screenUid = `${uid}-screen`
+                        const screenToken = await generateToken(uniqueChannelId, screenUid)
+                        if (!screenToken) throw new Error('Screen token unavailable')
+                        await this.screenClient.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, screenToken, screenUid)
+                        await this.screenClient.publish(this.screenTrack)
+                    } catch (error) {
+                        console.error('Failed to move screen share to new conversation', error)
+                        await this.stopScreenShare()
+                        signal.emit('officeFeedback', { message: 'O compartilhamento de tela foi encerrado ao mudar de conversa.' })
+                    }
+                }
             } catch (error) {
                 console.error('Failed to join video conversation', error)
                 signal.emit('officeFeedback', { message: 'Não foi possível entrar na chamada de vídeo.' })
@@ -177,6 +197,8 @@ export class VideoChat {
             if (this.client.connectionState === 'CONNECTED') {
                 await this.client.leave()
                 this.currentChannel = ''
+                this.currentAgoraChannel = ''
+                this.currentUid = ''
             }
             this.resetRemoteUsers()
         }, 1000)
@@ -189,6 +211,7 @@ export class VideoChat {
             this.screenTrack = null
             signal.emit('screen-share-changed', false)
         }
+        if (this.screenClient.connectionState === 'CONNECTED') void this.screenClient.leave()
         if (this.cameraTrack) {
             this.cameraTrack.stop()
             this.cameraTrack.close()

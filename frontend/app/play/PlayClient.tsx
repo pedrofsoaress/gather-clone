@@ -68,7 +68,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
     return (
         <AgoraVideoChatProvider uid={uid}>
             {!showIntroScreen && <div className='relative w-full h-screen flex flex-col-reverse sm:flex-col'>
-                <VideoBar meetingMode={meetingMode} onMeetingModeChange={setMeetingMode} localName={displayName} localSkin={skin} />
+                <VideoBar meetingMode={meetingMode} onMeetingModeChange={setMeetingMode} localUid={uid} localName={displayName} localSkin={skin} />
                 <PixiApp
                     mapData={mapData}
                     className='w-full grow sm:h-full sm:flex-grow-0'

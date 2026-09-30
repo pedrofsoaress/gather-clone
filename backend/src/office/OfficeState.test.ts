@@ -34,6 +34,27 @@ test('only one visitor can occupy a seat and departure frees it', () => {
   assert.equal(state.step('u2', { x: 40, y: 7 }).ok, false)
 })
 
+test('adjacent places on one sofa can be occupied independently', () => {
+  const sofaRoom: Room = {
+    ...room,
+    interactions: [
+      { id: 'sofa-left', kind: 'seat', label: 'Esquerda', bounds: { x: 4, y: 4, width: 1, height: 1 }, approach: { x: 4, y: 6 } },
+      { id: 'sofa-middle', kind: 'seat', label: 'Meio', bounds: { x: 5, y: 4, width: 1, height: 1 }, approach: { x: 5, y: 6 } },
+      { id: 'sofa-right', kind: 'seat', label: 'Direita', bounds: { x: 6, y: 4, width: 1, height: 1 }, approach: { x: 6, y: 6 } },
+    ],
+  }
+  const state = new OfficeState(sofaRoom)
+  state.addPlayer('u1', { x: 4, y: 6 }, 'Ana')
+  state.addPlayer('u2', { x: 5, y: 6 }, 'Beto')
+  state.addPlayer('u3', { x: 6, y: 6 }, 'Cris')
+  assert.equal(state.occupy('u1', 'sofa-left').ok, true)
+  assert.equal(state.occupy('u2', 'sofa-middle').ok, true)
+  assert.equal(state.occupy('u3', 'sofa-right').ok, true)
+  assert.equal(Object.keys(state.snapshot().occupancy).length, 3)
+  assert.equal(state.occupy('u2', 'sofa-left').ok, false)
+  assert.equal(state.snapshot().occupancy['sofa-middle'].uid, 'u2')
+})
+
 test('verified steps reject blocked, distant, and too-fast movement', () => {
   let now = 0
   const state = new OfficeState(room, () => now)
