@@ -37,5 +37,7 @@ export const OfficeReadNotes = z.object({ objectId: z.string().min(1).max(64) })
 export const OfficeAddNote = z.object({ objectId: z.string().min(1).max(64), body: z.string().max(500) })
 export const OfficeExternalGet = z.object({ objectId: z.string().min(1).max(64) })
 export const OfficeExternalSetRoom = z.object({ objectId: z.string().min(1).max(64), url: z.string().min(1).max(2048), revision: z.number().int().min(0) })
+export const PresentationTarget = z.object({ objectId: z.string().min(1).max(64) })
+export const PresentationSlide = PresentationTarget.extend({ index: z.number().int().min(0), revision: z.number().int().min(0) })
 
 export type OnEventCallback = (args: { session: Session, data?: any }) => void

@@ -2,7 +2,7 @@ import type { RealmData } from '../session'
 import { z } from 'zod'
 
 const external = z.object({ url: z.string().url().startsWith('https://'), allowedHosts: z.array(z.string().min(1)).min(1).max(12), roomEditable: z.boolean() }).strict()
-const presentation = z.object({ deckId: z.string().min(1).max(128) }).strict()
+const presentation = z.object({ deckId: z.string().min(1).max(128), slides: z.array(z.object({ title: z.string().min(1).max(80), body: z.string().max(2000).optional(), imageUrl: z.string().url().startsWith('https://').optional() }).strict()).min(1).max(40) }).strict()
 const speaker = z.object({ rangeTiles: z.number().int().min(1).max(40) }).strict()
 const pet = z.object({ animationSet: z.string().min(1).max(48) }).strict()
 const light = z.object({ radiusTiles: z.number().int().min(1).max(20), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), intensity: z.number().min(0).max(1) }).strict()

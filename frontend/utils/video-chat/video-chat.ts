@@ -218,6 +218,7 @@ export class VideoChat {
                 this.currentUid = ''
             }
             this.resetRemoteUsers()
+            signal.emit('video-channel-left')
         }, 1000)
         
     }

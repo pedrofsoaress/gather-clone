@@ -1,5 +1,5 @@
 import { Server } from 'socket.io'
-import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, ChatMessage, OfficeStep, OfficeAction, OfficeReadNotes, OfficeAddNote, OfficeExternalGet, OfficeExternalSetRoom } from './socket-types'
+import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSkin, NewMessage, ChatMessage, OfficeStep, OfficeAction, OfficeReadNotes, OfficeAddNote, OfficeExternalGet, OfficeExternalSetRoom, PresentationTarget, PresentationSlide } from './socket-types'
 import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
@@ -167,6 +167,7 @@ export function sockets(io: Server) {
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
                 users.removeUser(uid)
                 io.to(session.id).emit('officeStateChanged', session.officeState.snapshot())
+                io.to(session.id).emit('presentationState', session.presentations.snapshot())
             }
         })
 
@@ -247,6 +248,67 @@ export function sockets(io: Server) {
             if (result.ok) emitToSocketIds(sessionManager.getSocketIdsInRoom(target.session.id, target.room), 'officeExternalState', { objectId: target.objectId, url: result.url, revision: result.revision })
         })
 
+        const presentationTarget = (objectId: string) => {
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            const player = session?.getPlayer(uid)
+            if (!session || !player || player.socketId !== socket.id || player.room !== session.map_data.spawnpoint.roomIndex) return null
+            return { uid, session, objectId }
+        }
+
+        const broadcastPresentations = (session: NonNullable<ReturnType<typeof sessionManager.getPlayerSession>>) => {
+            emitToSocketIds(sessionManager.getSocketIdsInRoom(session.id, session.map_data.spawnpoint.roomIndex), 'presentationState', session.presentations.snapshot())
+        }
+
+        socket.on('presentationGetSnapshot', (ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            const player = session?.getPlayer(uid)
+            ack(session && player?.socketId === socket.id && player.room === session.map_data.spawnpoint.roomIndex ? { ok: true, snapshot: session.presentations.snapshot() } : { ok: false, error: 'Fora da sala.' })
+        })
+
+        socket.on('presentationStart', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const parsed = PresentationTarget.safeParse(raw)
+            const target = parsed.success ? presentationTarget(parsed.data.objectId) : null
+            if (!target) return ack({ ok: false, error: 'Aproxime-se da apresentação.' })
+            const result = target.session.presentations.start(target.uid, target.objectId)
+            ack(result)
+            if (result.ok) broadcastPresentations(target.session)
+        })
+
+        socket.on('presentationSlide', (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const parsed = PresentationSlide.safeParse(raw)
+            const target = parsed.success ? presentationTarget(parsed.data.objectId) : null
+            if (!target || !parsed.success) return ack({ ok: false, error: 'Comando inválido.' })
+            const result = target.session.presentations.slide(target.uid, target.objectId, parsed.data.index, parsed.data.revision)
+            ack(result)
+            if (result.ok) broadcastPresentations(target.session)
+        })
+
+        socket.on('presentationRaiseHand', (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const parsed = PresentationTarget.safeParse(raw)
+            const target = parsed.success ? presentationTarget(parsed.data.objectId) : null
+            if (!target) return ack({ ok: false, error: 'Fora da sala.' })
+            const result = target.session.presentations.raiseHand(target.uid, target.objectId)
+            ack(result)
+            if (result.ok) broadcastPresentations(target.session)
+        })
+
+        socket.on('presentationEnd', (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const parsed = PresentationTarget.safeParse(raw)
+            const target = parsed.success ? presentationTarget(parsed.data.objectId) : null
+            if (!target) return ack({ ok: false, error: 'Fora da sala.' })
+            const result = target.session.presentations.end(target.uid, target.objectId)
+            ack(result)
+            if (result.ok) broadcastPresentations(target.session)
+        })
+
         const noteTarget = (objectId: string) => {
             const uid = socket.handshake.query.uid as string
             const session = sessionManager.getPlayerSession(uid)
@@ -321,6 +383,7 @@ export function sockets(io: Server) {
                 emit('playerLeftRoom', uid)
                 const session = sessionManager.getPlayerSession(uid)
                 const changedPlayers = session.changeRoom(uid, data.roomIndex, data.x, data.y)
+                broadcastPresentations(session)
                 emit('playerJoinedRoom', player)
 
                 for (const uid of changedPlayers) {

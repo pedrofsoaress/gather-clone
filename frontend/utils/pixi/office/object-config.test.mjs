@@ -42,3 +42,9 @@ test('kind-specific configuration cannot be used on a different object kind', ()
     ...external(), kind: 'speaker', config: { rangeTiles: 7 },
   }])).success, true)
 })
+
+test('presentations need safe slides and reject script image URLs', () => {
+  const board = { ...external('slides'), kind: 'presentation', config: { deckId: 'matte', slides: [{ title: 'Boas-vindas', body: 'Olá, Matte.' }] } }
+  assert.equal(RealmDataSchema.safeParse(map([board])).success, true)
+  assert.equal(RealmDataSchema.safeParse(map([{ ...board, config: { ...board.config, slides: [{ title: 'X', imageUrl: 'javascript:alert(1)' }] } }])).success, false)
+})

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { OfficeState } from './office/OfficeState'
 import { validateOfficeMap } from './office/object-config'
 import { OfficeSharedObjects } from './office/OfficeSharedObjects'
+import { PresentationState } from './office/PresentationState'
 
 export type RealmData = {
     spawnpoint: {
@@ -40,7 +41,7 @@ export interface OfficeObject {
     approach: { x: number, y: number },
     seatVisual?: { x: number, y: number, facing?: 'up' | 'down' | 'left' | 'right' },
     effect?: 'coffee' | 'water' | 'snack',
-    config?: { url: string, allowedHosts: string[], roomEditable: boolean } | { deckId: string } | { rangeTiles: number } | { animationSet: string } | { radiusTiles: number, color: string, intensity: number },
+    config?: { url: string, allowedHosts: string[], roomEditable: boolean } | { deckId: string, slides: { title: string, body?: string, imageUrl?: string }[] } | { rangeTiles: number } | { animationSet: string } | { radiusTiles: number, color: string, intensity: number },
 }
 
 export interface Player {
@@ -141,6 +142,7 @@ export class Session {
     public map_data: RealmData 
     public officeState: OfficeState
     public externalObjects: OfficeSharedObjects
+    public presentations: PresentationState
 
     constructor(id: string, mapData: RealmData) {
         validateOfficeMap(mapData)
@@ -148,6 +150,7 @@ export class Session {
         this.map_data = mapData 
         this.officeState = new OfficeState(mapData.rooms[mapData.spawnpoint.roomIndex])
         this.externalObjects = new OfficeSharedObjects(mapData.rooms[mapData.spawnpoint.roomIndex], this.officeState)
+        this.presentations = new PresentationState(mapData.rooms[mapData.spawnpoint.roomIndex], this.officeState)
 
         for (let i = 0; i < mapData.rooms.length; i++) {
             this.playerRooms[i] = new Set<string>()
@@ -184,6 +187,7 @@ export class Session {
 
     public removePlayer(uid: string): void {
         if (!this.players[uid]) return
+        this.presentations.removePlayer(uid)
         this.officeState.removePlayer(uid)
 
         const player = this.players[uid]
@@ -199,6 +203,7 @@ export class Session {
         if (!this.players[uid]) return []
 
         const player = this.players[uid]
+        this.presentations.removePlayer(uid)
         this.officeState.removePlayer(uid)
 
         this.playerRooms[player.room].delete(uid)

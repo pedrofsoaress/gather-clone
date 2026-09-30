@@ -84,6 +84,11 @@ function officeObject(id, kind, label, [x, y, width, height], [approachX, approa
 const interactions = [
   officeObject('lounge-books', 'guide', 'Estante do lounge', [2, 1, 8, 3], [10, 3]),
   officeObject('boardroom-table', 'board', 'Mesa da reunião', [21, 3, 8, 5], [25, 8]),
+  officeObject('boardroom-screen', 'presentation', 'Apresentação da reunião', [18, 2, 2, 2], [20, 3], { config: { deckId: 'matte-intro', slides: [
+    { title: 'Escritório Matte', body: 'Um espaço para trabalhar, conversar e construir juntos.' },
+    { title: 'Como usar', body: 'Aproxime-se dos objetos para interagir. Nas salas de reunião, converse por proximidade.' },
+    { title: 'Vamos colaborar', body: 'Compartilhe ideias no quadro e use a reunião para apresentar seu projeto.' },
+  ] } }),
   officeObject('coffee', 'drink', 'Café', [35, 1, 6, 4], [35, 5], { effect: 'coffee' }),
   officeObject('water', 'drink', 'Água', [41, 1, 2, 4], [42, 5], { effect: 'water' }),
   officeObject('vending', 'snack', 'Máquina de snacks', [43, 1, 5, 4], [46, 5], { effect: 'snack' }),

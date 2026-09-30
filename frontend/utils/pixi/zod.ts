@@ -29,9 +29,11 @@ const ExternalConfigSchema = z.object({
   }
 }, 'O domínio da URL precisa estar na lista permitida.')
 
+export const PresentationSlidesSchema = z.array(z.object({ title: z.string().min(1).max(80), body: z.string().max(2000).optional(), imageUrl: z.string().url().startsWith('https://').optional() }).strict()).min(1).max(40)
+
 const ObjectConfigSchema = z.union([
   ExternalConfigSchema,
-  z.object({ deckId: z.string().min(1).max(128) }).strict(),
+  z.object({ deckId: z.string().min(1).max(128), slides: PresentationSlidesSchema }).strict(),
   z.object({ rangeTiles: z.number().int().min(1).max(40) }).strict(),
   z.object({ animationSet: z.string().min(1).max(48) }).strict(),
   z.object({ radiusTiles: z.number().int().min(1).max(20), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), intensity: z.number().min(0).max(1) }).strict(),

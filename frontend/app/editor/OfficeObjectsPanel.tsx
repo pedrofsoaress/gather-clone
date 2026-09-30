@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import signal from '@/utils/signal'
 import type { OfficeObject, RealmData } from '@/utils/pixi/types'
 import { OfficeObjectSchema } from '@/utils/pixi/zod'
+import PresentationDeckEditor from './PresentationDeckEditor'
 
 type Kind = OfficeObject['kind']
 const kinds: { value: Kind, label: string }[] = [
@@ -24,7 +25,7 @@ const kinds: { value: Kind, label: string }[] = [
 
 function configFor(kind: Kind): OfficeObject['config'] {
     if (kind === 'external') return { url: 'https://miro.com/', allowedHosts: ['miro.com'], roomEditable: true }
-    if (kind === 'presentation') return { deckId: 'apresentacao-matte' }
+    if (kind === 'presentation') return { deckId: 'apresentacao-matte', slides: [{ title: 'Boas-vindas', body: 'Apresentação do escritório Matte.' }] }
     if (kind === 'speaker') return { rangeTiles: 7 }
     if (kind === 'pet') return { animationSet: 'gato-matte' }
     if (kind === 'light') return { radiusTiles: 5, color: '#fff2bb', intensity: 0.6 }
@@ -112,7 +113,10 @@ export default function OfficeObjectsPanel({ realmData, roomIndex }: { realmData
                 <label className="block">Domínios permitidos, separados por vírgula<input value={current.config.allowedHosts.join(', ')} onChange={event => changeConfig({ allowedHosts: event.target.value.split(',').map(host => host.trim()).filter(Boolean) })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1" /></label>
                 <label className="flex gap-2"><input type="checkbox" checked={current.config.roomEditable} onChange={event => changeConfig({ roomEditable: event.target.checked })} /> Permitir mudar a sala compartilhada</label>
             </>}
-            {current.kind === 'presentation' && current.config && 'deckId' in current.config && <label className="block">ID da apresentação<input value={current.config.deckId} onChange={event => changeConfig({ deckId: event.target.value })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1" /></label>}
+            {current.kind === 'presentation' && current.config && 'deckId' in current.config && <>
+                <label className="block">ID da apresentação<input value={current.config.deckId} onChange={event => changeConfig({ deckId: event.target.value })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1" /></label>
+                <PresentationDeckEditor slides={current.config.slides} onChange={slides => changeConfig({ slides })} />
+            </>}
             {current.kind === 'speaker' && current.config && 'rangeTiles' in current.config && <label className="block">Raio de áudio em tiles<input type="number" value={current.config.rangeTiles} onChange={event => changeConfig({ rangeTiles: Number(event.target.value) })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1" /></label>}
             {current.kind === 'pet' && current.config && 'animationSet' in current.config && <label className="block">Conjunto de animação<input value={current.config.animationSet} onChange={event => changeConfig({ animationSet: event.target.value })} className="mt-1 w-full rounded bg-slate-800 px-2 py-1" /></label>}
             {current.kind === 'light' && current.config && 'radiusTiles' in current.config && <div className="grid grid-cols-2 gap-2"><label>Raio<input type="number" value={current.config.radiusTiles} onChange={event => changeConfig({ radiusTiles: Number(event.target.value) })} className="w-full rounded bg-slate-800 px-2 py-1" /></label><label>Cor<input type="color" value={current.config.color} onChange={event => changeConfig({ color: event.target.value })} className="w-full" /></label><label className="col-span-2">Intensidade<input type="range" min="0" max="1" step="0.1" value={current.config.intensity} onChange={event => changeConfig({ intensity: Number(event.target.value) })} className="w-full" /></label></div>}

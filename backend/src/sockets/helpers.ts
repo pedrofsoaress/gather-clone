@@ -18,4 +18,5 @@ export function kickPlayer(uid: string, reason: string) {
     io.sockets.sockets.get(player.socketId)?.leave(session.id)
     // player is already in session, kick them
     sessionManager.logOutPlayer(uid)
+    io.to(session.id).emit('presentationState', session.presentations.snapshot())
 }

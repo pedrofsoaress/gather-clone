@@ -4,14 +4,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { OfficeObject } from '@/utils/pixi/types'
 import signal from '@/utils/signal'
 import { server } from '@/utils/backend/server'
-import type { OfficeSnapshot } from '@/utils/pixi/office/types'
+import type { OfficeSnapshot, PresentationSnapshot } from '@/utils/pixi/office/types'
 import OfficeBoard from './OfficeBoard'
 import PingPongPanel from './PingPongPanel'
 import ExternalObjectPanel from './ExternalObjectPanel'
+import PresentationPanel from './PresentationPanel'
 
-type OfficeHudProps = { objects: OfficeObject[], uid: string }
+type OfficeHudProps = { objects: OfficeObject[], uid: string, presentations: PresentationSnapshot, onPresentationFocus: (id: string) => void }
 
-export default function OfficeHud({ objects, uid }: OfficeHudProps) {
+export default function OfficeHud({ objects, uid, presentations, onPresentationFocus }: OfficeHudProps) {
     const [openId, setOpenId] = useState<string | null>(null)
     const [nearbyId, setNearbyId] = useState<string | null>(null)
     const [hoverId, setHoverId] = useState<string | null>(null)
@@ -120,6 +121,7 @@ export default function OfficeHud({ objects, uid }: OfficeHudProps) {
                     onAction={action => act(active.id, action)} />}
                 {['board', 'desk', 'guestbook'].includes(active.kind) && <OfficeBoard key={active.id} object={active} />}
                 {active.kind === 'external' && <ExternalObjectPanel key={active.id} object={active} />}
+                {active.kind === 'presentation' && <PresentationPanel object={active} session={presentations[active.id]} uid={uid} onFocus={() => onPresentationFocus(active.id)} onClose={close} />}
             </section>
         </div>}
     </>

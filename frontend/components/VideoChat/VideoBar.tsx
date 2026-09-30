@@ -20,9 +20,10 @@ type VideoBarProps = {
     localUid: string
     localName: string
     localSkin: string
+    presentation?: React.ReactNode
 }
 
-const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, chatOpen, localUid, localName, localSkin }) => {
+const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, chatOpen, localUid, localName, localSkin, presentation }) => {
     const [remoteUsers, setRemoteUsers] = useState<Record<string, RemoteUser>>({})
     const peers = Object.values(remoteUsers)
     const screens = peers.filter(user => user.uid.endsWith('-screen'))
@@ -54,17 +55,14 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
         }
     }, [])
 
-    useEffect(() => {
-        if (peers.length === 0) onMeetingModeChange(false)
-    }, [peers.length, onMeetingModeChange])
-
-    if (peers.length === 0) return null
+    if (peers.length === 0 && !presentation) return null
 
     if (!meetingMode) return <div className="pointer-events-none absolute right-3 top-3 z-30 flex max-w-[calc(100vw-24px)] flex-col items-end gap-2 text-white">
         <button type="button" onClick={() => onMeetingModeChange(true)} className="pointer-events-auto flex items-center gap-2 rounded-lg bg-slate-900/95 px-3 py-2 text-sm shadow-lg hover:bg-slate-700" aria-label="Expandir reunião">
             <ArrowsOut size={18} /> Expandir reunião · {personCount}
         </button>
         <div className="pointer-events-auto flex max-w-full gap-2 overflow-x-auto rounded-xl bg-slate-950/80 p-2 shadow-xl">
+            {presentation && <div className="h-[112px] w-[220px] shrink-0">{presentation}</div>}
             {(cameras.length ? cameras : screens).map(user => <RemoteUser key={user.uid} user={user} meetingMode={false} localUid={localUid} localName={localName} localSkin={localSkin} className="relative h-[112px] w-[200px] shrink-0" />)}
         </div>
     </div>
@@ -77,11 +75,12 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
         </button>
         <header className="flex h-14 items-center border-b border-slate-700 px-5 pr-48 text-sm font-semibold">Conversa por proximidade · {personCount} {personCount === 1 ? 'pessoa' : 'pessoas'}</header>
         <section id="video-container" className={`h-[calc(100%-3.5rem)] min-h-0 overflow-y-auto p-3 ${chatOpen ? 'w-full sm:w-[calc(100%-340px)]' : 'w-full'}`}>
-            {screens.length > 0 ? <div className="grid h-full min-h-[420px] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(220px,25%)] lg:grid-rows-1">
-                <RemoteUser key={screens[0].uid} user={screens[0]} {...tileProps} className="relative aspect-video min-h-0 w-full lg:aspect-auto lg:h-full" />
+            {screens.length > 0 || presentation ? <div className="grid h-full min-h-[420px] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(220px,25%)] lg:grid-rows-1">
+                {screens.length > 0 ? <RemoteUser key={screens[0].uid} user={screens[0]} {...tileProps} className="relative aspect-video min-h-0 w-full lg:aspect-auto lg:h-full" /> : <div className="min-h-0">{presentation}</div>}
                 <div className="flex min-h-0 gap-2 overflow-x-auto lg:flex-col lg:overflow-y-auto">
                     <LocalUser name={localName} skin={localSkin} className="relative aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full" />
                     {cameras.map(user => <RemoteUser key={user.uid} user={user} {...tileProps} className="relative aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full" />)}
+                    {screens.length > 0 && presentation && <div className="aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full">{presentation}</div>}
                     {screens.slice(1).map(user => <RemoteUser key={user.uid} user={user} {...tileProps} className="relative aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full" />)}
                 </div>
             </div> : <div className="grid auto-rows-min grid-cols-1 gap-3 md:grid-cols-2">
