@@ -46,7 +46,7 @@ As entregas 2, 3 e 4 podem ser desenvolvidas em paralelo depois da Entrega 1, em
 
 Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada estado compartilhado tem módulo próprio, deixando o roteamento nesses arquivos como integração fina.
 
-## Entrega 1 — Modelo e editor de objetos configuráveis
+### Task 1: Entrega 1 — Modelo e editor de objetos configuráveis
 
 **Referência:** `src/main/scenes/GameScene.ts` instancia objetos do Tiled por tipo; propriedades vêm do mapa. **Ganho Matte:** adicionar os novos objetos sem editar o script do escritório a cada mudança de layout.
 
@@ -62,7 +62,7 @@ Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada esta
 
 **Aceite:** gestor cria um objeto externo e um painel de apresentação pelo editor, salva, recarrega e ambos aparecem no lugar correto; visitantes não conseguem alterar o mapa.
 
-## Entrega 2 — Objetos externos e quadro colaborativo
+### Task 2: Entrega 2 — Objetos externos e quadro colaborativo
 
 **Referência:** `src/main/nodes/IFrameNode.ts` e os sete `iframe` no mapa (Miro, piano e jogos); a URL de sala pode ser propagada. O `SwitchNode` Miro alternativo está sem objeto no mapa.
 
@@ -78,7 +78,7 @@ Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada esta
 
 **Aceite:** duas pessoas próximas abrem o mesmo quadro/jogo, usam a mesma sala compartilhada e podem voltar ao mapa sem recarregar.
 
-## Entrega 3 — Apresentações em painel
+### Task 3: Entrega 3 — Apresentações em painel
 
 **Referência:** `PresentationBoardNode.ts`, `PresentationNode.ts`, `Gather.ts`. A implementação de referência tem slides/foco/mute, mas falta um gatilho `presentation` no mapa. O Matte deve entregar o fluxo completo.
 
@@ -94,7 +94,7 @@ Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada esta
 
 **Aceite:** uma pessoa apresenta, outra segue os slides e pede fala; ambas mantêm controle próprio da visualização da chamada.
 
-## Entrega 4 — Dispositivos e controles individuais de áudio
+### Task 4: Entrega 4 — Dispositivos e controles individuais de áudio
 
 **Referência:** `JitsiControlsNode.ts`, `Jitsi.ts`, `UserVideoElement.ts`. O Matte já tem mic/câmera/tela e maximização, mas não seleção de dispositivos, mute local por pessoa nem indicador de fala.
 
@@ -110,7 +110,7 @@ Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada esta
 
 **Aceite:** participante escolhe outro microfone/câmera, silencia só uma pessoa e identifica quem fala, sem tirar ninguém da chamada.
 
-## Entrega 5 — Caixa de som espacial
+### Task 5: Entrega 5 — Caixa de som espacial
 
 **Referência:** `SpeakerNode.ts` e `Jitsi.shareTabAudio()`; um speaker no mapa.
 
@@ -123,7 +123,7 @@ Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada esta
 
 **Aceite:** música compartilhada toca apenas perto do speaker, diminui suavemente ao se afastar e para ao sair.
 
-## Entrega 6 — Ações do avatar e pet
+### Task 6: Entrega 6 — Ações do avatar e pet
 
 **Referência:** dança/corrida/fantasma em `PlayerNode.ts` e pet em `CatNode.ts`.
 
@@ -137,7 +137,7 @@ Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada esta
 
 **Aceite:** avatares dançam/correm e acariciam o pet com estados consistentes entre clientes; visitante comum continua bloqueado por paredes.
 
-## Entrega 7 — Luz, notificações e gamepad
+### Task 7: Entrega 7 — Luz, notificações e gamepad
 
 **Referência:** `LightNode.ts`, `NotificationNode.ts`, `GamepadInput.ts`.
 
@@ -150,7 +150,7 @@ Evitar colocar toda a lógica nova em `OfficeHud.tsx` ou `sockets.ts`. Cada esta
 
 **Aceite:** iluminação melhora leitura do ambiente, eventos não cobrem controles, gamepad permite navegar/interagir sem teclado.
 
-## Entrega 8 — App desktop opcional
+### Task 8: Entrega 8 — App desktop opcional
 
 **Referência:** `electron-forge.config.js`; não traz função nova de reunião.
 

@@ -4,8 +4,11 @@ import { SpecialTile } from '@/utils/pixi/types'
 import SpecialTiles from '../SpecialTiles'
 import { SheetName } from '@/utils/pixi/spritesheet/spritesheet'
 import { TileWithPalette } from '../Editor'
+import type { RealmData } from '@/utils/pixi/types'
+import OfficeObjectsPanel from '../OfficeObjectsPanel'
 
 type RightSectionProps = {
+    realmData: RealmData
     selectedTile: TileWithPalette
     setSelectedTile: (tile: TileWithPalette) => void
     selectSpecialTile: (specialTile: SpecialTile) => void
@@ -19,27 +22,28 @@ type RightSectionProps = {
     setSelectedPalette: (palette: SheetName) => void
 }
 
-type Tab = 'Tile' | 'Special Tiles'
+type Tab = 'Tile' | 'Special Tiles' | 'Objects'
 
-const RightSection:React.FC<RightSectionProps> = ({ selectedTile, setSelectedTile, specialTile, selectSpecialTile, rooms, setRooms, roomIndex, setRoomIndex, palettes, selectedPalette, setSelectedPalette }) => {
+const RightSection:React.FC<RightSectionProps> = ({ realmData, selectedTile, setSelectedTile, specialTile, selectSpecialTile, rooms, setRooms, roomIndex, setRoomIndex, palettes, selectedPalette, setSelectedPalette }) => {
     
     const [tab, setTab] = useState<Tab>('Tile')
 
     return (
         <div className='w-[400px] bg-secondary flex flex-col select-none'>
             <div className='flex flex-row h-10 px-2 pt-[4px]'>
-                <div 
+                <button type="button"
                     className={`grow hover:bg-darkblue animate-colors rounded-t-md cursor-pointer grid place-items-center select-none ${tab === 'Tile' ? 'pointer-events-none bg-light-secondary' : 'bg-secondary'}`}
                     onClick={() => setTab('Tile')}
                 >
                     Tiles
-                </div>
-                <div 
+                </button>
+                <button type="button"
                     className={`grow hover:bg-darkblue animate-colors rounded-t-md cursor-pointer grid place-items-center select-none ${tab === 'Special Tiles' ? 'pointer-events-none bg-light-secondary' : 'bg-secondary'}`}
                     onClick={() => setTab('Special Tiles')}
                 >
                     Special Tiles
-                </div>
+                </button>
+                <button type="button" className={`grow rounded-t-md ${tab === 'Objects' ? 'bg-light-secondary' : 'bg-secondary hover:bg-darkblue'}`} onClick={() => setTab('Objects')}>Objetos</button>
             </div>
             <div className='bg-light-secondary h-[4px]'/>
         <div>
@@ -57,6 +61,7 @@ const RightSection:React.FC<RightSectionProps> = ({ selectedTile, setSelectedTil
                     />
                 )}
                 {tab === 'Special Tiles' && <SpecialTiles specialTile={specialTile} selectSpecialTile={selectSpecialTile}/>}
+                {tab === 'Objects' && <OfficeObjectsPanel realmData={realmData} roomIndex={roomIndex} />}
             </div>
         </div>
     )

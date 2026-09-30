@@ -5,6 +5,9 @@ import { Layer, TilemapSprites, Tool, TilePoint, Point, RealmData, Room, TileMod
 import { SheetName, SpriteSheetTile, sprites } from './spritesheet/spritesheet'
 import { formatForComparison } from '../removeExtraSpaces'
 import { v4 as uuidv4 } from 'uuid'
+import { RealmDataSchema } from './zod'
+import type { OfficeObject } from './types'
+import { upsertObject, removeObject } from './office/object-editor'
 
 export class EditorApp extends App {
     private maxTileCount: number = 10_000
@@ -122,6 +125,17 @@ export class EditorApp extends App {
             const { x, y } = this.realmData.spawnpoint
             this.placeSpawnTileSprite(x, y)
         }
+        for (const object of this.realmData.rooms[this.currentRoomIndex].interactions ?? []) {
+            const { x, y, width, height } = object.bounds
+            const marker = new PIXI.Graphics()
+            marker.rect(x * 32, y * 32, width * 32, height * 32)
+            marker.stroke({ width: 2, color: 0x28d9b8, alpha: 0.9 })
+            marker.circle((x + width / 2) * 32, (y + height / 2) * 32, 5)
+            marker.fill(0x28d9b8)
+            marker.eventMode = 'none'
+            this.gizmoContainer.addChild(marker)
+        }
+        signal.emit('officeObjectsChanged', this.realmData.rooms[this.currentRoomIndex].interactions ?? [])
     }
 
     private setUpInitialTilemapDataAndPointerEvents = (layer: Layer) => {
@@ -360,6 +374,29 @@ export class EditorApp extends App {
         signal.on('selectPalette', this.onSelectPalette)
         signal.on('undo', this.undo)
         signal.on('redo', this.redo)
+        signal.on('upsertOfficeObject', this.onUpsertOfficeObject)
+        signal.on('deleteOfficeObject', this.onDeleteOfficeObject)
+    }
+
+    private onUpsertOfficeObject = (object: OfficeObject) => {
+        const next = this.getRealmDataCopy()
+        next.rooms[this.currentRoomIndex] = upsertObject(next.rooms[this.currentRoomIndex], object)
+        const result = RealmDataSchema.safeParse(next)
+        if (!result.success) {
+            signal.emit('officeObjectError', result.error.issues[0]?.message ?? 'Objeto inválido.')
+            return
+        }
+        this.updateRealmData(next, true)
+        this.drawSpecialTiles()
+        this.gizmoContainer.visible = true
+        signal.emit('officeObjectSaved', object.id)
+    }
+
+    private onDeleteOfficeObject = (objectId: string) => {
+        const next = this.getRealmDataCopy()
+        next.rooms[this.currentRoomIndex] = removeObject(next.rooms[this.currentRoomIndex], objectId)
+        this.updateRealmData(next, true)
+        this.drawSpecialTiles()
     }
 
     private onSelectPalette = (palette: SheetName) => {
@@ -798,10 +835,10 @@ export class EditorApp extends App {
         const newRealmData = this.getRealmDataCopy()
         let room = null
         if (this.snapshotIndex >= this.snapshots.length) {
-            newRealmData.rooms[this.currentRoomIndex].tilemap = this.present.tilemap
+            newRealmData.rooms[this.currentRoomIndex] = this.present
             room = newRealmData.rooms[this.currentRoomIndex]
         } else {
-            newRealmData.rooms[this.currentRoomIndex].tilemap = this.snapshots[this.snapshotIndex].tilemap
+            newRealmData.rooms[this.currentRoomIndex] = this.snapshots[this.snapshotIndex]
             room = newRealmData.rooms[this.currentRoomIndex]
         }
 
@@ -1243,6 +1280,8 @@ export class EditorApp extends App {
         signal.off('selectEraserLayer', this.onSelectEraserLayer)
         signal.off('teleport', this.onCreateTeleporter)
         signal.off('selectPalette', this.onSelectPalette)
+        signal.off('upsertOfficeObject', this.onUpsertOfficeObject)
+        signal.off('deleteOfficeObject', this.onDeleteOfficeObject)
         signal.off('undo', this.undo)
         signal.off('redo', this.redo)
         window.removeEventListener('beforeunload', this.onBeforeUnload)

@@ -107,6 +107,7 @@ const Editor:React.FC<EditorProps> = ({ realmData }) => {
                 <LeftBar tool={tool} tileMode={tileMode} selectTool={selectTool} selectTileMode={selectTileMode} specialTile={specialTile} eraserLayer={eraserLayer} selectEraserLayer={selectEraserLayer}/>
                 <PixiEditor className='h-full grow' setGameLoaded={setGameLoaded} realmData={realmData}/>
                 <RightSection 
+                    realmData={realmData}
                     selectedTile={selectedTile} 
                     setSelectedTile={selectTile} 
                     specialTile={specialTile} 

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { OfficeState } from './office/OfficeState'
+import { validateOfficeMap } from './office/object-config'
 
 export type RealmData = {
     spawnpoint: {
@@ -32,12 +33,13 @@ export interface Room {
 
 export interface OfficeObject {
     id: string,
-    kind: 'guide' | 'seat' | 'desk' | 'board' | 'drink' | 'snack' | 'guestbook' | 'pingpong',
+    kind: 'guide' | 'seat' | 'desk' | 'board' | 'drink' | 'snack' | 'guestbook' | 'pingpong' | 'external' | 'presentation' | 'speaker' | 'pet' | 'light',
     label: string,
     bounds: { x: number, y: number, width: number, height: number },
     approach: { x: number, y: number },
     seatVisual?: { x: number, y: number, facing?: 'up' | 'down' | 'left' | 'right' },
     effect?: 'coffee' | 'water' | 'snack',
+    config?: { url: string, allowedHosts: string[], roomEditable: boolean } | { deckId: string } | { rangeTiles: number } | { animationSet: string } | { radiusTiles: number, color: string, intensity: number },
 }
 
 export interface Player {
@@ -139,6 +141,7 @@ export class Session {
     public officeState: OfficeState
 
     constructor(id: string, mapData: RealmData) {
+        validateOfficeMap(mapData)
         this.id = id
         this.map_data = mapData 
         this.officeState = new OfficeState(mapData.rooms[mapData.spawnpoint.roomIndex])
