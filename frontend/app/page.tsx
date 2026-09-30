@@ -20,6 +20,7 @@ export default function Index() {
           <BasicButton>Entrar no escritório</BasicButton>
         </Link>
         <p className='mt-6 text-sm text-[#b9c2db]'>Acesso aberto pelo link. Câmera e microfone começam desligados.</p>
+        <Link href="/install" className="mt-4 inline-block text-sm text-teal-300 underline underline-offset-4">Instalar o aplicativo Matte Office</Link>
       </div>
     </main>
   )
