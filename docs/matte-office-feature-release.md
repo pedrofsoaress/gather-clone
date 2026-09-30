@@ -33,3 +33,12 @@ Tokens de mídia exigem participação atual validada no backend; canais disting
 Miro precisa de uma URL de quadro fornecida pelo gestor. O comportamento do iframe depende do serviço externo. Slides são criados no editor ou importados em JSON; não há conversor de PDF/PPT. A entrega desktop usa a instalação PWA disponível no navegador. Modo fantasma foi omitido por não existir uso administrativo definido. Troca física de dispositivos, áudio de aba e gamepad físico precisam ser conferidos com os dispositivos de cada participante.
 
 Implementação e ilustrações novas são originais; nenhum código ou asset foi copiado do repositório de referência.
+
+
+## Ajuste de visibilidade e proximidade — 30/09/2026
+
+- Avatares com contorno claro de um pixel nativo, sombra nos pés e identificação sobre fundo escuro. Tamanho e alinhamento nas cadeiras preservados; destaque acompanha as poses e a troca de skin.
+- Chamadas em áreas abertas usam raio circular de 2,5 tiles, em vez de uma região quadrada de alcance 6. Grupos próximos continuam conversando juntos e salas privadas mantêm seu próprio canal.
+- Trocas rápidas de skin são serializadas para impedir o descarte duplicado dos atlas.
+- Validação: 38 testes backend; 53 testes frontend antes da revisão, mais 3 novos casos do ciclo de troca de skin (suíte Player final: 9/9); builds frontend/backend passaram. Na prévia do navegador foram conferidos avatar em pé, sentado e troca de skin.
+- Render: `dep-daugr6m0tbcc73fcpu60`, commit `6be2c6a`. Vercel: `dpl_Bop1C2sKhVZGnQn1ZGk6cLavBERG`, commit `9954956`.
