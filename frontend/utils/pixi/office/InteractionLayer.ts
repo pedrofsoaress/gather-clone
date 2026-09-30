@@ -30,6 +30,7 @@ export class InteractionLayer {
             hitArea.eventMode = 'static'
             hitArea.cursor = 'pointer'
             hitArea.on('pointerdown', (event) => {
+                if (event.button !== 0) return
                 event.stopPropagation()
                 onActivate(object.id)
             })
@@ -81,6 +82,9 @@ export class InteractionLayer {
         for (const [id, badge] of this.badges) {
             const object = this.objects.find(item => item.id === id)
             if (!object) continue
+            // The occupied seat itself shows who is there. A badge at the top of
+            // its hit area otherwise lands directly on the seated avatar's head.
+            badge.visible = !occupancy[id]
             const { x, y, width } = object.bounds
             badge.clear()
             badge.circle((x + width / 2) * TILE_SIZE, y * TILE_SIZE + 5, 7)

@@ -30,6 +30,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
 
     const [showIntroScreen, setShowIntroScreen] = useState(true)
     const [displayName, setDisplayName] = useState(username)
+    const [meetingMode, setMeetingMode] = useState(false)
 
     useEffect(() => {
         const savedName = window.localStorage.getItem(`matte-office-name:${uid}`)?.trim()
@@ -67,7 +68,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
     return (
         <AgoraVideoChatProvider uid={uid}>
             {!showIntroScreen && <div className='relative w-full h-screen flex flex-col-reverse sm:flex-col'>
-                <VideoBar />
+                <VideoBar meetingMode={meetingMode} onMeetingModeChange={setMeetingMode} localName={displayName} localSkin={skin} />
                 <PixiApp
                     mapData={mapData}
                     className='w-full grow sm:h-full sm:flex-grow-0'
@@ -80,7 +81,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
                 />
                 <PlayNavbar username={displayName} skin={skin}/>
                 <OfficeHud objects={mapData.rooms[mapData.spawnpoint.roomIndex].interactions ?? []} uid={uid} />
-                <OfficeChat uid={uid} />
+                <OfficeChat uid={uid} meetingMode={meetingMode} />
             </div>}
             {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={(chosenName) => {
                 window.localStorage.setItem(`matte-office-name:${uid}`, chosenName)

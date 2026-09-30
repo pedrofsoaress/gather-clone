@@ -69,11 +69,12 @@ export class Player {
     private strikes: number = 0
 
     private currentChannel: string = 'local'
-    private seatMask: PIXI.Graphics | null = null
     private seatTween: gsap.core.Tween | null = null
     private directionBeforeSeat: Direction | null = null
     private currentSeatKey: string | null = null
     private seatOffset: Point = { x: 0, y: 0 }
+    private activeSeatVisual: { x: number, y: number, facing?: Direction } | null = null
+    private seatedTextures: Partial<Record<Direction, PIXI.Texture>> = {}
     private pendingSeatVisual: { x: number, y: number, facing?: Direction } | null = null
 
     constructor(skin: string, playApp: PlayApp, username: string, isLocal: boolean = false) {
@@ -106,10 +107,18 @@ export class Player {
     public changeSkin = async (skin: string) => {
         if (!skins.includes(skin)) return
 
+        const previousSeatedTextures = Object.values(this.seatedTextures)
+        this.seatedTextures = {}
         this.skin = skin
         await this.loadAnimations()
         // refresh animations
         this.changeAnimationState(this.animationState, true)
+        if (this.activeSeatVisual) {
+            const sprite = this.parent.children[0] as PIXI.AnimatedSprite
+            sprite.textures = [this.getSeatedTexture(this.direction)]
+            sprite.gotoAndStop(0)
+        }
+        previousSeatedTextures.forEach(texture => texture.destroy())
     }
 
     private addUsername() {
@@ -387,14 +396,10 @@ export class Player {
         const sprite = this.parent.children[0] as PIXI.AnimatedSprite
         this.seatTween?.kill()
         this.seatTween = null
-        if (this.seatMask) {
-            sprite.mask = null
-            this.parent.removeChild(this.seatMask)
-            this.seatMask.destroy()
-            this.seatMask = null
-        }
         if (!visual) {
+            this.activeSeatVisual = null
             sprite.position.set(0, 0)
+            sprite.anchor.set(0.5, 1)
             sprite.scale.set(AVATAR_SCALE)
             this.seatOffset = { x: 0, y: 0 }
             this.usernameText?.position.set(0, 8)
@@ -402,33 +407,53 @@ export class Player {
             if (this.directionBeforeSeat) {
                 this.direction = this.directionBeforeSeat
                 this.directionBeforeSeat = null
-                this.changeAnimationState(`idle_${this.direction}` as AnimationState)
             }
+            this.changeAnimationState(`idle_${this.direction}` as AnimationState, true)
             return
         }
+        this.activeSeatVisual = visual
         const seatPosition = this.convertTilePosToPlayerPos(visual.x, visual.y)
         const x = seatPosition.x - this.parent.x
         const y = seatPosition.y - this.parent.y
         this.seatOffset = { x, y }
         if (!this.directionBeforeSeat) this.directionBeforeSeat = this.direction
         this.direction = visual.facing ?? this.direction
-        this.changeAnimationState(`idle_${this.direction}` as AnimationState)
+        this.changeAnimationState(`idle_${this.direction}` as AnimationState, true)
         this.seatTween = gsap.to(sprite.position, {
             x, y, duration: 0.22, ease: 'power2.out',
             onComplete: () => {
-                const mask = new PIXI.Graphics()
-                mask.rect(x - 36, y - 72, 72, 57)
-                mask.fill(0xffffff)
-                mask.eventMode = 'none'
-                this.parent.addChild(mask)
-                sprite.scale.set(AVATAR_SCALE, AVATAR_SCALE * 0.86)
-                sprite.mask = mask
-                this.seatMask = mask
+                sprite.textures = [this.getSeatedTexture(this.direction)]
+                sprite.gotoAndStop(0)
+                sprite.anchor.set(0.5, 1)
+                sprite.scale.set(AVATAR_SCALE)
                 this.usernameText?.position.set(x, y - 68)
                 this.textMessage.position.set(x, y - this.textMessage.height - 78)
                 this.seatTween = null
             }
         })
+    }
+
+    private getSeatedTexture(facing: Direction): PIXI.Texture {
+        const cached = this.seatedTextures[facing]
+        if (cached) return cached
+        const canvas = document.createElement('canvas')
+        canvas.width = 48
+        canvas.height = 48
+        const context = canvas.getContext('2d')!
+        context.imageSmoothingEnabled = false
+        const atlas = this.sheet.textureSource.resource as CanvasImageSource
+        const row = { down: 0, left: 1, right: 2, up: 3 }[facing]
+        const frameY = row * 48
+
+        // Keep the original head and shoulders, then tuck the lower body into
+        // the chair. The source sprite's legs occupy its last twelve pixels.
+        context.drawImage(atlas, 48, frameY, 48, 36, 0, 0, 48, 36)
+        const legShift = facing === 'left' ? -4 : facing === 'right' ? 4 : 0
+        context.drawImage(atlas, 48, frameY + 36, 48, 12, legShift, 36, 48, 5)
+
+        const texture = PIXI.Texture.from(canvas)
+        this.seatedTextures[facing] = texture
+        return texture
     }
 
     public keydown = (event: KeyboardEvent) => {
@@ -476,6 +501,7 @@ export class Player {
     public destroy() {
         PIXI.Ticker.shared.remove(this.move)
         this.seatTween?.kill()
-        this.seatMask?.destroy()
+        Object.values(this.seatedTextures).forEach(texture => texture.destroy())
+        this.seatedTextures = {}
     }
 }

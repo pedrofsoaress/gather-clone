@@ -144,23 +144,22 @@ export class VideoChat {
             if (channel === this.currentChannel) return
             const uniqueChannelId = this.createUniqueChannelId(realmId, channel)
             const token = await generateToken(uniqueChannelId)
-            if (!token) return
-
-            if (this.client.connectionState === 'CONNECTED') {
-                await this.client.leave()
+            if (!token) {
+                signal.emit('officeFeedback', { message: 'Chamada indisponível. O administrador precisa concluir a configuração do Agora.' })
+                return
             }
-            this.resetRemoteUsers()
 
-            await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, token, uid)
-            this.currentChannel = channel
-
-            if (this.microphoneTrack && this.microphoneTrack.enabled) {
-                await this.client.publish([this.microphoneTrack])
-            }
-            if (this.screenTrack) {
-                await this.client.publish(this.screenTrack)
-            } else if (this.cameraTrack && this.cameraTrack.enabled) {
-                await this.client.publish([this.cameraTrack])
+            try {
+                if (this.client.connectionState === 'CONNECTED') await this.client.leave()
+                this.resetRemoteUsers()
+                await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, token, uid)
+                this.currentChannel = channel
+                if (this.microphoneTrack && this.microphoneTrack.enabled) await this.client.publish([this.microphoneTrack])
+                if (this.screenTrack) await this.client.publish(this.screenTrack)
+                else if (this.cameraTrack && this.cameraTrack.enabled) await this.client.publish([this.cameraTrack])
+            } catch (error) {
+                console.error('Failed to join video conversation', error)
+                signal.emit('officeFeedback', { message: 'Não foi possível entrar na chamada de vídeo.' })
             }
         }, 1000)
     }

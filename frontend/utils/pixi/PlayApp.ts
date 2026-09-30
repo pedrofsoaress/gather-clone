@@ -36,6 +36,8 @@ export class PlayApp extends App {
     private interactionLayer: InteractionLayer | null = null
     private pendingOfficeObjectId: string | null = null
     private officeSnapshot: OfficeSnapshot = { occupancy: {}, games: {} }
+    private cameraDrag: { pointerId: number, startX: number, startY: number, pivotX: number, pivotY: number } | null = null
+    private cameraManuallyPanned = false
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -53,7 +55,7 @@ export class PlayApp extends App {
         this.setUpRoomInteractions()
         this.setUpBlockedTiles()
         this.setUpFadeTiles()
-        this.spawnLocalPlayer()
+        await this.spawnLocalPlayer()
         await this.syncOtherPlayers()
         this.displayInitialChatMessage()
     }
@@ -260,6 +262,9 @@ export class PlayApp extends App {
         this.setUpFadeOverlay()
         this.setUpSignalListeners()
         this.setUpSocketEvents()
+        // The room join precedes these listeners. Reannounce the spawn tile so
+        // both newly joined neighbors receive their proximity channel.
+        server.socket.emit('movePlayer', this.player.currentTilePosition)
         server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => {
             if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot)
         })
@@ -286,6 +291,8 @@ export class PlayApp extends App {
     }
 
     public moveCameraToPlayer = () => {
+        if (this.cameraDrag) return
+        this.cameraManuallyPanned = false
         const x = this.player.parent.x - (this.app.screen.width / 2) / this.scale
         const y = this.player.parent.y - (this.app.screen.height / 2) / this.scale
         this.app.stage.pivot.set(x, y)
@@ -300,7 +307,8 @@ export class PlayApp extends App {
     }
 
     private resizeEvent = () => {
-        this.moveCameraToPlayer()
+        if (this.cameraManuallyPanned) this.updateFadeOverlay(this.app.stage.pivot.x, this.app.stage.pivot.y)
+        else this.moveCameraToPlayer()
     }
 
     private setUpFadeOverlay = () => {
@@ -328,6 +336,7 @@ export class PlayApp extends App {
 
     private clickEvents = () => {
         this.app.stage.on('pointerdown', (e: PIXI.FederatedPointerEvent) => {
+            if (e.button !== 0) return
             if (this.player.frozen || this.disableInput) return  
 
             const clickPosition = e.getLocalPosition(this.app.stage)
@@ -338,6 +347,52 @@ export class PlayApp extends App {
             this.player.moveToTile(x, y)
             this.player.setMovementMode('mouse')
         })
+        const canvas = this.app.canvas
+        canvas.addEventListener('contextmenu', this.preventCanvasContextMenu)
+        canvas.addEventListener('pointerdown', this.startCameraDrag)
+        canvas.addEventListener('pointermove', this.moveCameraDrag)
+        canvas.addEventListener('pointerup', this.endCameraDrag)
+        canvas.addEventListener('pointercancel', this.endCameraDrag)
+        window.addEventListener('blur', this.cancelCameraDrag)
+    }
+
+    private preventCanvasContextMenu = (event: MouseEvent) => event.preventDefault()
+
+    private startCameraDrag = (event: PointerEvent) => {
+        if (event.button !== 2 || this.disableInput) return
+        event.preventDefault()
+        this.cameraDrag = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            pivotX: this.app.stage.pivot.x,
+            pivotY: this.app.stage.pivot.y,
+        }
+        this.cameraManuallyPanned = true
+        this.app.canvas.style.cursor = 'grabbing'
+        this.app.canvas.setPointerCapture(event.pointerId)
+    }
+
+    private moveCameraDrag = (event: PointerEvent) => {
+        const drag = this.cameraDrag
+        if (!drag || event.pointerId !== drag.pointerId) return
+        if (!(event.buttons & 2)) { this.endCameraDrag(event); return }
+        const x = drag.pivotX - (event.clientX - drag.startX) / this.scale
+        const y = drag.pivotY - (event.clientY - drag.startY) / this.scale
+        this.app.stage.pivot.set(x, y)
+        this.updateFadeOverlay(x, y)
+    }
+
+    private endCameraDrag = (event: PointerEvent) => {
+        if (!this.cameraDrag || event.pointerId !== this.cameraDrag.pointerId) return
+        this.cancelCameraDrag()
+    }
+
+    private cancelCameraDrag = () => {
+        const pointerId = this.cameraDrag?.pointerId
+        this.cameraDrag = null
+        this.app.canvas.style.cursor = ''
+        if (pointerId !== undefined && this.app.canvas.hasPointerCapture(pointerId)) this.app.canvas.releasePointerCapture(pointerId)
     }
 
     private setUpKeyboardEvents = () => {
@@ -617,6 +672,15 @@ export class PlayApp extends App {
     }
 
     private removeEvents = () => {
+        if (this.initialized) {
+            this.cancelCameraDrag()
+            this.app.canvas.removeEventListener('contextmenu', this.preventCanvasContextMenu)
+            this.app.canvas.removeEventListener('pointerdown', this.startCameraDrag)
+            this.app.canvas.removeEventListener('pointermove', this.moveCameraDrag)
+            this.app.canvas.removeEventListener('pointerup', this.endCameraDrag)
+            this.app.canvas.removeEventListener('pointercancel', this.endCameraDrag)
+            window.removeEventListener('blur', this.cancelCameraDrag)
+        }
         this.removeSocketEvents()
         this.destroyPlayers()
         server.disconnect()
