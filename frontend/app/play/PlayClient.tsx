@@ -23,7 +23,6 @@ const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 type PlayClientProps = {
     mapData: RealmData
     username: string
-    access_token: string
     realmId: string
     uid: string
     shareId: string
@@ -31,7 +30,7 @@ type PlayClientProps = {
     name: string
 }
 
-const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token, realmId, uid, shareId, initialSkin, name }) => {
+const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, realmId, uid, shareId, initialSkin, name }) => {
 
     const { setErrorModal, setDisconnectedMessage } = useModal()
 
@@ -137,7 +136,6 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, access_token,
                     mapData={mapData}
                     className='w-full grow sm:h-full sm:flex-grow-0'
                     username={displayName}
-                    access_token={access_token}
                     realmId={realmId}
                     uid={uid}
                     shareId={shareId}

@@ -35,7 +35,10 @@ function broadcastRoomFeatures(io: Server, session: Session, room: number) {
 
 function protectConnection(io: Server) {
     io.use(async (socket, next) => {
-        const access_token = socket.handshake.headers['authorization']?.split(' ')[1]
+        const authToken = socket.handshake.auth?.token
+        const access_token = typeof authToken === 'string' && authToken
+            ? authToken
+            : socket.handshake.headers['authorization']?.split(' ')[1]
         const uid = socket.handshake.query.uid as string
         if (!access_token || !uid) {
             const error = new Error("Invalid access token or uid.")

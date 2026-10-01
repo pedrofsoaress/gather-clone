@@ -13,19 +13,19 @@ class Server {
     public socket: Socket = {} as Socket
     private connected: boolean = false
 
-    public async connect(realmId: string, uid: string, shareId: string, access_token: string, displayName: string) {
+    public async connect(realmId: string, uid: string, shareId: string, displayName: string) {
         this.socket = io(backend_url, {
         reconnection: true,
         autoConnect: false,
         reconnectionAttempts: 30,
         reconnectionDelay: 2000,
         reconnectionDelayMax: 5000,
-        transportOptions: {
-            polling: {
-                extraHeaders: {
-                    'Authorization': `Bearer ${access_token}`
-                }
-            }
+        transports: ['websocket', 'polling'],
+        tryAllTransports: true,
+        auth: (callback) => {
+            void createClient().auth.getSession().then(({ data, error }) => {
+                callback({ token: !error && data.session?.user.id === uid ? data.session.access_token : '' })
+            }).catch(() => callback({ token: '' }))
         },
         query: {
             uid
@@ -44,10 +44,12 @@ class Server {
                 resolve({ success, errorMessage })
             }
 
+            let lastConnectError = ''
             const onConnectError = (err: Error) => {
                 console.warn('Connection attempt failed:', err.message)
+                lastConnectError = err.message
                 if (/^Invalid (access token|uid)/.test(err.message)) {
-                    finish(false, err.message)
+                    finish(false, 'Sua sessão expirou. Atualize a página e entre novamente.')
                 }
             }
 
@@ -56,7 +58,9 @@ class Server {
             }
 
             const deadline = setTimeout(() => {
-                finish(false, 'The server took too long to start. Please try again.')
+                finish(false, lastConnectError
+                    ? `Não foi possível conectar ao servidor (${lastConnectError}). Tente novamente.`
+                    : 'O servidor demorou demais para responder. Tente novamente.')
             }, 150000)
 
             this.socket.on('connect', () => {

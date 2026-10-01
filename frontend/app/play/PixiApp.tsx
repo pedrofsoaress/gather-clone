@@ -11,14 +11,13 @@ type PixiAppProps = {
     className?: string
     mapData: RealmData
     username: string
-    access_token: string
     realmId: string
     uid: string
     shareId: string
     initialSkin: string
 }
 
-const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, access_token, realmId, uid, shareId, initialSkin }) => {
+const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, realmId, uid, shareId, initialSkin }) => {
 
     const { setModal, setLoadingText, setFailedConnectionMessage, setErrorModal } = useModal()
 
@@ -30,7 +29,7 @@ const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, access_t
             app = new PlayApp(uid, realmId, mapData, username, initialSkin)
             setModal('Loading')
             setLoadingText('Connecting to server... This can take a minute after inactivity.')
-            const { success, errorMessage } = await server.connect(realmId, uid, shareId, access_token, username)
+            const { success, errorMessage } = await server.connect(realmId, uid, shareId, username)
             if (cancelled) return
             if (!success) {
                 setErrorModal('Failed To Connect')
