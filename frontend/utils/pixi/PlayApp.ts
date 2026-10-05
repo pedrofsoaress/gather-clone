@@ -14,6 +14,7 @@ import { LightingLayer } from './office/LightingLayer'
 import { GamepadController, type GamepadInput } from './office/GamepadController'
 import type { AvatarSnapshot } from './Player/avatar-actions'
 import { zoomAtCursor } from './office/camera-zoom.mjs'
+import { videoChat } from '../video-chat/video-chat'
 
 export class PlayApp extends App {
     private scale: number = 1.5
@@ -50,6 +51,10 @@ export class PlayApp extends App {
     private avatarSnapshot: AvatarSnapshot = {}
     private eventsRemoved = false
     private roomTransitioning = false
+    private reconnecting = false
+    private spawning = new Map<string, Promise<void>>()
+    private departures = new Map<string, number>()
+    private resyncTimer: ReturnType<typeof setTimeout> | null = null
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -248,18 +253,35 @@ export class PlayApp extends App {
     }
 
     private async syncOtherPlayers() {
+        const known = Object.keys(this.players)
         const {data, error} = await server.getPlayersInRoom(this.currentRoomIndex)
         if (error) {
             console.error('Failed to get player positions in room:', error)
             return
         }
 
+        // Drop avatars whose departure was missed, e.g. while this connection was down.
+        const listed = new Set(data.players.map((player: { uid: string }) => player.uid))
+        for (const uid of known) if (!listed.has(uid)) this.onPlayerLeftRoom(uid)
         await Promise.all(data.players.filter((player: { uid: string }) => player.uid !== this.uid).map((player: any) => this.updatePlayer(player.uid, player)))
 
         this.sortObjectsByY()
     }
 
+    // Ask the server for the room's players again when an event mentions someone this
+    // screen never saw join; a single missed event must not hide a person all session.
+    private scheduleResync = () => {
+        if (this.resyncTimer || this.roomTransitioning || this.reconnecting) return
+        this.resyncTimer = setTimeout(() => {
+            this.resyncTimer = null
+            if (!this.eventsRemoved) void this.syncOtherPlayers()
+        }, 1000)
+    }
+
     private async updatePlayer(uid: string, player: any) {
+        const pending = this.spawning.get(uid)
+        if (pending) await pending
+        if (this.eventsRemoved) return
         if (uid in this.players) {
             if (this.players[uid].skin !== player.skin) {
                 await this.players[uid].changeSkin(player.skin)
@@ -268,13 +290,23 @@ export class PlayApp extends App {
                 this.players[uid].setPosition(player.x, player.y)
             }
         } else {
-            await this.spawnPlayer(player.uid, player.skin, player.username, player.x, player.y)
+            const spawn = this.spawnPlayer(player.uid, player.skin, player.username, player.x, player.y)
+                .finally(() => this.spawning.delete(uid))
+            this.spawning.set(uid, spawn)
+            await spawn
         }
     }
 
     private async spawnPlayer(uid: string, skin: string, username: string, x: number, y: number) {
+        const departures = this.departures.get(uid) ?? 0
+        const room = this.currentRoomIndex
         const otherPlayer = new Player(skin, this, username)
         await otherPlayer.init()
+        // The person may have left, or this screen changed rooms, while the avatar loaded.
+        if (this.eventsRemoved || room !== this.currentRoomIndex || departures !== (this.departures.get(uid) ?? 0)) {
+            otherPlayer.destroy()
+            return
+        }
         otherPlayer.setPosition(x, y)
         this.layers.object.addChild(otherPlayer.parent)
         this.players[uid] = otherPlayer
@@ -303,14 +335,20 @@ export class PlayApp extends App {
         this.setUpSocketEvents()
         this.gamepad = new GamepadController(this.onGamepadInput, status => signal.emit('officeGamepad', status))
         signal.emit('officeNotice', { message: `Bem-vindo ao ${this.realmData.rooms[this.currentRoomIndex].name}.`, key: 'office-welcome' })
+        this.requestSnapshots()
+        // People who joined while the room was loading arrived before the socket listeners existed.
+        await this.syncOtherPlayers()
+
+        this.fadeOut()
+    }
+
+    private requestSnapshots = () => {
         server.socket.emit('avatarGetSnapshot', (response: { ok: boolean, snapshot?: AvatarSnapshot }) => {
             if (response?.ok && response.snapshot) this.onAvatarState(response.snapshot)
         })
         server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => {
             if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot)
         })
-
-        this.fadeOut()
     }
 
     private spawnLocalPlayer = async () => {
@@ -631,6 +669,7 @@ export class PlayApp extends App {
     }
 
     private onPlayerLeftRoom = (uid: string) => {
+        this.departures.set(uid, (this.departures.get(uid) ?? 0) + 1)
         if (this.players[uid]) {
             this.players[uid].destroy()
             this.layers.object.removeChild(this.players[uid].parent)
@@ -651,6 +690,8 @@ export class PlayApp extends App {
         const player = this.players[data.uid]
         if (player) {
             player.moveToTile(data.x, data.y)
+        } else if (!this.spawning.has(data.uid)) {
+            this.scheduleResync()
         }
     }
 
@@ -749,14 +790,51 @@ export class PlayApp extends App {
     private onKicked = (message: string) => {
         this.kicked = true
         this.removeEvents()
+        void videoChat.leaveChannel()
         signal.emit('showKickedModal', message)
     }
 
-    private onDisconnect = () => {
-        this.removeEvents()
-        if (!this.kicked) {
-            signal.emit('showDisconnectModal')
+    // A dropped connection keeps the office open while Socket.IO reconnects; the
+    // video call stays up so a short network blip does not end the conversation.
+    private onDisconnect = (reason: string) => {
+        if (this.kicked || reason === 'io client disconnect') return
+        if (!server.socket.active) return this.endSession()
+        if (this.reconnecting) return
+        this.reconnecting = true
+        this.releaseMovement()
+        this.player.setFrozen(true)
+        signal.emit('officeNotice', { message: 'A conexão caiu. Reconectando ao escritório...', key: 'office-reconnecting' })
+    }
+
+    private onRejoined = async (joined?: { roomIndex: number, x: number, y: number }) => {
+        if (!this.reconnecting) return
+        if (!joined) {
+            // Older servers do not report the position; keep the local one.
+            await this.syncOtherPlayers()
+        } else if (joined.roomIndex !== this.currentRoomIndex) {
+            this.teleportLocation = { x: joined.x, y: joined.y }
+            await this.loadRoom(joined.roomIndex)
+        } else {
+            this.player.setSeatedVisual(null)
+            this.player.setPosition(joined.x, joined.y)
+            this.moveCameraToPlayer()
+            await this.syncOtherPlayers()
         }
+        if (this.eventsRemoved) return
+        this.reconnecting = false
+        this.requestSnapshots()
+        this.player.setFrozen(false)
+        signal.emit('officeNotice', { message: 'Conexão restabelecida.', key: 'office-reconnected' })
+    }
+
+    private onRejoinFailed = () => {
+        if (this.reconnecting) this.endSession()
+    }
+
+    private endSession = () => {
+        this.removeEvents()
+        void videoChat.leaveChannel()
+        signal.emit('showDisconnectModal')
     }
 
     private onMessage = (message: string) => {
@@ -819,6 +897,9 @@ export class PlayApp extends App {
         server.socket.on('playerChangedSkin', this.onPlayerChangedSkin)
         server.socket.on('receiveMessage', this.onReceiveMessage)
         server.socket.on('disconnect', this.onDisconnect)
+        server.socket.on('joinedRealm', this.onRejoined)
+        server.socket.on('failedToJoinRoom', this.onRejoinFailed)
+        server.socket.io.on('reconnect_failed', this.onRejoinFailed)
         server.socket.on('kicked', this.onKicked)
         server.socket.on('proximityUpdate', this.onProximityUpdate)
     }
@@ -834,6 +915,9 @@ export class PlayApp extends App {
         server.socket.off('playerChangedSkin', this.onPlayerChangedSkin)
         server.socket.off('receiveMessage', this.onReceiveMessage)
         server.socket.off('disconnect', this.onDisconnect)
+        server.socket.off('joinedRealm', this.onRejoined)
+        server.socket.off('failedToJoinRoom', this.onRejoinFailed)
+        server.socket.io?.off('reconnect_failed', this.onRejoinFailed)
         server.socket.off('kicked', this.onKicked)
         server.socket.off('proximityUpdate', this.onProximityUpdate)
     }
@@ -862,6 +946,8 @@ export class PlayApp extends App {
         this.fadeAnimation?.kill()
         this.fadeAnimation = null
         PIXI.Ticker.shared.remove(this.fadeOutTicker)
+        if (this.resyncTimer) clearTimeout(this.resyncTimer)
+        this.resyncTimer = null
         this.removeSocketEvents()
         this.destroyPlayers()
         server.disconnect()

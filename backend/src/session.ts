@@ -68,10 +68,17 @@ export const Spawnpoint = z.object({
 
 export type RoomData = { [key: number]: Player[] }
 
+type PlacedPosition = { room: number, x: number, y: number }
+
+// A dropped connection reconnects within seconds; remember where the visitor
+// stood so the rejoin does not send them back to the entrance.
+const RESUME_WINDOW_MS = 2 * 60 * 1000
+
 export class SessionManager {
     private sessions: { [key: string]: Session } = {}
     private playerIdToRealmId: { [key: string]: string } = {}
     private socketIdToPlayerId: { [key: string]: string } = {}
+    private lastPositions = new Map<string, PlacedPosition & { realmId: string, at: number }>()
 
     public createSession(id: string, mapData: RealmData): void {
         const realm = new Session(id, mapData)
@@ -92,18 +99,23 @@ export class SessionManager {
         return this.sessions[realmId]
     }
 
-    public addPlayerToSession(socketId: string, realmId: string, uid: string, username: string, skin: string) {
-        this.sessions[realmId].addPlayer(socketId, uid, username, skin)
+    public addPlayerToSession(socketId: string, realmId: string, uid: string, username: string, skin: string, now = Date.now()) {
+        const last = this.lastPositions.get(uid)
+        this.lastPositions.delete(uid)
+        const resume = last && last.realmId === realmId && now - last.at <= RESUME_WINDOW_MS ? last : undefined
+        this.sessions[realmId].addPlayer(socketId, uid, username, skin, resume)
         this.playerIdToRealmId[uid] = realmId
         this.socketIdToPlayerId[socketId] = uid
     }
 
-    public logOutPlayer(uid: string) {
+    public logOutPlayer(uid: string, now = Date.now()) {
         const realmId = this.playerIdToRealmId[uid]
         // If the player is not in a realm, do nothing
         if (!realmId) return
 
         const player = this.sessions[realmId].getPlayer(uid)
+        for (const [id, position] of this.lastPositions) if (now - position.at > RESUME_WINDOW_MS) this.lastPositions.delete(id)
+        this.lastPositions.set(uid, { realmId, room: player.room, x: player.x, y: player.y, at: now })
         delete this.socketIdToPlayerId[player.socketId]
         delete this.playerIdToRealmId[uid]
         this.sessions[realmId].removePlayer(uid)
@@ -113,11 +125,11 @@ export class SessionManager {
         return this.sessions[realmId].getPlayersInRoom(roomIndex).map(player => player.socketId)
     }
 
-    public logOutBySocketId(socketId: string) {
+    public logOutBySocketId(socketId: string, now = Date.now()) {
         const uid = this.socketIdToPlayerId[socketId]
         if (!uid) return false
 
-        this.logOutPlayer(uid)
+        this.logOutPlayer(uid, now)
         return true
     }
 
@@ -169,11 +181,15 @@ export class Session {
         }
     }
 
-    public addPlayer(socketId: string, uid: string, username: string, skin: string) {
+    public addPlayer(socketId: string, uid: string, username: string, skin: string, resume?: PlacedPosition) {
         this.removePlayer(uid)
-        const spawnIndex = this.map_data.spawnpoint.roomIndex
-        const spawnX = this.map_data.spawnpoint.x
-        const spawnY = this.map_data.spawnpoint.y
+        const resumeTile = resume ? this.map_data.rooms[resume.room]?.tilemap[`${resume.x}, ${resume.y}`] : undefined
+        const start = resume && resumeTile && !resumeTile.impassable
+            ? resume
+            : { room: this.map_data.spawnpoint.roomIndex, x: this.map_data.spawnpoint.x, y: this.map_data.spawnpoint.y }
+        const spawnIndex = start.room
+        const spawnX = start.x
+        const spawnY = start.y
 
         const player: Player = {
             uid,
@@ -193,7 +209,7 @@ export class Session {
         }
         this.playerPositions[spawnIndex][coordKey].add(uid)
         this.players[uid] = player
-        this.officeState.addPlayer(uid, { x: spawnX, y: spawnY }, username)
+        this.roomFeatures[spawnIndex].office.addPlayer(uid, { x: spawnX, y: spawnY }, username)
     }
 
     public removePlayer(uid: string): void {

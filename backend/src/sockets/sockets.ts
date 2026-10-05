@@ -108,7 +108,7 @@ export function sockets(io: Server) {
             }
         }
 
-        socket.on('joinRealm', async (realmData: z.infer<typeof JoinRealm>) => {
+        const joinRealm = async (realmData: z.infer<typeof JoinRealm>) => {
             const uid = socket.handshake.query.uid as string
             const rejectJoin = (reason: string) => {
                 socket.emit('failedToJoinRoom', reason)
@@ -163,7 +163,7 @@ export function sockets(io: Server) {
                 const player = newSession.getPlayer(uid)   
 
                 socket.join(realmData.realmId)
-                socket.emit('joinedRealm')
+                socket.emit('joinedRealm', { roomIndex: player.room, x: player.x, y: player.y })
                 emit('playerJoinedRoom', player)
                 joiningInProgress.delete(uid)
             }
@@ -181,6 +181,15 @@ export function sockets(io: Server) {
             } else {
                 return rejectJoin('The share link has been changed.')
             }
+        }
+
+        socket.on('joinRealm', (realmData: z.infer<typeof JoinRealm>) => {
+            // An unexpected failure must not leave the visitor locked out of later reconnections.
+            joinRealm(realmData).catch(error => {
+                console.error('joinRealm failed', error)
+                socket.emit('failedToJoinRoom', 'Não foi possível entrar no escritório.')
+                joiningInProgress.delete(socket.handshake.query.uid as string)
+            })
         })
 
         // Handle a disconnection
