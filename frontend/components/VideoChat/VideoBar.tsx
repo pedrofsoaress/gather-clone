@@ -1,18 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
 import signal from '@/utils/signal'
 import { ArrowsOut, ArrowsIn, MicrophoneSlash, MapTrifold, SpeakerHigh, SpeakerSlash } from '@phosphor-icons/react'
 import AnimatedCharacter from '@/app/play/SkinMenu/AnimatedCharacter'
 import { useVideoChat } from '@/app/hooks/useVideoChat'
 import { videoChat } from '@/utils/video-chat/video-chat'
-
-interface RemoteUser {
-    uid: string
-    micEnabled: boolean
-    cameraEnabled: boolean
-    user: IAgoraRTCRemoteUser
-}
+import { RemoteUser, useFloatingOpen, usePeerProfile, useRemoteUsers } from './useRemoteUsers'
 
 type VideoBarProps = {
     meetingMode: boolean
@@ -25,7 +18,7 @@ type VideoBarProps = {
 }
 
 const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, chatOpen, localUid, localName, localSkin, presentation }) => {
-    const [remoteUsers, setRemoteUsers] = useState<Record<string, RemoteUser>>({})
+    const remoteUsers = useRemoteUsers()
     const peers = Object.values(remoteUsers)
     const screens = peers.filter(user => user.uid.endsWith('-screen'))
     const cameras = peers.filter(user => !user.uid.endsWith('-screen'))
@@ -35,31 +28,6 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
         signal.emit('officeAudioBusy', peers.length > 0)
         return () => signal.emit('officeAudioBusy', false)
     }, [peers.length > 0])
-
-    useEffect(() => {
-        const onUserInfoUpdated = (user: IAgoraRTCRemoteUser) => {
-            setRemoteUsers(previous => ({ ...previous, [user.uid]: {
-                uid: user.uid.toString(), micEnabled: user.hasAudio,
-                cameraEnabled: user.hasVideo, user,
-            } }))
-        }
-        const onResetUsers = () => setRemoteUsers({})
-        const onUserLeft = (user: IAgoraRTCRemoteUser) => {
-            setRemoteUsers(previous => {
-                const next = { ...previous }
-                delete next[user.uid]
-                return next
-            })
-        }
-        signal.on('user-info-updated', onUserInfoUpdated)
-        signal.on('reset-users', onResetUsers)
-        signal.on('user-left', onUserLeft)
-        return () => {
-            signal.off('user-info-updated', onUserInfoUpdated)
-            signal.off('reset-users', onResetUsers)
-            signal.off('user-left', onUserLeft)
-        }
-    }, [])
 
     if (peers.length === 0 && !presentation) return null
 
@@ -101,11 +69,14 @@ export default VideoBar
 
 function LocalUser({ name, skin, className }: { name: string, skin: string, className: string }) {
     const { isCameraMuted, isMicMuted } = useVideoChat()
+    const floating = useFloatingOpen()
 
+    // While the floating window is open it holds the preview; it hands it back when it closes.
     useEffect(() => {
-        if (!isCameraMuted) videoChat.playVideoTrackAtElementId('local-meeting-video')
-        return () => { if (!isCameraMuted) videoChat.playVideoTrackAtElementId('local-video') }
-    }, [isCameraMuted])
+        if (isCameraMuted || floating) return
+        videoChat.playVideoTrackAtElementId('local-meeting-video')
+        return () => videoChat.playVideoTrackAtElementId('local-video')
+    }, [isCameraMuted, floating])
 
     return <div className={`${className} overflow-hidden rounded-xl bg-[#252b42]`}>
         <div className="absolute inset-0 grid place-items-center"><div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full bg-slate-700"><AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className="h-16 w-16" /></div></div>
@@ -118,8 +89,10 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     const containerRef = useRef<HTMLDivElement>(null)
     const isScreen = user.uid.endsWith('-screen')
     const isLocalScreen = isScreen && user.uid === `${localUid}-screen`
-    const [skin, setSkin] = useState(isLocalScreen ? localSkin : '')
-    const [name, setName] = useState(isLocalScreen ? localName : 'Visitante')
+    const profile = usePeerProfile(user.user.uid.toString(), !isLocalScreen)
+    const skin = isLocalScreen ? localSkin : profile.skin
+    const name = isLocalScreen ? localName : profile.name
+    const floating = useFloatingOpen()
     const [expanded, setExpanded] = useState(false)
     const [audioMenuOpen, setAudioMenuOpen] = useState(false)
     const [audioState, setAudioState] = useState(() => videoChat.getRemoteAudio(user.uid))
@@ -153,26 +126,11 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     }, [audioMenuOpen])
 
     useEffect(() => {
-        if (isLocalScreen) {
-            setSkin(localSkin)
-            setName(localName)
-            return
-        }
-        const onVideoSkin = (data: { skin: string, uid: string, name?: string }) => {
-            if (data.uid === user.user.uid.toString().slice(0, 36)) {
-                setSkin(data.skin)
-                if (data.name) setName(data.name)
-            }
-        }
-        signal.on('video-skin', onVideoSkin)
-        signal.emit('getSkinForUid', user.user.uid.toString().slice(0, 36))
-        return () => signal.off('video-skin', onVideoSkin)
-    }, [user.user.uid, isLocalScreen, localName, localSkin])
-
-    useEffect(() => {
+        // The floating window shows people's cameras; screen shares stay here.
+        if (floating && !isScreen) return
         if (user.cameraEnabled) user.user.videoTrack?.play(`remote-user-${user.uid}`, { fit: isScreen ? 'contain' : 'cover' })
         else containerRef.current?.replaceChildren()
-    }, [user, meetingMode, isScreen])
+    }, [user, meetingMode, isScreen, floating])
 
     useEffect(() => {
         if (isScreen) return

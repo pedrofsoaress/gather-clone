@@ -164,3 +164,27 @@ test('accepting a screen picker after leaving stops capture without publishing',
     assert.equal(mediaTrack.stopped, true)
     assert.deepEqual(env.clients[1].joined, [])
 })
+
+test('the floating window borrows the camera preview and returns it when it closes', async () => {
+    const env = harness()
+    env.setDevices([{ kind: 'videoinput', deviceId: 'usb-camera' }])
+    env.chat.playVideoTrackAtElementId('local-video')
+    await env.chat.toggleCamera()
+    const camera = env.clients[0].published[0]
+    const floatingTile = { id: 'floating-self' }
+    const restore = env.chat.showCameraIn(floatingTile)
+    assert.equal(camera.played.at(-1), floatingTile)
+    restore()
+    assert.equal(camera.played.at(-1), 'local-video')
+})
+
+test('a preview moved elsewhere while floating is not taken back on close', async () => {
+    const env = harness()
+    env.setDevices([{ kind: 'videoinput', deviceId: 'usb-camera' }])
+    await env.chat.toggleCamera()
+    const camera = env.clients[0].published[0]
+    const restore = env.chat.showCameraIn({ id: 'floating-self' })
+    env.chat.playVideoTrackAtElementId('local-meeting-video')
+    restore()
+    assert.equal(camera.played.at(-1), 'local-meeting-video')
+})

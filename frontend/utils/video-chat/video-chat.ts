@@ -16,7 +16,7 @@ export class VideoChat {
     private preferences: MediaPreferences | null = null
     private readonly remoteVolumes = new Map<string, number>()
     private readonly remoteMuted = new Set<string>()
-    private cameraElementId = 'local-video'
+    private cameraElementId: string | HTMLElement = 'local-video'
     private deviceRefresh: Promise<MediaDeviceInfo[]> | null = null
     private stopDeviceMonitoring: (() => void) | null = null
     private lifecycle = 0
@@ -273,10 +273,20 @@ export class VideoChat {
         await Promise.all(Object.values(this.remoteUsers).map(user => this.applyRemoteAudio(user)))
     }
 
-    public playVideoTrackAtElementId(elementId: string) {
+    public playVideoTrackAtElementId(elementId: string | HTMLElement) {
         this.cameraElementId = elementId
         if (this.cameraTrack) {
             this.cameraTrack.play(elementId)
+        }
+    }
+
+    // The floating call window lives in another document, so it receives the
+    // element itself. The returned function gives the preview back to the office.
+    public showCameraIn(element: HTMLElement): () => void {
+        const previous = this.cameraElementId
+        this.playVideoTrackAtElementId(element)
+        return () => {
+            if (this.cameraElementId === element) this.playVideoTrackAtElementId(previous)
         }
     }
 
