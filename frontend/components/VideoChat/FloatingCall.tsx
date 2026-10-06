@@ -5,7 +5,7 @@ import signal from '@/utils/signal'
 import AnimatedCharacter from '@/app/play/SkinMenu/AnimatedCharacter'
 import { useVideoChat } from '@/app/hooks/useVideoChat'
 import { videoChat } from '@/utils/video-chat/video-chat'
-import { FLOATING_SIZE, copyStyles, floatingApi, registerAutoOpen } from '@/utils/video-chat/floating-window'
+import { FLOATING_SIZE, copyStyles, floatingApi, isCompact, registerAutoOpen } from '@/utils/video-chat/floating-window'
 import MicAndCameraButtons from './MicAndCameraButtons'
 import { RemoteUser, setFloatingOpen, usePeerProfile, useRemoteUsers } from './useRemoteUsers'
 
@@ -78,7 +78,21 @@ const FloatingCall: React.FC<FloatingCallProps> = ({ localName, localSkin }) => 
 
 export default FloatingCall
 
+function useCompact(win: Window) {
+    const [compact, setCompact] = useState(() => isCompact(win.innerHeight))
+    useEffect(() => {
+        const onResize = () => setCompact(isCompact(win.innerHeight))
+        win.addEventListener('resize', onResize)
+        return () => win.removeEventListener('resize', onResize)
+    }, [win])
+    return compact
+}
+
+const STRIP_PEOPLE = 3
+
 function FloatingPanel({ win, people, localName, localSkin }: { win: Window, people: RemoteUser[], localName: string, localSkin: string }) {
+    const compact = useCompact(win)
+    if (compact) return <FloatingStrip win={win} people={people} />
     const count = people.length + 1
     const columns = count > 1 ? 'grid-cols-2' : 'grid-cols-1'
     return <div className="flex h-screen flex-col gap-2 bg-[#181c2d] p-2 text-white">
@@ -93,11 +107,24 @@ function FloatingPanel({ win, people, localName, localSkin }: { win: Window, peo
     </div>
 }
 
+// Slim view: one bubble per person plus the microphone and camera buttons.
+function FloatingStrip({ win, people }: { win: Window, people: RemoteUser[] }) {
+    const hidden = people.length - STRIP_PEOPLE
+    return <div className="flex h-screen items-center gap-2 bg-[#181c2d] px-2 text-white">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {people.length === 0 && <p className="truncate text-xs text-slate-300">Ninguém por perto</p>}
+            {people.slice(0, STRIP_PEOPLE).map(user => <FloatingPerson key={user.uid} user={user} win={win} compact />)}
+            {hidden > 0 && <span className="shrink-0 text-xs font-semibold text-slate-300" title={`Mais ${hidden} na conversa`}>+{hidden}</span>}
+        </div>
+        <MicAndCameraButtons />
+    </div>
+}
+
 // Absolute URL: the floating document has no address of its own to resolve paths against.
-function Avatar({ skin }: { skin: string }) {
+function Avatar({ skin, compact = false }: { skin: string, compact?: boolean }) {
     return <div className="absolute inset-0 grid place-items-center">
-        <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-slate-700">
-            {skin && <AnimatedCharacter src={`${window.location.origin}/sprites/characters/Character_${skin}.png`} noAnimation className="h-12 w-12" />}
+        <div className={`grid place-items-center overflow-hidden rounded-full bg-slate-700 ${compact ? 'h-full w-full' : 'h-14 w-14'}`}>
+            {skin && <AnimatedCharacter src={`${window.location.origin}/sprites/characters/Character_${skin}.png`} noAnimation className={compact ? '!h-9 !w-9' : 'h-12 w-12'} />}
         </div>
     </div>
 }
@@ -115,7 +142,7 @@ function FloatingSelf({ name, skin }: { name: string, skin: string }) {
     </div>
 }
 
-function FloatingPerson({ user, win }: { user: RemoteUser, win: Window }) {
+function FloatingPerson({ user, win, compact = false }: { user: RemoteUser, win: Window, compact?: boolean }) {
     const { name, skin } = usePeerProfile(user.user.uid.toString())
     const video = useRef<HTMLDivElement>(null)
     const [speaking, setSpeaking] = useState(false)
@@ -123,13 +150,19 @@ function FloatingPerson({ user, win }: { user: RemoteUser, win: Window }) {
     useEffect(() => {
         if (user.cameraEnabled && video.current) user.user.videoTrack?.play(video.current, { fit: 'cover' })
         else video.current?.replaceChildren()
-    }, [user])
+    }, [user, compact])
 
     // The floating window stays visible while the office tab is hidden, so its own timer keeps the speaking ring live.
     useEffect(() => {
         const timer = win.setInterval(() => setSpeaking(videoChat.getRemoteAudio(user.uid).speaking), 250)
         return () => win.clearInterval(timer)
     }, [win, user.uid])
+
+    if (compact) return <div title={name} className={`relative h-12 w-12 shrink-0 rounded-full bg-[#252b42] ${speaking ? 'ring-2 ring-teal-400' : ''}`}>
+        <Avatar skin={skin} compact />
+        <div ref={video} className="absolute inset-0 overflow-hidden rounded-full" />
+        {!user.micEnabled && <span className="absolute -bottom-0.5 -right-0.5 z-10 grid h-5 w-5 place-items-center rounded-full bg-[#181c2d]"><MicrophoneSlash size={12} className="text-red-400" /></span>}
+    </div>
 
     return <div className={`relative min-h-0 overflow-hidden rounded-xl bg-[#252b42] ${speaking ? 'ring-2 ring-teal-400' : ''}`}>
         <Avatar skin={skin} />

@@ -4,10 +4,18 @@
 
 type DocumentPictureInPicture = {
     window: Window | null
-    requestWindow(options?: { width?: number, height?: number }): Promise<Window>
+    requestWindow(options?: { width?: number, height?: number, preferInitialWindowPlacement?: boolean }): Promise<Window>
 }
 
-export const FLOATING_SIZE = { width: 340, height: 420 }
+// Opens as a slim strip; the person can drag it larger to see the full tiles.
+export const FLOATING_SIZE = { width: 300, height: 80, preferInitialWindowPlacement: true }
+
+// Below this height the window shows the compact strip instead of the tile grid.
+export const COMPACT_MAX_HEIGHT = 200
+
+export function isCompact(height: number) {
+    return height < COMPACT_MAX_HEIGHT
+}
 
 export function floatingApi(win: any = typeof window === 'undefined' ? undefined : window): DocumentPictureInPicture | null {
     return win?.documentPictureInPicture ?? null

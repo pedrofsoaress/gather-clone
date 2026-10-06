@@ -39,3 +39,11 @@ test('browsers without automatic picture-in-picture are left untouched', () => {
     assert.doesNotThrow(() => registerAutoOpen(() => {}, session)())
     assert.doesNotThrow(() => registerAutoOpen(() => {}, undefined)())
 })
+
+test('the floating window opens as a slim strip and shows full tiles once enlarged', async () => {
+    const { FLOATING_SIZE, isCompact } = await import('./floating-window.ts')
+    assert.ok(FLOATING_SIZE.height <= 100, 'opens small')
+    assert.equal(FLOATING_SIZE.preferInitialWindowPlacement, true, 'a larger size remembered from before must not come back')
+    assert.equal(isCompact(FLOATING_SIZE.height), true)
+    assert.equal(isCompact(420), false)
+})
