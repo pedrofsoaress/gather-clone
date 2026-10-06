@@ -37,6 +37,7 @@ export default function AvatarPicker({ value, onChange, disabled }: AvatarPicker
 
     // The grid is a single Tab stop; arrow keys move the choice inside it.
     const onGridKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.altKey || event.ctrlKey || event.metaKey) return
         const buttons = Array.from(grid.current?.querySelectorAll<HTMLElement>('button') ?? [])
         const columns = buttons.filter(button => button.offsetTop === buttons[0]?.offsetTop).length || 1
         const moves: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns }
@@ -45,7 +46,7 @@ export default function AvatarPicker({ value, onChange, disabled }: AvatarPicker
         event.preventDefault()
         const next = Math.min(skins.length - 1, Math.max(0, index + move))
         onChange(skins[next])
-        buttons[next]?.focus()
+        buttons[next]?.focus({ preventScroll: true })
     }
 
     return <fieldset disabled={disabled} className='w-full min-w-0'>

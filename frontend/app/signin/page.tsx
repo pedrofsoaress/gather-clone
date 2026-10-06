@@ -9,6 +9,9 @@ import GoogleSignInButton from './GoogleSignInButton'
 
 type Mode = 'checking' | 'joining' | 'form'
 
+// How long the office link waits for the guest entry before offering a retry.
+const AUTO_JOIN_TIMEOUT_MS = 15000
+
 export default function Login() {
     const router = useRouter()
     const [email, setEmail] = useState('')
@@ -18,7 +21,11 @@ export default function Login() {
     // loading card; visitors from the office link never see a flash of the form.
     const [mode, setMode] = useState<Mode>('checking')
     const [guestFailed, setGuestFailed] = useState(false)
+    // Guest failures show under the guest button; email and Google results at the bottom.
+    const [guestStatus, setGuestStatus] = useState('')
     const autoJoinStarted = useRef(false)
+    const autoJoinTimer = useRef<number | null>(null)
+    const autoJoinPending = useRef(false)
 
     const getDestination = () => {
         const requested = new URLSearchParams(window.location.search).get('next')
@@ -29,8 +36,27 @@ export default function Login() {
             : '/app'
     }
 
+    const clearAutoJoinTimer = () => {
+        if (autoJoinTimer.current !== null) window.clearTimeout(autoJoinTimer.current)
+        autoJoinTimer.current = null
+    }
+
+    const armAutoJoinTimer = () => {
+        clearAutoJoinTimer()
+        autoJoinTimer.current = window.setTimeout(() => {
+            autoJoinTimer.current = null
+            failGuest('A entrada está demorando. Tente novamente.')
+        }, AUTO_JOIN_TIMEOUT_MS)
+    }
+
+    const settleAutoJoin = () => {
+        autoJoinPending.current = false
+        clearAutoJoinTimer()
+    }
+
     const failGuest = (message: string) => {
-        setStatus(message)
+        settleAutoJoin()
+        setGuestStatus(message)
         setGuestFailed(true)
         setMode('form')
         setLoading(false)
@@ -39,41 +65,66 @@ export default function Login() {
     const signInAsGuest = async () => {
         setLoading(true)
         setStatus('')
+        setGuestStatus('')
         setGuestFailed(false)
-        const supabase = createClient()
-        const guestName = `Guest-${crypto.randomUUID().slice(0, 6)}`
-        const { data, error } = await supabase.auth.signInAnonymously({
-            options: { data: { email: `${guestName}@guest.local` } },
-        })
-        if (error || !data.user) return failGuest('Não foi possível criar sua entrada como visitante.')
+        try {
+            const supabase = createClient()
+            const guestName = `Guest-${crypto.randomUUID().slice(0, 6)}`
+            const { data, error } = await supabase.auth.signInAnonymously({
+                options: { data: { email: `${guestName}@guest.local` } },
+            })
+            if (error || !data.user) {
+                if (error) console.error(error)
+                return failGuest('Não foi possível criar sua entrada como visitante.')
+            }
 
-        const { error: profileError } = await supabase.from('profiles').upsert(
-            { id: data.user.id },
-            { onConflict: 'id', ignoreDuplicates: true },
-        )
-        if (profileError) return failGuest('Não foi possível preparar seu perfil.')
+            const { error: profileError } = await supabase.from('profiles').upsert(
+                { id: data.user.id },
+                { onConflict: 'id', ignoreDuplicates: true },
+            )
+            if (profileError) {
+                console.error(profileError)
+                return failGuest('Não foi possível preparar seu perfil.')
+            }
 
-        router.push(getDestination())
-        router.refresh()
+            settleAutoJoin()
+            router.push(getDestination())
+            router.refresh()
+        } catch (error) {
+            console.error(error)
+            failGuest('Não foi possível criar sua entrada como visitante. Confira sua conexão.')
+        }
     }
 
     useEffect(() => {
-        if (autoJoinStarted.current) return
+        if (autoJoinStarted.current) {
+            // React Strict Mode (dev) re-runs this effect after its cleanup: keep the timeout armed.
+            if (!autoJoinPending.current) return
+            armAutoJoinTimer()
+            return clearAutoJoinTimer
+        }
         const destination = getDestination()
         if (destination === '/app' || !destination.includes('shareId=')) {
             setMode('form')
             return
         }
         autoJoinStarted.current = true
+        autoJoinPending.current = true
         setMode('joining')
+        armAutoJoinTimer()
         const supabase = createClient()
         void supabase.auth.getSession().then(({ data }) => {
             if (data.session) {
+                settleAutoJoin()
                 router.replace(destination)
             } else {
                 void signInAsGuest()
             }
+        }).catch(error => {
+            console.error(error)
+            failGuest('Não foi possível verificar sua entrada.')
         })
+        return clearAutoJoinTimer
     }, [])
 
     const signInWithEmail = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -103,9 +154,11 @@ export default function Login() {
     return (
         <main className='matte-backdrop grid min-h-screen place-items-center px-4 py-12 text-white'>
             <div className={`${card} w-full max-w-sm p-6 sm:p-8`}>
-                <MatteLogo />
+                <div className={mode === 'form' ? '' : 'flex justify-center'}>
+                    <MatteLogo />
+                </div>
                 {mode !== 'form' ? <div className='mt-8 flex flex-col items-center gap-4 text-center' role='status'>
-                    <SpinnerGap size={32} className='animate-spin text-matte-pink' />
+                    <SpinnerGap size={32} aria-hidden='true' className='animate-spin text-matte-pink' />
                     <p className='text-lg font-bold'>{mode === 'joining' ? 'Entrando no escritório…' : 'Carregando…'}</p>
                     {mode === 'joining' && <p className='text-sm text-white/60'>Estamos preparando sua entrada como visitante.</p>}
                 </div> : <>
@@ -114,6 +167,7 @@ export default function Login() {
                     <button type='button' onClick={signInAsGuest} disabled={loading} className={`${primaryButton} mt-6 w-full`}>
                         {guestFailed ? 'Tentar novamente' : 'Entrar como visitante'}
                     </button>
+                    {guestStatus && <p role='status' className='mt-3 text-center text-sm text-white/80'>{guestStatus}</p>}
                     <p className='mt-3 text-xs leading-relaxed text-white/60'>Como visitante, seus espaços ficam salvos só neste navegador e se perdem ao sair da conta ou limpar os dados do navegador.</p>
                     <form onSubmit={signInWithEmail} className='mt-6 flex flex-col gap-2 border-t border-white/10 pt-6'>
                         <label htmlFor='email' className='text-sm font-semibold'>E-mail da equipe</label>

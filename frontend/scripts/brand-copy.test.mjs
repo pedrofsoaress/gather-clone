@@ -49,3 +49,49 @@ test('the office link shows a branded loading state from the first paint, with a
     assert.match(page, /Tentar novamente/)
     assert.match(read('app/signin/layout.tsx'), /themeColor:\s*'#0B0B0F'/)
 })
+
+test('the office link never waits forever: errors and a timeout bring back the retry', () => {
+    const page = read('app/signin/page.tsx')
+    assert.match(page, /AUTO_JOIN_TIMEOUT_MS = 15000/)
+    assert.match(page, /window\.setTimeout\(/)
+    assert.match(page, /A entrada está demorando\. Tente novamente\./)
+    assert.match(page, /\} catch \(error\) \{\s*console\.error\(error\)\s*failGuest\('Não foi possível criar sua entrada como visitante\. Confira sua conexão\.'\)/)
+    assert.match(page, /getSession\(\)\.then\([\s\S]*?\}\)\.catch\(/, 'getSession failures are handled')
+    assert.match(page, /return clearAutoJoinTimer/, 'the timeout is cleared when the page unmounts')
+    assert.match(page, /console\.error\(profileError\)/)
+    assert.match(page, /<SpinnerGap[^>]*aria-hidden='true'/)
+})
+
+test('the character page paints the browser bar black and gives the office its color back', () => {
+    const intro = read('app/play/IntroScreen.tsx')
+    assert.match(intro, /meta\[name="theme-color"\]/)
+    assert.match(intro, /brandThemeColor = '#0B0B0F'/)
+    assert.match(intro, /const previous = meta\.content/)
+    assert.match(intro, /meta\.content = previous/, 'restores the previous theme color on unmount')
+    assert.match(read('app/play/PlayClientLoader.tsx'), /loading: \(\) => <main className='matte-backdrop min-h-screen' \/>/)
+})
+
+test('camera and microphone errors are shown on the character page', () => {
+    const intro = read('app/play/IntroScreen.tsx')
+    assert.match(intro, /signal\.on\('officeFeedback', onFeedback\)/)
+    assert.match(intro, /signal\.off\('officeFeedback', onFeedback\)/)
+    assert.match(intro, /role='status'[^>]*>\{mediaFeedback \|\| 'Câmera e microfone começam desligados\.'\}/)
+})
+
+test('only the brand mic and camera buttons grow to 44px; the office bar keeps p-2', () => {
+    const buttons = read('components/VideoChat/MicAndCameraButtons.tsx')
+    assert.match(buttons, /const padding = brand \? 'p-2\.5' : 'p-2'/)
+    assert.equal((buttons.match(/\$\{padding\} rounded-full animate-colors outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-white/g) ?? []).length, 2)
+})
+
+test('the home preview image declares its real size', () => {
+    const png = readFileSync(new URL('public/matte-office-v2.png', root))
+    const width = png.readUInt32BE(16)
+    const height = png.readUInt32BE(20)
+    assert.match(read('components/Home/OfficePreview.tsx'), new RegExp(`width=\\{${width}\\} height=\\{${height}\\}`))
+})
+
+test('home hero buttons stay full width up to tablet width', () => {
+    // md: starts at 768px, so the row layout waits for lg: (1024px).
+    assert.match(read('app/page.tsx'), /<div className='mt-8 flex flex-col gap-3 lg:flex-row'>/)
+})

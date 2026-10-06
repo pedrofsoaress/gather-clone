@@ -15,6 +15,8 @@ const MicAndCameraButtons:React.FC<MicAndCameraButtonsProps> = ({ variant = 'off
     const buttonClass = (on: boolean) => on
         ? (brand ? 'bg-white/10 hover:bg-white/20' : 'bg-[#2A4B54] hover:bg-[#3b6975]')
         : (brand ? 'bg-matte-pink/20 hover:bg-matte-pink/30' : 'bg-[#682E44] hover:bg-[#7a3650]')
+    // 'brand' buttons reach a 44px tap target; the office bar keeps its 40px buttons.
+    const padding = brand ? 'p-2.5' : 'p-2'
     const micClass = iconClass(!isMicMuted)
     const cameraClass = iconClass(!isCameraMuted)
     return (
@@ -25,7 +27,7 @@ const MicAndCameraButtons:React.FC<MicAndCameraButtonsProps> = ({ variant = 'off
                 aria-pressed={!isMicMuted}
                 disabled={isMicBusy}
                 className={`${buttonClass(!isMicMuted)} 
-                p-2 rounded-full animate-colors outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-white`}
+                ${padding} rounded-full animate-colors outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-white`}
                 onClick={toggleMicrophone}
             >
                 {isMicMuted ? <MicrophoneSlash className={micClass} /> : <Microphone className={micClass} />}
@@ -36,7 +38,7 @@ const MicAndCameraButtons:React.FC<MicAndCameraButtonsProps> = ({ variant = 'off
                 aria-pressed={!isCameraMuted}
                 disabled={isCameraBusy}
                 className={`${buttonClass(!isCameraMuted)} 
-                p-2 rounded-full animate-colors outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-white`}
+                ${padding} rounded-full animate-colors outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-white`}
                 onClick={toggleCamera}
             >
                 {isCameraMuted ? <VideoCameraSlash className={cameraClass} /> : <VideoCamera className={cameraClass} />}

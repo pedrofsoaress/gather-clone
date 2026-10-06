@@ -8,6 +8,9 @@ import MicAndCameraButtons from '@/components/VideoChat/MicAndCameraButtons'
 import MatteLogo from '@/components/Brand/MatteLogo'
 import { card, kicker, primaryButton } from '@/components/Brand/styles'
 import { suggestedName } from './introName'
+import signal from '@/utils/signal'
+
+const brandThemeColor = '#0B0B0F'
 
 type IntroScreenProps = {
     realmName: string
@@ -22,8 +25,35 @@ const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, onJ
     const [selectedSkin, setSelectedSkin] = useState(skins.includes(skin) ? skin : defaultSkin)
     const [joining, setJoining] = useState(false)
     const [error, setError] = useState('')
+    const [mediaFeedback, setMediaFeedback] = useState('')
     const joiningRef = useRef(false)
     useEffect(() => setName(suggestedName(username)), [username])
+
+    // This page lives under /play, which inherits the office's navy browser bar.
+    // Paint it black while choosing, and give the office its color back on join.
+    useEffect(() => {
+        const existing = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+        const created = !existing
+        const meta = existing ?? document.createElement('meta')
+        if (created) {
+            meta.name = 'theme-color'
+            document.head.appendChild(meta)
+        }
+        const previous = meta.content
+        meta.content = brandThemeColor
+        return () => {
+            if (created) meta.remove()
+            else meta.content = previous
+        }
+    }, [])
+
+    // Office notifications only mount after joining, so camera and microphone
+    // errors (for example, permission blocked) are shown here in the camera card.
+    useEffect(() => {
+        const onFeedback = (data: { message?: string }) => { if (data?.message) setMediaFeedback(data.message) }
+        signal.on('officeFeedback', onFeedback)
+        return () => signal.off('officeFeedback', onFeedback)
+    }, [])
     const normalizedName = name.trim()
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -52,14 +82,16 @@ const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, onJ
                 <p className={kicker}>Antes de entrar</p>
                 <h1 className='mt-4 text-3xl font-extrabold tracking-tight sm:text-4xl'>Prepare sua entrada</h1>
                 <p className='mt-2 text-white/60'>Escolha seu boneco e seu nome, e confira câmera e microfone.</p>
-                <section className='mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]'>
-                    <div className={`${card} p-4 sm:p-5`}>
-                        <div className='aspect-video w-full overflow-hidden rounded-xl bg-black'>
+                <section className='mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]'>
+                    <div className={`${card} flex flex-col p-4 sm:p-5`}>
+                        <div className='relative aspect-video w-full overflow-hidden rounded-xl bg-black lg:aspect-auto lg:min-h-[16rem] lg:flex-1'>
                             <LocalVideo />
                         </div>
                         <div className='mt-4 flex flex-wrap items-center justify-between gap-3'>
-                            <p className='text-sm text-white/60'>Câmera e microfone começam desligados.</p>
-                            <MicAndCameraButtons variant='brand' />
+                            <p role='status' className={`min-w-0 text-sm ${mediaFeedback ? 'text-white/80' : 'text-white/60'}`}>{mediaFeedback || 'Câmera e microfone começam desligados.'}</p>
+                            <div className='ml-auto'>
+                                <MicAndCameraButtons variant='brand' />
+                            </div>
                         </div>
                     </div>
                     <form className={`${card} flex min-w-0 flex-col gap-5 p-4 sm:p-6`} onSubmit={submit} aria-busy={joining}>
@@ -88,7 +120,7 @@ function LocalVideo() {
     const { isCameraMuted, isMicMuted } = useVideoChat()
 
     return (
-        <div className='relative grid h-full w-full place-items-center bg-[#111114]'>
+        <div className='absolute inset-0 grid place-items-center bg-[#111114]'>
             <div id='local-video' className='h-full w-full' />
             {isCameraMuted && <div className='absolute flex select-none flex-col items-center gap-2 text-sm text-white/70'>
                 <VideoCameraSlash size={28} className='text-matte-pink' />

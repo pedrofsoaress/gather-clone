@@ -28,7 +28,7 @@ export default function Index() {
                 <p className={kicker}>Matte Office</p>
                 <h1 className='mt-5 text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl'>Escritório virtual da Matte</h1>
                 <p className='mt-5 text-lg leading-relaxed text-white/70'>Encontre o time no mapa, sente na sua mesa e converse com quem estiver por perto, com vídeo e áudio direto no navegador.</p>
-                <div className='mt-8 flex flex-col gap-3 sm:flex-row'>
+                <div className='mt-8 flex flex-col gap-3 lg:flex-row'>
                     <Link href={officeUrl} className={primaryButton}>Entrar no escritório</Link>
                     <Link href='/install' className={secondaryButton}>Instalar o aplicativo</Link>
                 </div>
