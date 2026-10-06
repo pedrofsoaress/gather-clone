@@ -10,6 +10,8 @@ const BRANDED_FILES = [
     'components/Brand/MatteLogo.tsx',
     'app/page.tsx',
     'components/Home/OfficePreview.tsx',
+    'app/play/IntroScreen.tsx',
+    'app/play/SkinMenu/AvatarPicker.tsx',
 ]
 const ENGLISH_LEFTOVERS = [/You are muted/, /Your camera/, /Continue as guest/, /Sign in with/, /Email me/, /Check your email/, /Guest spaces/, /Team members/]
 

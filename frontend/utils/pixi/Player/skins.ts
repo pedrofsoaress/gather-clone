@@ -11,3 +11,8 @@ export const skins: string[] = [
 ]
 
 export const defaultSkin = '009'
+
+export function stepSkin(current: string, direction: number): string {
+    const index = skins.includes(current) ? skins.indexOf(current) : skins.indexOf(defaultSkin)
+    return skins[(index + direction + skins.length) % skins.length]
+}

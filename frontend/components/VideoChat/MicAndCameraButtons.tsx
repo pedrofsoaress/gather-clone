@@ -3,16 +3,20 @@ import { VideoCameraSlash, MicrophoneSlash, VideoCamera, Microphone } from '@pho
 import { useVideoChat } from '@/app/hooks/useVideoChat'
 
 type MicAndCameraButtonsProps = {
-    
+    variant?: 'office' | 'brand'
 }
 
-const MicAndCameraButtons:React.FC<MicAndCameraButtonsProps> = () => {
+const MicAndCameraButtons:React.FC<MicAndCameraButtonsProps> = ({ variant = 'office' }) => {
 
     const { isCameraMuted, isMicMuted, isCameraBusy, isMicBusy, toggleCamera, toggleMicrophone } = useVideoChat()
-    
 
-    const micClass = `w-6 h-6 ${!isMicMuted ? 'text-[#08D6A0]' : 'text-[#FF2F49]'}`
-    const cameraClass = `w-6 h-6 ${!isCameraMuted ? 'text-[#08D6A0]' : 'text-[#FF2F49]'}`
+    const brand = variant === 'brand'
+    const iconClass = (on: boolean) => `w-6 h-6 ${on ? (brand ? 'text-white' : 'text-[#08D6A0]') : (brand ? 'text-matte-pink' : 'text-[#FF2F49]')}`
+    const buttonClass = (on: boolean) => on
+        ? (brand ? 'bg-white/10 hover:bg-white/20' : 'bg-[#2A4B54] hover:bg-[#3b6975]')
+        : (brand ? 'bg-matte-pink/20 hover:bg-matte-pink/30' : 'bg-[#682E44] hover:bg-[#7a3650]')
+    const micClass = iconClass(!isMicMuted)
+    const cameraClass = iconClass(!isCameraMuted)
     return (
         <section className='flex flex-row gap-2'>
             <button 
@@ -20,7 +24,7 @@ const MicAndCameraButtons:React.FC<MicAndCameraButtonsProps> = () => {
                 aria-label={isMicMuted ? 'Ativar microfone' : 'Desativar microfone'}
                 aria-pressed={!isMicMuted}
                 disabled={isMicBusy}
-                className={`${!isMicMuted ? 'bg-[#2A4B54] hover:bg-[#3b6975]' : 'bg-[#682E44] hover:bg-[#7a3650]'} 
+                className={`${buttonClass(!isMicMuted)} 
                 p-2 rounded-full animate-colors outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-white`}
                 onClick={toggleMicrophone}
             >
@@ -31,7 +35,7 @@ const MicAndCameraButtons:React.FC<MicAndCameraButtonsProps> = () => {
                 aria-label={isCameraMuted ? 'Ativar câmera' : 'Desativar câmera'}
                 aria-pressed={!isCameraMuted}
                 disabled={isCameraBusy}
-                className={`${!isCameraMuted ? 'bg-[#2A4B54] hover:bg-[#3b6975]' : 'bg-[#682E44] hover:bg-[#7a3650]'} 
+                className={`${buttonClass(!isCameraMuted)} 
                 p-2 rounded-full animate-colors outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-white`}
                 onClick={toggleCamera}
             >
