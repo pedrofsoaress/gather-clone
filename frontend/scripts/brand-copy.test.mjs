@@ -12,6 +12,8 @@ const BRANDED_FILES = [
     'components/Home/OfficePreview.tsx',
     'app/play/IntroScreen.tsx',
     'app/play/SkinMenu/AvatarPicker.tsx',
+    'app/signin/page.tsx',
+    'app/signin/GoogleSignInButton.tsx',
 ]
 const ENGLISH_LEFTOVERS = [/You are muted/, /Your camera/, /Continue as guest/, /Sign in with/, /Email me/, /Check your email/, /Guest spaces/, /Team members/]
 
@@ -39,3 +41,11 @@ for (const file of BRANDED_FILES) {
         assert.doesNotMatch(source, /#(?:06d6a0|08D6A0|00d4b2|5FE5C2|2A4B54|CAD8FF|cad8ff)\b/, 'no teal or old navy accents')
     })
 }
+
+test('the office link shows a branded loading state from the first paint, with a retry', () => {
+    const page = read('app/signin/page.tsx')
+    assert.match(page, /useState<Mode>\('checking'\)/, 'server HTML renders the loading card, not the form')
+    assert.match(page, /Entrando no escritório…/)
+    assert.match(page, /Tentar novamente/)
+    assert.match(read('app/signin/layout.tsx'), /themeColor:\s*'#0B0B0F'/)
+})
