@@ -1,12 +1,14 @@
 import Image from 'next/image'
 import AnimatedCharacter from '@/app/play/SkinMenu/AnimatedCharacter'
 
-// Positions are percentages of the map image; Task 5 adjusts them so each
-// avatar stands on open floor in the screenshot.
+// Positions are percentages of the map image and mark each avatar's feet:
+// Ana and Bruno on the open floor below the central table (far enough apart
+// that their name tags do not touch at 390px), Carla on the kitchen floor
+// between the round table and the bar.
 const people = [
-    { skin: '017', name: 'Ana', left: '31%', top: '58%' },
-    { skin: '060', name: 'Bruno', left: '38%', top: '58%' },
-    { skin: '009', name: 'Carla', left: '70%', top: '38%' },
+    { skin: '017', name: 'Ana', left: '42.5%', top: '57%' },
+    { skin: '060', name: 'Bruno', left: '56.5%', top: '57%' },
+    { skin: '009', name: 'Carla', left: '84.5%', top: '28.5%' },
 ]
 
 export default function OfficePreview() {
