@@ -8,6 +8,8 @@ const read = path => readFileSync(new URL(path, root), 'utf8')
 // Files whose visible copy follows the Matte rules. Later tasks append to this list.
 const BRANDED_FILES = [
     'components/Brand/MatteLogo.tsx',
+    'app/page.tsx',
+    'components/Home/OfficePreview.tsx',
 ]
 const ENGLISH_LEFTOVERS = [/You are muted/, /Your camera/, /Continue as guest/, /Sign in with/, /Email me/, /Check your email/, /Guest spaces/, /Team members/]
 
