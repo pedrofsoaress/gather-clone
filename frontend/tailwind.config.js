@@ -24,6 +24,12 @@ module.exports = {
         quaternaryhover: "#5FE5C2",
         button: "#202540",
         'light-gray': "#464B67",
+        matte: {
+          pink: '#D3135A',
+          'pink-hover': '#B80F4E',
+          black: '#0B0B0F',
+          surface: '#141418',
+        },
       },
     },
   },

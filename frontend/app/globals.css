@@ -93,3 +93,16 @@ input[type=number]::-webkit-outer-spin-button {
         transform: translateY(-100%);
     }
 }
+
+/* Pages with the Matte backdrop keep black behind overscroll instead of the office navy. */
+html:has(.matte-backdrop) {
+    background: #0B0B0F;
+}
+
+/* Matte brand background: black with a soft pink glow, as on the Matte link page. */
+.matte-backdrop {
+    background:
+        radial-gradient(1100px 560px at 50% -12%, rgba(211, 19, 90, 0.22), transparent 62%),
+        radial-gradient(900px 520px at 100% 112%, rgba(211, 19, 90, 0.10), transparent 60%),
+        #0B0B0F;
+}
