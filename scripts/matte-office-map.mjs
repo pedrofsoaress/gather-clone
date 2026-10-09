@@ -79,7 +79,10 @@ for (let y = 1; y <= 8; y++) {
 for (const [x1, y1, x2, y2] of walls) block(x1, y1, x2, y2)
 for (const [x1, y1, x2, y2] of doors) open(x1, y1, x2, y2)
 block(training.screen.x1, training.screen.y1, training.screen.x2, training.screen.y2)
-for (const room of oneOnOnes) block(room.x1 + 1, 22, room.x1 + 3, 23) // round table
+for (const room of oneOnOnes) {
+  block(room.x1 + 1, 22, room.x1 + 3, 23) // round table
+  block(room.x1 + 4, 25, room.x1 + 4, 28) // shelves
+}
 block(79, 21, 83, 22)                                                    // directors' desk
 
 function area(rect, key, id) {
@@ -108,7 +111,7 @@ function officeObject(id, kind, label, [x, y, width, height], [approachX, approa
 
 const trainingObjects = [
   officeObject('training-screen', 'presentation', 'Tela do treinamento', [training.screen.x1, training.screen.y1, training.screen.x2 - training.screen.x1 + 1, 1], training.presentationApproach, { config: { deckId: 'matte-training', slides: [
-    { title: 'Sala de treinamento', body: 'Quem está no palco fala para a sala toda. Para falar da plateia, use o microfone do corredor.' },
+    { title: 'Sala de treinamento', body: 'Quem está no palco fala para a sala toda. Para falar da plateia, use o microfone no corredor do meio.' },
   ] } }),
   officeObject('training-stage-mic', 'speaker', 'Microfone do palco', [training.stageMic[0], training.stageMic[1] - 1, 1, 1], training.stageMic, { config: { rangeTiles: 40, flat: true } }),
   officeObject('training-audience-mic', 'speaker', 'Microfone da plateia', [training.audienceMic[0], training.audienceMic[1] - 1, 1, 1], training.audienceMic, { config: { rangeTiles: 40, flat: true } }),

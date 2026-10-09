@@ -101,3 +101,13 @@ test('the annex wing has its rooms, signs and darkness', () => {
   assert.equal(room.tilemap['49, 15'].impassable, undefined, 'the passage is open')
   assert.equal(room.tilemap['49, 14'].impassable, true, 'the rest of the east wall stays')
 })
+
+test('the 1:1 shelves block walking and the training slide points to the middle aisle', () => {
+  const room = map.rooms[0]
+  for (const x1 of [54, 60, 66, 72]) {
+    for (let y = 25; y <= 28; y++) assert.equal(room.tilemap[`${x1 + 4}, ${y}`].impassable, true, `${x1 + 4}, ${y}`)
+    assert.equal(room.tilemap[`${x1 + 4}, 24`].impassable, undefined, `${x1 + 4}, 24 stays open`)
+  }
+  const slide = room.interactions.find(object => object.id === 'training-screen').config.slides[0]
+  assert.equal(slide.body, 'Quem está no palco fala para a sala toda. Para falar da plateia, use o microfone no corredor do meio.')
+})
