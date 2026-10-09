@@ -42,5 +42,7 @@ export const PresentationSlide = PresentationTarget.extend({ index: z.number().i
 export const SpeakerTarget = z.object({ objectId: z.string().min(1).max(64) })
 export const AvatarAction = z.object({ action: z.enum(['idle', 'dance', 'pet']), objectId: z.string().min(1).max(64).optional() })
 export const AvatarRun = z.object({ running: z.boolean() })
+export const MeetingModerate = z.object({ action: z.enum(['mute', 'cameraOff', 'muteAll', 'lock', 'unlock', 'allow', 'deny']), targetUid: z.string().uuid().optional() })
+export const MeetingRaiseHand = z.object({ raised: z.boolean() })
 
 export type OnEventCallback = (args: { session: Session, data?: any }) => void

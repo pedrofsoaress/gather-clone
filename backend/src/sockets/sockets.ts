@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
 import { sessionManager, Session, MAX_PLAYERS_PER_SPACE } from '../session'
-import { SpeakerTarget, AvatarAction, AvatarRun } from './socket-types'
+import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand } from './socket-types'
 import { removeExtraSpaces } from '../utils'
 import { kickPlayer } from './helpers'
 import { formatEmailToName } from '../utils'
@@ -108,6 +108,18 @@ export function sockets(io: Server) {
             }
         }
 
+        // Training-room meeting: stage moderators control microphones and cameras.
+        const sendMeeting = (session: Session, uid: string) => {
+            const meeting = session.meetingOf(uid)
+            if (!meeting) return
+            const snapshot = meeting.state.snapshot(meeting.areaId, meeting.moderators)
+            for (const member of meeting.members) io.to(session.getPlayer(member).socketId).emit('meetingState', snapshot)
+        }
+        const meetingKey = (session: Session, uid: string) => {
+            const meeting = session.meetingOf(uid)
+            return meeting ? `${meeting.areaId}|${meeting.moderators.includes(uid)}` : null
+        }
+
         const joinRealm = async (realmData: z.infer<typeof JoinRealm>) => {
             const uid = socket.handshake.query.uid as string
             const rejectJoin = (reason: string) => {
@@ -165,6 +177,7 @@ export function sockets(io: Server) {
                 socket.join(realmData.realmId)
                 socket.emit('joinedRealm', { roomIndex: player.room, x: player.x, y: player.y })
                 emit('playerJoinedRoom', player)
+                sendMeeting(newSession, uid)
                 joiningInProgress.delete(uid)
             }
 
@@ -197,8 +210,14 @@ export function sockets(io: Server) {
             const uid = socket.handshake.query.uid as string
             const room = session.getPlayerRoom(uid)
             const socketIds = sessionManager.getSocketIdsInRoom(session.id, room)
+            const leavingMeeting = session.meetingOf(uid)
             const success = sessionManager.logOutBySocketId(socket.id)
             if (success) {
+                if (leavingMeeting) {
+                    leavingMeeting.state.leave(uid)
+                    const remaining = leavingMeeting.members.find(member => member !== uid)
+                    if (remaining) sendMeeting(session, remaining)
+                }
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
                 users.removeUser(uid)
                 broadcastRoomFeatures(io, session, room)
@@ -247,7 +266,19 @@ export function sockets(io: Server) {
                     lastOfficeStepAt = Date.now()
                     features.avatars.stopAction(uid)
                     if (Object.values(features.office.snapshot().occupancy).some(occupant => occupant.uid === uid)) features.avatars.setRunning(uid, false)
+                    const meetingBefore = meetingKey(session, uid)
+                    const previousMeeting = session.meetingOf(uid)
                     const changed = session.movePlayer(uid, parsed.data.x, parsed.data.y)
+                    const meetingAfter = meetingKey(session, uid)
+                    if (meetingBefore !== meetingAfter) {
+                        if (previousMeeting && previousMeeting.areaId !== session.meetingOf(uid)?.areaId) {
+                            previousMeeting.state.leave(uid)
+                            socket.emit('meetingState', null)
+                            const remaining = previousMeeting.members.find(member => member !== uid)
+                            if (remaining) sendMeeting(session, remaining)
+                        }
+                        sendMeeting(session, uid)
+                    }
                     emit('playerMoved', { uid, ...parsed.data })
                     for (const changedUid of changed) {
                         const player = session.getPlayer(changedUid)
@@ -324,6 +355,56 @@ export function sockets(io: Server) {
             const result = event === 'speakerStart' ? session.featuresFor(uid).speakers.start(uid, parsed.data.objectId) : session.featuresFor(uid).speakers.stop(uid, parsed.data.objectId)
             ack(result)
             if (result.ok) broadcastSpeakers(io, session)
+        })
+
+        socket.on('meetingGetState', (ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            if (!session || session.getPlayer(uid)?.socketId !== socket.id) return ack({ ok: false, error: 'Fora do escritório.' })
+            const meeting = session.meetingOf(uid)
+            ack({ ok: true, snapshot: meeting ? meeting.state.snapshot(meeting.areaId, meeting.moderators) : null })
+        })
+
+        socket.on('meetingRaiseHand', (raw: unknown, ack: unknown) => {
+            const reply = (result: { ok: boolean, error?: string }) => { if (typeof ack === 'function') ack(result) }
+            const uid = socket.handshake.query.uid as string
+            const parsed = MeetingRaiseHand.safeParse(raw)
+            const session = sessionManager.getPlayerSession(uid)
+            const meeting = session?.meetingOf(uid)
+            if (!parsed.success || !session || !meeting || session.getPlayer(uid)?.socketId !== socket.id) return reply({ ok: false, error: 'Você não está na sala de treinamento.' })
+            if (parsed.data.raised) meeting.state.raised.add(uid)
+            else meeting.state.raised.delete(uid)
+            sendMeeting(session, uid)
+            reply({ ok: true })
+        })
+
+        socket.on('meetingModerate', (raw: unknown, ack: unknown) => {
+            const reply = (result: { ok: boolean, error?: string }) => { if (typeof ack === 'function') ack(result) }
+            const uid = socket.handshake.query.uid as string
+            const parsed = MeetingModerate.safeParse(raw)
+            const session = sessionManager.getPlayerSession(uid)
+            const meeting = session?.meetingOf(uid)
+            if (!parsed.success || !session || !meeting || session.getPlayer(uid)?.socketId !== socket.id) return reply({ ok: false, error: 'Você não está na sala de treinamento.' })
+            if (!meeting.moderators.includes(uid)) return reply({ ok: false, error: 'Só quem está no palco controla os microfones.' })
+            const { action, targetUid } = parsed.data
+            const force = (target: string, payload: { mic?: false, camera?: false }) => io.to(session.getPlayer(target).socketId).emit('meetingForce', payload)
+            const audience = meeting.members.filter(member => !meeting.moderators.includes(member))
+            if (['mute', 'cameraOff', 'allow', 'deny'].includes(action)) {
+                if (!targetUid || !meeting.members.includes(targetUid)) return reply({ ok: false, error: 'Essa pessoa não está na sala.' })
+            }
+            if (action === 'mute') force(targetUid!, { mic: false })
+            if (action === 'cameraOff') force(targetUid!, { camera: false })
+            if (action === 'muteAll') for (const member of audience) force(member, { mic: false })
+            if (action === 'lock') {
+                meeting.state.locked = true
+                for (const member of audience) if (!meeting.state.allowed.has(member)) force(member, { mic: false })
+            }
+            if (action === 'unlock') { meeting.state.locked = false; meeting.state.allowed.clear(); meeting.state.raised.clear() }
+            if (action === 'allow') { meeting.state.allowed.add(targetUid!); meeting.state.raised.delete(targetUid!) }
+            if (action === 'deny') { meeting.state.allowed.delete(targetUid!); meeting.state.raised.delete(targetUid!); force(targetUid!, { mic: false }) }
+            sendMeeting(session, uid)
+            reply({ ok: true })
         })
 
         const externalTarget = (objectId: string) => {

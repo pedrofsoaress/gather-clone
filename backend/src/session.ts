@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { OfficeState } from './office/OfficeState'
-import { areaAt, isStageArea, type AreaConfig } from './office/areas'
+import { areaAt, isStageArea, meetingStage, type AreaConfig } from './office/areas'
 import { validateOfficeMap } from './office/object-config'
 import { OfficeSharedObjects } from './office/OfficeSharedObjects'
 import { PresentationState } from './office/PresentationState'
 import { SpeakerState } from './office/SpeakerState'
 import { AvatarActions } from './office/AvatarActions'
+import { MeetingState } from './office/MeetingState'
 
 export type RealmData = {
     spawnpoint: {
@@ -165,6 +166,8 @@ export class Session {
     public presentations: PresentationState
     public speakers: SpeakerState
     public readonly roomFeatures: { office: OfficeState, external: OfficeSharedObjects, presentations: PresentationState, speakers: SpeakerState, avatars: AvatarActions }[]
+    // `${room}:${areaId}` -> lock, allowed speakers and raised hands of that meeting area.
+    private readonly meetings = new Map<string, MeetingState>()
 
     constructor(id: string, mapData: RealmData) {
         validateOfficeMap(mapData)
@@ -285,6 +288,21 @@ export class Session {
 
     public getPlayerRoom(uid: string): number {
         return this.players[uid].room
+    }
+
+    // The meeting the visitor is in (a meeting area of their room), its members and its stage moderators.
+    public meetingOf(uid: string): { areaId: string, state: MeetingState, members: string[], moderators: string[] } | null {
+        const player = this.players[uid]
+        if (!player) return null
+        const room = this.map_data.rooms[player.room]
+        const areaId = areaAt(room, player.x, player.y)
+        const stage = meetingStage(room, areaId)
+        if (!areaId || !stage) return null
+        const key = `${player.room}:${areaId}`
+        if (!this.meetings.has(key)) this.meetings.set(key, new MeetingState())
+        const members = this.getPlayersInRoom(player.room).filter(other => areaAt(room, other.x, other.y) === areaId)
+        const onStage = (other: Player) => other.x >= stage.x1 && other.x <= stage.x2 && other.y >= stage.y1 && other.y <= stage.y2
+        return { areaId, state: this.meetings.get(key)!, members: members.map(other => other.uid), moderators: members.filter(onStage).map(other => other.uid) }
     }
 
     public movePlayer(uid: string, x: number, y: number): string[] {
