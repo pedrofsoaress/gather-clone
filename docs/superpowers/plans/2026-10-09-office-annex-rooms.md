@@ -1093,6 +1093,110 @@ git commit -m "feat: reveal the annex wing from the darkness with door signs [sk
 
 ---
 
+### Task 11: Stage microphones capture the voice (run right after Task 6)
+
+The existing "caixa de som" publishes the audio of a browser tab (`getDisplayMedia`). Flat speakers (the training stage and audience microphones) must publish the visitor's **microphone** instead. The lounge speaker keeps sharing a tab.
+
+**Files:**
+- Modify: `frontend/utils/video-chat/SpatialAudio.ts` (`start`)
+- Modify: `frontend/app/play/SpeakerPanel.tsx`
+- Test: `frontend/utils/video-chat/SpatialAudio.test.mjs` (append; extend its `load()` harness)
+
+**Interfaces:**
+- Produces: `export type SpeakerSource = 'tab' | 'microphone'`; `spatialAudio.start(objectId: string, source: SpeakerSource = 'tab')`.
+- Consumes: speaker config `flat` (Task 5 schema); `videoChat.getDevicePreferences().microphoneId`.
+
+- [ ] **Step 1: Write the failing test**
+
+In `frontend/utils/video-chat/SpatialAudio.test.mjs`, extend `load()` so the vm context's `navigator.mediaDevices` also has `getUserMedia: async constraints => { micCalls.push(constraints); return stream }` and counts `getDisplayMedia` calls in `displayCalls`; make the `./video-chat` stub `{ videoChat: { outputSupported: false, getDevicePreferences: () => ({ microphoneId: 'usb-mic' }) } }`; return `micCalls` and `displayCalls: () => displayCalls` from `load()`. Then append:
+
+```js
+test('a stage microphone captures the microphone and publishes it to the room', async () => {
+  const env = load()
+  const start = env.audio.start('training-stage-mic', 'microphone')
+  await env.waitStart()
+  env.acknowledge()
+  await start
+  assert.equal(env.displayCalls(), 0)
+  assert.equal(env.micCalls.length, 1)
+  assert.equal(env.micCalls[0].audio.echoCancellation, true)
+  assert.deepEqual(env.micCalls[0].audio.deviceId, { ideal: 'usb-mic' })
+  assert.equal(env.tracks.length, 1)
+})
+
+test('the lounge speaker still shares a browser tab', async () => {
+  const env = load()
+  const start = env.audio.start('lounge-speaker')
+  await env.waitStart()
+  env.acknowledge()
+  await start
+  assert.equal(env.displayCalls(), 1)
+  assert.equal(env.micCalls.length, 0)
+})
+```
+
+Run: `cd frontend && node --experimental-strip-types --test utils/video-chat/SpatialAudio.test.mjs` — Expected: the microphone test FAILS (getDisplayMedia is called).
+
+- [ ] **Step 2: Implement the source switch**
+
+In `frontend/utils/video-chat/SpatialAudio.ts`:
+- Below the `Publication` type add `export type SpeakerSource = 'tab' | 'microphone'`.
+- Change `public async start(objectId: string) {` to `public async start(objectId: string, source: SpeakerSource = 'tab') {`.
+- Replace the three lines that create `Controller`, `controller` and call `getDisplayMedia` with:
+
+```ts
+            if (source === 'microphone') {
+                const microphoneId = videoChat.getDevicePreferences().microphoneId
+                stream = await navigator.mediaDevices.getUserMedia({ audio: {
+                    ...(microphoneId ? { deviceId: { ideal: microphoneId } } : {}),
+                    echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+                } }).catch(() => { throw new Error('Permita o microfone no navegador para falar para a sala.') })
+            } else {
+                const Controller = (window as Window & { CaptureController?: new () => { setFocusBehavior: (behavior: 'no-focus-change') => void } }).CaptureController
+                const controller = Controller ? new Controller() : undefined
+                controller?.setFocusBehavior('no-focus-change')
+                stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, ...(controller ? { controller } : {}) } as DisplayMediaStreamOptions)
+            }
+```
+
+- Change `if (!audio) throw new Error('Escolha uma aba e marque “Compartilhar áudio” no navegador.')` to `if (!audio) throw new Error(source === 'microphone' ? 'Permita o microfone no navegador para falar para a sala.' : 'Escolha uma aba e marque “Compartilhar áudio” no navegador.')`.
+- Change the success notice to `signal.emit('officeNotice', { message: source === 'microphone' ? 'Seu microfone está aberto para a sala toda.' : 'Áudio da aba tocando perto da caixa de som.', key: 'speaker-start' })`.
+
+- [ ] **Step 3: Microphone wording in the panel**
+
+In `frontend/app/play/SpeakerPanel.tsx`:
+- After `const state = snapshot[object.id]` add:
+
+```tsx
+    const microphone = Boolean(object.config && 'flat' in object.config && object.config.flat)
+    const own = state?.ownerUid === uid
+```
+
+- In `act`, change `else await spatialAudio.start(object.id)` to `else await spatialAudio.start(object.id, microphone ? 'microphone' : 'tab')`.
+- Replace the description paragraph and the button label with:
+
+```tsx
+        <p>{microphone
+            ? state ? own ? 'Seu microfone está aberto para toda a sala de treinamento.' : 'Alguém está falando neste microfone.' : 'Ligue o microfone para falar com toda a sala de treinamento.'
+            : state ? own ? 'Você está compartilhando o áudio de uma aba.' : 'Alguém está compartilhando áudio aqui.' : 'Escolha uma aba com áudio. O som diminui conforme as pessoas se afastam.'}</p>
+```
+
+  and the button text `{busy ? 'Aguarde…' : microphone ? own ? 'Desligar microfone' : 'Ligar microfone' : own ? 'Parar áudio da aba' : 'Compartilhar áudio de uma aba'}`.
+
+- [ ] **Step 4: Run tests, typecheck and build**
+
+Run: `cd frontend && node --experimental-strip-types --test $(find . -name "*.test.mjs" -not -path "./node_modules/*") 2>&1 | grep -E "^not ok|^# (pass|fail)" && npx tsc --noEmit --incremental false && npx next build 2>&1 | grep -E "Compiled|rror"`
+Expected: `# fail 0`, no type errors, `Compiled successfully`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/utils/video-chat/SpatialAudio.ts frontend/utils/video-chat/SpatialAudio.test.mjs frontend/app/play/SpeakerPanel.tsx
+git commit -m "feat: stage microphones publish the voice instead of a tab [skip render]" -m "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 7: Map generator for the wing
 
 **Files:**
