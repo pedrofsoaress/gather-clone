@@ -451,7 +451,7 @@ export class VideoChat {
                 console.error('Failed to join video conversation', error)
                 signal.emit('officeFeedback', { message: 'Não foi possível entrar na chamada de vídeo.' })
             })
-        }, 1000)
+        }, 150)
     }
 
     public async leaveChannel() {

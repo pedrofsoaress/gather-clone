@@ -17,6 +17,7 @@ import { GamepadController, type GamepadInput } from './office/GamepadController
 import type { AvatarSnapshot } from './Player/avatar-actions'
 import { zoomAtCursor } from './office/camera-zoom.mjs'
 import { videoChat } from '../video-chat/video-chat'
+import { setLocalMeetingUid, setMeeting, type MeetingSnapshot } from '../video-chat/meeting'
 
 export class PlayApp extends App {
     private scale: number = 1.5
@@ -66,6 +67,7 @@ export class PlayApp extends App {
             this.scale = 1
         }
         this.uid = uid
+        setLocalMeetingUid(uid)
         this.realmId = realmId
         this.player = new Player(skin, this, username, true)
     }
@@ -383,6 +385,9 @@ export class PlayApp extends App {
         })
         server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => {
             if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot)
+        })
+        server.socket.emit('meetingGetState', (response: { ok: boolean, snapshot?: MeetingSnapshot | null }) => {
+            if (response?.ok) setMeeting(response.snapshot ?? null)
         })
     }
 
@@ -914,6 +919,10 @@ export class PlayApp extends App {
         }
     }
 
+    private onMeetingState = (snapshot: MeetingSnapshot | null) => setMeeting(snapshot ?? null)
+
+    private onMeetingForce = (force: { mic?: false, camera?: false }) => signal.emit('meetingForce', force)
+
     private onOfficeEffect = (event: { objectId: string, effect: 'coffee' | 'water' | 'snack', name: string }) => {
         this.interactionLayer?.playEffect(event.objectId, event.effect)
         signal.emit('officeFeedback', {
@@ -925,6 +934,8 @@ export class PlayApp extends App {
         server.socket.on('avatarState', this.onAvatarState)
         server.socket.on('officeStateChanged', this.onOfficeStateChanged)
         server.socket.on('officeEffect', this.onOfficeEffect)
+        server.socket.on('meetingState', this.onMeetingState)
+        server.socket.on('meetingForce', this.onMeetingForce)
         server.socket.on('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.on('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.on('playerMoved', this.onPlayerMoved)
@@ -943,6 +954,8 @@ export class PlayApp extends App {
         server.socket.off('avatarState', this.onAvatarState)
         server.socket.off('officeStateChanged', this.onOfficeStateChanged)
         server.socket.off('officeEffect', this.onOfficeEffect)
+        server.socket.off('meetingState', this.onMeetingState)
+        server.socket.off('meetingForce', this.onMeetingForce)
         server.socket.off('playerLeftRoom', this.onPlayerLeftRoom)
         server.socket.off('playerJoinedRoom', this.onPlayerJoinedRoom)
         server.socket.off('playerMoved', this.onPlayerMoved)
@@ -986,6 +999,7 @@ export class PlayApp extends App {
         if (this.resyncTimer) clearTimeout(this.resyncTimer)
         this.resyncTimer = null
         this.removeSocketEvents()
+        setMeeting(null)
         this.destroyPlayers()
         server.disconnect()
 

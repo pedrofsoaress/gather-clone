@@ -5,6 +5,7 @@ import AgoraRTC, {
 import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
 import signal from '../../utils/signal'
 import { videoChat } from '../../utils/video-chat/video-chat'
+import { canUnmute } from '../../utils/video-chat/meeting'
 import { mediaErrorMessage } from '../../utils/video-chat/AudioPreference'
 
 interface VideoChatContextType {
@@ -53,6 +54,11 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
     const [isMicBusy, setIsMicBusy] = useState(false)
     const pendingCamera = useRef(false)
     const pendingMicrophone = useRef(false)
+    const isMicMutedRef = useRef(true)
+    const isCameraMutedRef = useRef(true)
+
+    useEffect(() => { isMicMutedRef.current = isMicMuted }, [isMicMuted])
+    useEffect(() => { isCameraMutedRef.current = isCameraMuted }, [isCameraMuted])
 
     useEffect(() => {
         const onChange = (sharing: boolean) => setIsScreenSharing(sharing)
@@ -61,7 +67,19 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
         signal.on('screen-share-changed', onChange)
         signal.on('local-camera-changed', onCamera)
         signal.on('local-microphone-changed', onMicrophone)
+        const onForce = (force: { mic?: false, camera?: false }) => {
+            if (force.mic === false && !isMicMutedRef.current) {
+                void videoChat.toggleMicrophone().then(setIsMicMuted).catch(() => {})
+                signal.emit('officeFeedback', { message: 'O apresentador desligou seu microfone.' })
+            }
+            if (force.camera === false && !isCameraMutedRef.current) {
+                void videoChat.toggleCamera().then(setIsCameraMuted).catch(() => {})
+                signal.emit('officeFeedback', { message: 'O apresentador desligou sua câmera.' })
+            }
+        }
+        signal.on('meetingForce', onForce)
         return () => {
+            signal.off('meetingForce', onForce)
             signal.off('screen-share-changed', onChange)
             signal.off('local-camera-changed', onCamera)
             signal.off('local-microphone-changed', onMicrophone)
@@ -87,6 +105,10 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
 
     const toggleMicrophone = async () => {
         if (pendingMicrophone.current) return
+        if (isMicMuted && !canUnmute()) {
+            signal.emit('officeFeedback', { message: 'O apresentador bloqueou os microfones. Clique em Pedir para falar.' })
+            return
+        }
         pendingMicrophone.current = true
         setIsMicBusy(true)
         try { setIsMicMuted(await videoChat.toggleMicrophone()) }
