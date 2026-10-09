@@ -54,11 +54,26 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
     const [isMicBusy, setIsMicBusy] = useState(false)
     const pendingCamera = useRef(false)
     const pendingMicrophone = useRef(false)
-    const isMicMutedRef = useRef(true)
-    const isCameraMutedRef = useRef(true)
+    const forceMicRef = useRef(false)
+    const forceCameraRef = useRef(false)
 
-    useEffect(() => { isMicMutedRef.current = isMicMuted }, [isMicMuted])
-    useEffect(() => { isCameraMutedRef.current = isCameraMuted }, [isCameraMuted])
+    // Idempotent: only mutes when the track is live, and says so only when it changed something.
+    const forceMicOff = async (message: string) => {
+        try {
+            if (await videoChat.muteMicrophone()) {
+                setIsMicMuted(true)
+                signal.emit('officeFeedback', { message })
+            }
+        } catch {}
+    }
+    const forceCameraOff = async () => {
+        try {
+            if (await videoChat.turnOffCamera()) {
+                setIsCameraMuted(true)
+                signal.emit('officeFeedback', { message: 'O apresentador desligou sua câmera.' })
+            }
+        } catch {}
+    }
 
     useEffect(() => {
         const onChange = (sharing: boolean) => setIsScreenSharing(sharing)
@@ -67,19 +82,27 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
         signal.on('screen-share-changed', onChange)
         signal.on('local-camera-changed', onCamera)
         signal.on('local-microphone-changed', onMicrophone)
+        const lockNotice = 'O apresentador bloqueou os microfones. Clique em Pedir para falar.'
         const onForce = (force: { mic?: false, camera?: false }) => {
-            if (force.mic === false && !isMicMutedRef.current) {
-                void videoChat.toggleMicrophone().then(setIsMicMuted).catch(() => {})
-                signal.emit('officeFeedback', { message: 'O apresentador desligou seu microfone.' })
+            if (force.mic === false) {
+                if (pendingMicrophone.current) forceMicRef.current = true
+                else void forceMicOff('O apresentador desligou seu microfone.')
             }
-            if (force.camera === false && !isCameraMutedRef.current) {
-                void videoChat.toggleCamera().then(setIsCameraMuted).catch(() => {})
-                signal.emit('officeFeedback', { message: 'O apresentador desligou sua câmera.' })
+            if (force.camera === false) {
+                if (pendingCamera.current) forceCameraRef.current = true
+                else void forceCameraOff()
             }
         }
+        const onMeetingState = () => {
+            if (canUnmute()) return
+            if (pendingMicrophone.current) forceMicRef.current = true
+            else void forceMicOff(lockNotice)
+        }
+        signal.on('meetingState', onMeetingState)
         signal.on('meetingForce', onForce)
         return () => {
             signal.off('meetingForce', onForce)
+            signal.off('meetingState', onMeetingState)
             signal.off('screen-share-changed', onChange)
             signal.off('local-camera-changed', onCamera)
             signal.off('local-microphone-changed', onMicrophone)
@@ -100,12 +123,16 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
         setIsCameraBusy(true)
         try { setIsCameraMuted(await videoChat.toggleCamera()) }
         catch (error) { signal.emit('officeFeedback', { message: mediaErrorMessage(error, 'câmera') }) }
-        finally { pendingCamera.current = false; setIsCameraBusy(false) }
+        finally {
+            pendingCamera.current = false
+            setIsCameraBusy(false)
+            if (forceCameraRef.current) { forceCameraRef.current = false; await forceCameraOff() }
+        }
     }
 
     const toggleMicrophone = async () => {
         if (pendingMicrophone.current) return
-        if (isMicMuted && !canUnmute()) {
+        if (videoChat.isMicrophoneMuted() && !canUnmute()) {
             signal.emit('officeFeedback', { message: 'O apresentador bloqueou os microfones. Clique em Pedir para falar.' })
             return
         }
@@ -113,7 +140,13 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
         setIsMicBusy(true)
         try { setIsMicMuted(await videoChat.toggleMicrophone()) }
         catch (error) { signal.emit('officeFeedback', { message: mediaErrorMessage(error, 'microfone') }) }
-        finally { pendingMicrophone.current = false; setIsMicBusy(false) }
+        finally {
+            pendingMicrophone.current = false
+            setIsMicBusy(false)
+            // A force or lock that arrived mid-toggle, or an unmute that raced a lock, ends muted.
+            if (forceMicRef.current) { forceMicRef.current = false; await forceMicOff('O apresentador desligou seu microfone.') }
+            else if (!canUnmute()) await forceMicOff('O apresentador bloqueou os microfones. Clique em Pedir para falar.')
+        }
     }
 
     const toggleScreenShare = async () => {

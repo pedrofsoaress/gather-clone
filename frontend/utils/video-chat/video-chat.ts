@@ -105,6 +105,23 @@ export class VideoChat {
         return !this.cameraTrack.enabled
     }
 
+    // Idempotent forced-mute helpers: never turn anything on. Return true only when they changed something.
+    public isMicrophoneMuted(): boolean { return !this.microphoneTrack || this.microphoneTrack.muted }
+
+    public async muteMicrophone(): Promise<boolean> {
+        const track = this.microphoneTrack
+        if (!track || track.muted) return false
+        await track.setMuted(true)
+        return true
+    }
+
+    public async turnOffCamera(): Promise<boolean> {
+        const track = this.cameraTrack
+        if (!track || !track.enabled) return false
+        await track.setEnabled(false)
+        return true
+    }
+
     public async toggleMicrophone() {
         if (!this.microphoneTrack) {
             const lifecycle = this.lifecycle
