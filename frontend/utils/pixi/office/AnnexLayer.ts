@@ -13,8 +13,8 @@ export class AnnexLayer {
     private progress = 0
     private tween: gsap.core.Tween | null = null
 
-    constructor(private readonly annex: AnnexConfig | undefined, signs: AnnexSign[]) {
-        this.darkness.eventMode = 'none'
+    // onRevealed runs once the wing is fully lit (instantly or at the end of the sweep).
+    constructor(private readonly annex: AnnexConfig | undefined, signs: AnnexSign[], private readonly onRevealed?: () => void) {
         this.signs.eventMode = 'none'
         for (const sign of signs) this.signs.addChild(createSign(sign))
         this.draw()
@@ -29,20 +29,25 @@ export class AnnexLayer {
         if (!animate) {
             this.progress = 1
             this.draw()
+            this.onRevealed?.()
             return
         }
         const state = { progress: this.progress }
         this.tween = gsap.to(state, {
             progress: 1, duration: 1.5, ease: 'power2.inOut',
             onUpdate: () => { this.progress = state.progress; this.draw() },
-            onComplete: () => { this.tween = null },
+            onComplete: () => { this.tween = null; this.onRevealed?.() },
         })
     }
 
     private draw(): void {
         this.darkness.clear()
-        if (!this.annex || this.progress >= 1) return
-        const { x, y, width, height } = this.annex.reveal
+        // While drawn, the darkness catches the pointer so furniture names in the dark wing
+        // are not revealed on hover; clicks still bubble to the stage, which moves the avatar.
+        const dark = Boolean(this.annex) && this.progress < 1
+        this.darkness.eventMode = dark ? 'static' : 'none'
+        if (!dark) return
+        const { x, y, width, height } = this.annex!.reveal
         const right = (x + width) * TILE
         const top = y * TILE
         const fullHeight = height * TILE

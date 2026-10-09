@@ -89,7 +89,11 @@ class SpatialAudio {
                 stream = await navigator.mediaDevices.getUserMedia({ audio: {
                     ...(microphoneId ? { deviceId: { ideal: microphoneId } } : {}),
                     echoCancellation: true, noiseSuppression: true, autoGainControl: true,
-                } }).catch(() => { throw new Error('Permita o microfone no navegador para falar para a sala.') })
+                } }).catch((error: DOMException) => {
+                    throw new Error(error?.name === 'NotFoundError' ? 'Nenhum microfone encontrado neste computador.'
+                        : error?.name === 'NotReadableError' ? 'O microfone está em uso por outro programa.'
+                        : 'Permita o microfone no navegador para falar para a sala.')
+                })
             } else {
                 const Controller = (window as Window & { CaptureController?: new () => { setFocusBehavior: (behavior: 'no-focus-change') => void } }).CaptureController
                 const controller = Controller ? new Controller() : undefined

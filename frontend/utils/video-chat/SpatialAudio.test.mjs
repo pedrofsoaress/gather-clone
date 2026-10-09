@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 
-function load() {
+function load({ micError } = {}) {
   const exports = {}, commands = [], clients = [], tracks = [], micCalls = []
   let displayCalls = 0
   let ackStart
@@ -13,7 +13,7 @@ function load() {
   const stream = { getAudioTracks: () => [media], getTracks: () => [media] }
   const socket = { timeout: () => ({ emit(event, data, ack) { commands.push(event); if (event === 'speakerStart') ackStart = ack; else ack(null, { ok: true }) } }) }
   vm.runInNewContext(source, {
-    exports, process: { env: {} }, window: {}, navigator: { mediaDevices: { getDisplayMedia: async () => { displayCalls++; return stream }, getUserMedia: async constraints => { micCalls.push(constraints); return stream } } },
+    exports, process: { env: {} }, window: {}, navigator: { mediaDevices: { getDisplayMedia: async () => { displayCalls++; return stream }, getUserMedia: async constraints => { micCalls.push(constraints); if (micError) throw micError; return stream } } },
     require: name => {
       if (name === 'agora-rtc-sdk-ng') return {
         createClient() { const client = { connectionState: 'DISCONNECTED', async join() { this.connectionState = 'CONNECTED' }, async publish() {}, async leave() { this.connectionState = 'DISCONNECTED' }, on() {} }; clients.push(client); return client },
@@ -75,4 +75,18 @@ test('the lounge speaker still shares a browser tab', async () => {
   await start
   assert.equal(env.displayCalls(), 1)
   assert.equal(env.micCalls.length, 0)
+})
+
+test('a missing microphone gets its own message and leaves nothing behind', async () => {
+  for (const [name, message] of [
+    ['NotFoundError', 'Nenhum microfone encontrado neste computador.'],
+    ['NotReadableError', 'O microfone está em uso por outro programa.'],
+    ['NotAllowedError', 'Permita o microfone no navegador para falar para a sala.'],
+  ]) {
+    const env = load({ micError: { name } })
+    await assert.rejects(env.audio.start('training-stage-mic', 'microphone'), { message })
+    assert.deepEqual(env.commands, [], name)
+    assert.equal(env.clients.length, 0, name)
+    await assert.rejects(env.audio.start('training-stage-mic', 'microphone'), { message }, 'a new attempt is possible')
+  }
 })
