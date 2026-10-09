@@ -26,3 +26,12 @@ test('server rejects a host outside object allowlist', () => {
   const altered = { ...object, config: { ...object.config, url: 'https://attacker.example/' } }
   assert.throws(() => validateOfficeMap({ ...base, rooms: [{ ...base.rooms[0], interactions: [altered] }] }))
 })
+
+test('speakers may be flat; other speaker fields are still rejected', () => {
+  const tilemap = { '0, 0': {}, '0, 1': {} }
+  const map = (config: unknown) => ({ spawnpoint: { roomIndex: 0, x: 0, y: 1 }, rooms: [{ name: 'Matte', tilemap, interactions: [
+    { id: 'mic', kind: 'speaker', label: 'Microfone', bounds: { x: 0, y: 0, width: 1, height: 1 }, approach: { x: 0, y: 1 }, config },
+  ] }] }) as any
+  assert.doesNotThrow(() => validateOfficeMap(map({ rangeTiles: 40, flat: true })))
+  assert.throws(() => validateOfficeMap(map({ rangeTiles: 40, loud: true })))
+})

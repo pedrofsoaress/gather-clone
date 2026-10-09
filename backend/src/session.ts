@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { OfficeState } from './office/OfficeState'
-import type { AreaConfig } from './office/areas'
+import { areaAt, isStageArea, type AreaConfig } from './office/areas'
 import { validateOfficeMap } from './office/object-config'
 import { OfficeSharedObjects } from './office/OfficeSharedObjects'
 import { PresentationState } from './office/PresentationState'
@@ -63,6 +63,7 @@ export interface Player {
 }
 
 export const defaultSkin = '009'
+export const MAX_PLAYERS_PER_SPACE = 80
 
 export const Spawnpoint = z.object({
     roomIndex: z.number(),
@@ -312,6 +313,7 @@ export class Session {
         const players = Object.values(this.players).sort((a, b) => a.uid.localeCompare(b.uid))
         const byRoomTile = new Map<number, Map<string, Player[]>>()
         const zoneOf = (player: Player) => this.map_data.rooms[player.room].tilemap[`${player.x}, ${player.y}`]?.privateAreaId ?? null
+        const inStage = (player: Player) => isStageArea(this.map_data.rooms[player.room], areaAt(this.map_data.rooms[player.room], player.x, player.y))
         for (const player of players) {
             if (!byRoomTile.has(player.room)) byRoomTile.set(player.room, new Map())
             const roomTiles = byRoomTile.get(player.room)!
@@ -330,7 +332,7 @@ export class Session {
                 const member = group[index]
                 for (const tile of this.getProximityTiles(member.x, member.y)) {
                     for (const neighbor of byRoomTile.get(member.room)?.get(tile) ?? []) {
-                        if (visited.has(neighbor.uid) || zoneOf(neighbor) !== zone) continue
+                        if (visited.has(neighbor.uid) || zoneOf(neighbor) !== zone || inStage(member) || inStage(neighbor)) continue
                         visited.add(neighbor.uid)
                         group.push(neighbor)
                     }

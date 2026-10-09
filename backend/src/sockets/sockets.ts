@@ -3,7 +3,7 @@ import { JoinRealm, Disconnect, OnEventCallback, MovePlayer, Teleport, ChangedSk
 import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
-import { sessionManager, Session } from '../session'
+import { sessionManager, Session, MAX_PLAYERS_PER_SPACE } from '../session'
 import { SpeakerTarget, AvatarAction, AvatarRun } from './socket-types'
 import { removeExtraSpaces } from '../utils'
 import { kickPlayer } from './helpers'
@@ -129,8 +129,8 @@ export function sockets(io: Server) {
             const session = sessionManager.getSession(realmData.realmId)
             if (session) {
                 const playerCount = session.getPlayerCount()
-                if (playerCount >= 30) {
-                    return rejectJoin("Space is full. It's 30 players max.")
+                if (playerCount >= MAX_PLAYERS_PER_SPACE) {
+                    return rejectJoin(`O escritório está cheio. O limite é de ${MAX_PLAYERS_PER_SPACE} pessoas.`)
                 } 
             }
 

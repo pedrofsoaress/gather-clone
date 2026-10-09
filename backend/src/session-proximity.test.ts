@@ -101,3 +101,29 @@ test('room departure and disconnection clear remaining participants', () => {
     assert.deepEqual(session.setProximityIdsWithPlayer('bruno'), ['ana'])
     assert.equal(session.getPlayer('ana').proximityId, null)
 })
+
+test('people in the training audience do not form proximity calls, people outside still do', () => {
+    const tilemap: Room['tilemap'] = {}
+    for (let x = 0; x < 20; x++) for (let y = 0; y < 5; y++) tilemap[`${x}, ${y}`] = {}
+    for (let x = 10; x < 20; x++) for (let y = 0; y < 5; y++) tilemap[`${x}, ${y}`].areaId = 'matte-training'
+    const session = new Session('office', {
+        spawnpoint: { roomIndex: 0, x: 0, y: 4 },
+        rooms: [{ name: 'Matte', tilemap, areas: { 'matte-training': { label: 'Sala de treinamento', conversation: 'stage' } } }],
+    })
+    for (const [uid, x] of [['ana', 12], ['bruno', 13], ['caio', 1], ['duda', 2]] as const) {
+        session.addPlayer(`socket-${uid}`, uid, uid, '009')
+        session.movePlayer(uid, x, 0)
+    }
+    assert.equal(session.getPlayer('ana').proximityId, null)
+    assert.equal(session.getPlayer('bruno').proximityId, null)
+    assert.ok(session.getPlayer('caio').proximityId)
+    assert.equal(session.getPlayer('caio').proximityId, session.getPlayer('duda').proximityId)
+    session.movePlayer('duda', 10, 0)
+    session.movePlayer('caio', 9, 0)
+    assert.equal(session.getPlayer('caio').proximityId, null, 'someone at the door does not join the audience')
+})
+
+test('the office accepts 80 people', async () => {
+    const { MAX_PLAYERS_PER_SPACE } = await import('./session')
+    assert.equal(MAX_PLAYERS_PER_SPACE, 80)
+})
