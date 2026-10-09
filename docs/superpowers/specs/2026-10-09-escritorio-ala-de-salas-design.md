@@ -34,14 +34,22 @@ O escritório atual continua sendo a primeira sala. À direita dele surge uma al
 - As plaquinhas das salas ficam visíveis **mesmo no escuro**, como placas iluminadas, para dar a ideia do que existe lá.
 - As plaquinhas são desenhadas pelo sistema, não pintadas na arte, para dar para trocar o texto sem refazer a imagem.
 
-### Sala de treinamento
+### Sala de treinamento (revisado em 09/10/2026: grande reunião)
 
-- 50 lugares em fileiras (por exemplo, 5 fileiras de 10), um palco na frente com tela de apresentação e um corredor no meio.
-- **Palco:** quem pisa no ponto do palco e liga o microfone fala para a sala inteira, no mesmo volume para todos os lugares.
-- **Tela do palco:** usa as apresentações que já existem (slides, troca de slide pelo apresentador e "levantar a mão").
-- **Microfone da plateia:** um ponto no corredor do meio. Qualquer pessoa vai até ele, liga o microfone e fala para a sala toda, sem pedir permissão. Palco e microfone da plateia podem falar ao mesmo tempo.
-- **Na plateia não há conversa por proximidade.** Quem está sentado ouve o palco e o microfone da plateia e usa o chat. Isso evita que 50 pessoas sentadas lado a lado virem uma chamada gigante e travem.
-- Os lugares funcionam como as cadeiras de hoje: a pessoa senta ao chegar e levanta ao sair.
+Decisões do Pedro em 09/10/2026, depois do lançamento da ala: a sala vira uma grande reunião; quem está no palco gerencia os microfones; vídeos numa faixa no topo; o apresentador pode desligar o microfone de alguém, desligar o de todos, bloquear religar e desligar a câmera de alguém.
+
+- 50 lugares em fileiras, palco na frente com a tela de apresentação. A pessoa só senta quando pisa na cadeira.
+- **Uma chamada para a sala toda:** quem entra na sala entra automaticamente numa única conversa com todos que estão dentro, como na sala de vidro. Os vídeos aparecem na faixa no topo da tela, com o botão "Expandir reunião" de sempre.
+- Câmera e microfone começam desligados. Cada pessoa liga o próprio microfone e a própria câmera.
+- **Apresentador:** quem está de pé no palco. Pode haver mais de um. Ao sair do palco, perde os controles.
+- **Controles do apresentador:** desligar o microfone de uma pessoa, desligar a câmera de uma pessoa, silenciar todos (menos quem está no palco) e bloquear os microfones. A pessoa silenciada pode religar o microfone, a não ser que os microfones estejam bloqueados.
+- **Microfones bloqueados:** ninguém fora do palco consegue ligar o microfone. A pessoa clica em "Pedir para falar"; o apresentador vê o pedido e clica em "Liberar"; só então ela consegue ligar o microfone. Ao desbloquear, todos voltam a poder falar.
+- Os dois microfones fixos (palco e plateia) saem da sala; a chamada da sala substitui os dois.
+- A tela de slides continua (apresentações e "levantar a mão" de sempre).
+
+### Chamada mais rápida (todo o escritório)
+
+- O vídeo abre cerca de 0,15 segundo depois que alguém chega perto (antes, 1 segundo de espera).
 
 ### Salas de one-on-one
 
@@ -87,7 +95,7 @@ O escritório atual continua sendo a primeira sala. À direita dele surge uma al
 2. Ao pisar na passagem, a ala aparece em cerca de 1,5 segundo. Recarregando a página, volta a ficar escura.
 3. Com 3 pessoas numa sala de one-on-one, a quarta não entra e vê "Sala cheia". Quando uma sai, a vaga abre.
 4. Na sala de one-on-one e na diretoria, quem está fora não ouve quem está dentro.
-5. No treinamento, quem está no palco é ouvido em todos os 50 lugares no mesmo volume, e quem vai ao microfone da plateia também. Pessoas sentadas lado a lado não entram em chamada entre si.
+5. No treinamento, todos na sala estão na mesma chamada; quem está no palco desliga microfones e câmeras dos outros, silencia todos e bloqueia os microfones; com o bloqueio, só quem foi liberado consegue ligar o microfone.
 6. O escritório aceita 80 pessoas ao mesmo tempo, e a 81ª vê a mensagem de cheio.
 7. Nada muda para quem fica no escritório atual.
 8. Testes automáticos cobrem: limite da sala, revelação por visita, ausência de conversa na plateia, volume do palco e do microfone da plateia, e reconexão para uma sala cheia.
