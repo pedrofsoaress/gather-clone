@@ -429,15 +429,16 @@ def wall_pieces(start, end, gaps):
     return pieces
 
 
-def h_wall(y, start, end, gaps=(), windows=True, posts=(), joined_start=False):
+def h_wall(y, start, end, gaps=(), windows=True, posts=(), joined_start=False, joined_end=False):
     """Horizontal wall on tile row y, from px start to end, open at gaps.
-    `posts` adds posts at junctions with vertical walls; joined_start says the
-    wall starts at such a junction."""
+    `posts` adds posts at junctions with vertical walls; joined_start and
+    joined_end say the wall starts or ends against another wall."""
     top, cy = y * T + H_OFF, y * T + T // 2
     centres = []
     pieces = wall_pieces(start, end, gaps)
     for n, (a, b) in enumerate(pieces):
-        segs, cuts = panels(a, b, windows, joined_start=joined_start and n == 0)
+        segs, cuts = panels(a, b, windows, joined_start=joined_start and n == 0,
+                            joined_end=joined_end and n == len(pieces) - 1)
         for s0, s1, kind in segs:
             for i, c in enumerate(PROFILE['h_' + kind]):
                 draw.line((s0, top + i, s1 - 1, top + i), fill=c)
@@ -624,8 +625,10 @@ for room in L['oneOnOnes']:
     place(shelf, r['x2'] + 0.17, r['y2'] + 0.96 - SOURCES['shelf'][3])
 
 # 6. Directors' room: desk shifted by (+44, +10), armchairs and coffee table
-# shifted by (+56.5, +2) on a rug centred under them, a tall plant beside the
-# desk. Column x1 stays clear: it is the lane from the door to the armchairs.
+# shifted by (+56.5, +2) on a rug centred under them, and a plant against the
+# bottom wall between the two armchair approach tiles. The plant keeps off the
+# walking lanes: column x1 and column x2 (the only ways round the desk), the
+# door tiles and the seat tiles.
 lounge = [SOURCES[n] for n in ('armchair_right', 'armchair_left')]
 rug_x0 = lounge[0][0] + LOUNGE_SHIFT[0] - 0.45
 rug_x1 = lounge[1][0] + lounge[1][2] + LOUNGE_SHIFT[0] + 0.45
@@ -635,7 +638,7 @@ place(cut_out('desk'), sx + DESK_SHIFT[0], sy + DESK_SHIFT[1])
 for name in ('armchair_right', 'armchair_left', 'coffee_table'):
     sx, sy = SOURCES[name][:2]
     place(cut_out(name), sx + LOUNGE_SHIFT[0], sy + LOUNGE_SHIFT[1])
-place(plant_tall, dr['x2'] - 0.55, dr['y1'] - 0.4)
+place(plant, (dr['x1'] + dr['x2'] + 1) / 2 - SOURCES['plant'][2] / 2, dr['y2'] + 1 - SOURCES['plant'][3])
 
 # 7. Interior walls, on top of the floors, from the layout's wall list. Walls
 # of the training room get wood windows; the walls of the private rooms are
@@ -653,9 +656,12 @@ for x1, y1, x2, y2 in vertical:
 for x1, y1, x2, y2 in horizontal:
     gaps = [(d[0] * T, (d[2] + 1) * T) for d in L['doors'] if d[1] == d[3] == y1 and x1 <= d[0] <= x2]
     joints = [v[0] * T + HALF for v in vertical if v[1] <= y1 <= v[3]]
-    end = inner_right + 4 if x2 == last_x - 1 else (x2 + 1) * T
+    # A wall reaching the outer right wall ends against it, with its end post
+    # beside it, like the west end's post at the junction.
+    at_outer = x2 == last_x - 1
+    end = inner_right if at_outer else (x2 + 1) * T
     h_wall(y1, x1 * T + V_OFF, end, gaps, windows=y1 <= ti['y2'] + 1, posts=joints,
-           joined_start=any(v[0] == x1 for v in vertical if v[1] <= y1 <= v[3]))
+           joined_start=any(v[0] == x1 for v in vertical if v[1] <= y1 <= v[3]), joined_end=at_outer)
 
 # 8. Outer right and bottom walls, and the joints with the office's outer
 # walls: the top wall runs on over the office's top right corner, and a short
