@@ -13,6 +13,7 @@ const TileSchema = z.object({
   impassable: z.boolean().optional(),
   teleporter: TeleporterSchema.optional(),
   privateAreaId: z.string().optional(),
+  areaId: z.string().optional(),
 })
 
 const TileMapSchema = z.record(z.string().regex(/^(-?\d+), (-?\d+)$/), TileSchema)
@@ -34,7 +35,7 @@ export const PresentationSlidesSchema = z.array(z.object({ title: z.string().min
 const ObjectConfigSchema = z.union([
   ExternalConfigSchema,
   z.object({ deckId: z.string().min(1).max(128), slides: PresentationSlidesSchema }).strict(),
-  z.object({ rangeTiles: z.number().int().min(1).max(40) }).strict(),
+  z.object({ rangeTiles: z.number().int().min(1).max(40), flat: z.boolean().optional() }).strict(),
   z.object({ animationSet: z.string().min(1).max(48) }).strict(),
   z.object({ radiusTiles: z.number().int().min(1).max(20), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), intensity: z.number().min(0).max(1) }).strict(),
 ])
@@ -52,6 +53,7 @@ export const OfficeObjectSchema = z.object({
     x: z.number(), y: z.number(),
     facing: z.enum(['up', 'down', 'left', 'right']).optional(),
   }).optional(),
+  sitRange: z.union([z.literal(0), z.literal(1)]).optional(),
   effect: z.enum(['coffee', 'water', 'snack']).optional(),
   config: ObjectConfigSchema.optional(),
 }).superRefine((object, context) => {
@@ -79,6 +81,16 @@ const RoomSchema = z.object({
     height: z.number().positive(),
   }).optional(),
   interactions: z.array(OfficeObjectSchema).optional(),
+  areas: z.record(z.string(), z.object({
+    label: z.string().min(1).max(48),
+    capacity: z.number().int().min(1).max(100).optional(),
+    conversation: z.literal('stage').optional(),
+  })).optional(),
+  annex: z.object({
+    reveal: z.object({ x: z.number().int(), y: z.number().int(), width: z.number().int().positive(), height: z.number().int().positive() }),
+    triggers: z.array(z.tuple([z.number().int(), z.number().int()])).min(1),
+  }).optional(),
+  signs: z.array(z.object({ text: z.string().min(1).max(40), x: z.number(), y: z.number() })).max(40).optional(),
 }).superRefine((room, context) => {
   const ids = new Set<string>()
   for (const [index, object] of (room.interactions ?? []).entries()) {
