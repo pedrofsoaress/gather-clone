@@ -7,6 +7,7 @@ import { videoChat } from './video-chat'
 export type SpeakerSnapshot = Record<string, { ownerUid: string, channel: string, volume: number }>
 type Listener = { client: IAgoraRTCClient, channel: string, track?: IRemoteAudioTrack, cancelled: boolean }
 type Publication = { objectId: string, client: IAgoraRTCClient, stream: MediaStream, track?: ILocalAudioTrack, cancelled: boolean, authorized: boolean, reservationRequested: boolean, reservationReleased: boolean }
+export type SpeakerSource = 'tab' | 'microphone'
 
 function command(event: string, objectId: string): Promise<void> {
     return new Promise((resolve, reject) => server.socket.timeout(8000).emit(event, { objectId }, (timeout: Error | null, result: { ok: boolean, error?: string }) => {
@@ -76,20 +77,28 @@ class SpatialAudio {
         if (listener.client.connectionState !== 'DISCONNECTED') void listener.client.leave().catch(() => {})
     }
 
-    public async start(objectId: string) {
+    public async start(objectId: string, source: SpeakerSource = 'tab') {
         if (this.publication || this.capturing) throw new Error('Encerre o áudio atual antes de iniciar outro.')
         this.capturing = true
         const version = this.captureVersion
         let stream: MediaStream | undefined
         let publication: Publication | undefined
         try {
-            const Controller = (window as Window & { CaptureController?: new () => { setFocusBehavior: (behavior: 'no-focus-change') => void } }).CaptureController
-            const controller = Controller ? new Controller() : undefined
-            controller?.setFocusBehavior('no-focus-change')
-            stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, ...(controller ? { controller } : {}) } as DisplayMediaStreamOptions)
+            if (source === 'microphone') {
+                const microphoneId = videoChat.getDevicePreferences().microphoneId
+                stream = await navigator.mediaDevices.getUserMedia({ audio: {
+                    ...(microphoneId ? { deviceId: { ideal: microphoneId } } : {}),
+                    echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+                } }).catch(() => { throw new Error('Permita o microfone no navegador para falar para a sala.') })
+            } else {
+                const Controller = (window as Window & { CaptureController?: new () => { setFocusBehavior: (behavior: 'no-focus-change') => void } }).CaptureController
+                const controller = Controller ? new Controller() : undefined
+                controller?.setFocusBehavior('no-focus-change')
+                stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, ...(controller ? { controller } : {}) } as DisplayMediaStreamOptions)
+            }
             if (version !== this.captureVersion) throw new Error('Compartilhamento cancelado ao sair do escritório.')
             const audio = stream.getAudioTracks()[0]
-            if (!audio) throw new Error('Escolha uma aba e marque “Compartilhar áudio” no navegador.')
+            if (!audio) throw new Error(source === 'microphone' ? 'Permita o microfone no navegador para falar para a sala.' : 'Escolha uma aba e marque “Compartilhar áudio” no navegador.')
             const client = AgoraRTC.createClient({ codec: 'vp8', mode: 'rtc' })
             const current: Publication = { objectId, client, stream, cancelled: false, authorized: false, reservationRequested: true, reservationReleased: false }
             publication = current
@@ -110,7 +119,7 @@ class SpatialAudio {
                 if (next && !current.cancelled && next.channel === authorization.channel) await client.renewToken(next.token).catch(() => this.stopPublication(current, true))
                 else await this.stopPublication(current, true)
             })
-            signal.emit('officeNotice', { message: 'Áudio da aba tocando perto da caixa de som.', key: 'speaker-start' })
+            signal.emit('officeNotice', { message: source === 'microphone' ? 'Seu microfone está aberto para a sala toda.' : 'Áudio da aba tocando perto da caixa de som.', key: 'speaker-start' })
         } catch (error) {
             stream?.getTracks().forEach(track => track.stop())
             if (publication) await this.stopPublication(publication, true)
