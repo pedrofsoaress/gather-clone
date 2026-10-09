@@ -1,6 +1,6 @@
 import type { Room } from '../session'
 
-export type AreaConfig = { label: string, capacity?: number, conversation?: 'stage' }
+export type AreaConfig = { label: string, capacity?: number, conversation?: 'stage', meeting?: { stage: { x1: number, y1: number, x2: number, y2: number } } }
 
 // A tile's area: its private conversation area, otherwise its plain area.
 export function areaAt(room: Room, x: number, y: number): string | null {
@@ -16,4 +16,9 @@ export function areaConfig(room: Room, areaId: string | null): AreaConfig | null
 // audience microphone instead of forming proximity calls with neighbours.
 export function isStageArea(room: Room, areaId: string | null): boolean {
     return areaConfig(room, areaId)?.conversation === 'stage'
+}
+
+// The stage of a meeting area: people standing on it moderate the meeting.
+export function meetingStage(room: Room, areaId: string | null): { x1: number, y1: number, x2: number, y2: number } | null {
+    return areaConfig(room, areaId)?.meeting?.stage ?? null
 }

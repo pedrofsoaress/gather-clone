@@ -4,7 +4,7 @@ import { map } from './matte-office-map.mjs'
 
 test('every functional Matte fixture has a distinct hotspot', () => {
   const interactions = map.rooms[0].interactions
-  assert.equal(interactions.length, 128)
+  assert.equal(interactions.length, 126)
   assert.equal(new Set(interactions.map((item) => item.id)).size, interactions.length)
   for (const id of ['boardroom-table', 'project-table', 'workbench', 'reception', 'pingpong']) {
     assert.ok(interactions.some(item => item.id === id), id)
@@ -85,19 +85,17 @@ test('the annex wing has its rooms, signs and darkness', () => {
   assert.deepEqual(room.backgroundImage, { src: '/matte-office-v3.png', width: 86 * 32, height: 30 * 32 })
   assert.deepEqual(room.annex, { reveal: { x: 50, y: 0, width: 36, height: 30 }, triggers: [[49, 15], [49, 16]] })
   assert.equal(room.signs.length, 7)
-  assert.equal(room.areas['matte-training'].conversation, 'stage')
+  assert.deepEqual(room.areas['matte-training'].meeting, { stage: { x1: 62, y1: 1, x2: 76, y2: 3 } })
   for (let n = 1; n <= 4; n++) assert.equal(room.areas[`one-on-one-${n}`].capacity, 3)
   assert.equal(room.areas['matte-directors'].capacity, undefined)
   const training = room.interactions.filter(object => object.id.startsWith('training-seat-'))
   assert.equal(training.length, 50)
   for (const seat of training) {
     assert.equal(seat.sitRange, 0, seat.id)
-    assert.equal(room.tilemap[`${seat.approach.x}, ${seat.approach.y}`].areaId, 'matte-training', seat.id)
+    assert.equal(room.tilemap[`${seat.approach.x}, ${seat.approach.y}`].privateAreaId, 'matte-training', seat.id)
   }
   for (let n = 1; n <= 4; n++) assert.equal(room.interactions.filter(object => object.id.startsWith(`one-on-one-${n}-`)).length, 3)
-  const mics = room.interactions.filter(object => object.kind === 'speaker' && object.id.startsWith('training-'))
-  assert.equal(mics.length, 2)
-  for (const mic of mics) assert.deepEqual(mic.config, { rangeTiles: 40, flat: true })
+  assert.equal(room.interactions.filter(object => object.id.startsWith('training-') && object.kind === 'speaker').length, 0)
   assert.equal(room.tilemap['49, 15'].impassable, undefined, 'the passage is open')
   assert.equal(room.tilemap['49, 14'].impassable, true, 'the rest of the east wall stays')
 })
@@ -109,5 +107,5 @@ test('the 1:1 shelves block walking and the training slide points to the middle 
     assert.equal(room.tilemap[`${x1 + 4}, 24`].impassable, undefined, `${x1 + 4}, 24 stays open`)
   }
   const slide = room.interactions.find(object => object.id === 'training-screen').config.slides[0]
-  assert.equal(slide.body, 'Quem está no palco fala para a sala toda. Para falar da plateia, use o microfone no corredor do meio.')
+  assert.equal(slide.body, 'Quem está no palco apresenta e controla os microfones. Para falar, ligue seu microfone ou clique em Pedir para falar.')
 })

@@ -85,6 +85,7 @@ const RoomSchema = z.object({
     label: z.string().min(1).max(48),
     capacity: z.number().int().min(1).max(100).optional(),
     conversation: z.literal('stage').optional(),
+    meeting: z.object({ stage: z.object({ x1: z.number().int(), y1: z.number().int(), x2: z.number().int(), y2: z.number().int() }) }).optional(),
   })).optional(),
   annex: z.object({
     reveal: z.object({ x: z.number().int(), y: z.number().int(), width: z.number().int().positive(), height: z.number().int().positive() }),

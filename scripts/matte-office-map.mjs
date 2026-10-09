@@ -90,12 +90,12 @@ function area(rect, key, id) {
     for (let x = rect.x1; x <= rect.x2; x++) tile(x, y)[key] = id
   }
 }
-area(training.interior, 'areaId', training.id)
+area(training.interior, 'privateAreaId', training.id)
 for (const room of oneOnOnes) area(room.interior, 'privateAreaId', room.id)
 area(directors.interior, 'privateAreaId', directors.id)
 
 const areas = {
-  [training.id]: { label: training.label, conversation: 'stage' },
+  [training.id]: { label: training.label, meeting: { stage: { ...training.stage } } },
   ...Object.fromEntries(oneOnOnes.map(room => [room.id, { label: room.label, capacity: room.capacity }])),
   [directors.id]: { label: directors.label },
 }
@@ -111,10 +111,8 @@ function officeObject(id, kind, label, [x, y, width, height], [approachX, approa
 
 const trainingObjects = [
   officeObject('training-screen', 'presentation', 'Tela do treinamento', [training.screen.x1, training.screen.y1, training.screen.x2 - training.screen.x1 + 1, 1], training.presentationApproach, { config: { deckId: 'matte-training', slides: [
-    { title: 'Sala de treinamento', body: 'Quem está no palco fala para a sala toda. Para falar da plateia, use o microfone no corredor do meio.' },
+    { title: 'Sala de treinamento', body: 'Quem está no palco apresenta e controla os microfones. Para falar, ligue seu microfone ou clique em Pedir para falar.' },
   ] } }),
-  officeObject('training-stage-mic', 'speaker', 'Microfone do palco', [training.stageMic[0], training.stageMic[1] - 1, 1, 1], training.stageMic, { config: { rangeTiles: 40, flat: true } }),
-  officeObject('training-audience-mic', 'speaker', 'Microfone da plateia', [training.audienceMic[0], training.audienceMic[1] - 1, 1, 1], training.audienceMic, { config: { rangeTiles: 40, flat: true } }),
 ]
 
 const trainingSeats = training.seatRows.flatMap((row, rowIndex) => training.seatColumns.map((column, columnIndex) =>
