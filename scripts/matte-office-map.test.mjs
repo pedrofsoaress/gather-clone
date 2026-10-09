@@ -4,7 +4,7 @@ import { map } from './matte-office-map.mjs'
 
 test('every functional Matte fixture has a distinct hotspot', () => {
   const interactions = map.rooms[0].interactions
-  assert.equal(interactions.length, 60)
+  assert.equal(interactions.length, 128)
   assert.equal(new Set(interactions.map((item) => item.id)).size, interactions.length)
   for (const id of ['boardroom-table', 'project-table', 'workbench', 'reception', 'pingpong']) {
     assert.ok(interactions.some(item => item.id === id), id)
@@ -38,7 +38,7 @@ test('every hotspot fits the art and has a reachable approach tile', () => {
   for (const object of interactions) {
     const { x: left, y: top, width, height } = object.bounds
     assert.ok(left >= 0 && top >= 0, object.id)
-    assert.ok(left + width <= 50 && top + height <= 30, object.id)
+    assert.ok(left + width <= 86 && top + height <= 30, object.id)
     assert.ok(reachable.has(`${object.approach.x}, ${object.approach.y}`), object.id)
   }
 })
@@ -52,7 +52,7 @@ test('coffee and water can each be targeted by a distinct point', () => {
 
 test('desk seats pull the avatar onto the visible chair center', () => {
   const desks = map.rooms[0].interactions.filter((object) => object.kind === 'desk')
-  assert.equal(desks.length, 8)
+  assert.equal(desks.length, 9)
   for (const desk of desks) {
     assert.ok(desk.seatVisual.x < desk.approach.x && desk.seatVisual.x > desk.approach.x - 1, desk.id)
     assert.ok(desk.seatVisual.y > desk.approach.y && desk.seatVisual.y < desk.approach.y + 1, desk.id)
@@ -61,7 +61,7 @@ test('desk seats pull the avatar onto the visible chair center', () => {
 
 test('every place to sit has a pose direction and the reception armchairs are separate', () => {
   const seats = map.rooms[0].interactions.filter((object) => object.kind === 'seat' || object.kind === 'desk')
-  assert.equal(seats.length, 42)
+  assert.equal(seats.length, 107)
   assert.equal(seats.filter(seat => seat.id.startsWith('boardroom-')).length, 8)
   assert.equal(seats.filter(seat => seat.id.startsWith('project-')).length, 6)
   assert.equal(seats.filter(seat => seat.id.startsWith('bar-stool-')).length, 3)
@@ -78,4 +78,26 @@ test('every place to sit has a pose direction and the reception armchairs are se
   assert.ok(left && right)
   assert.ok(left.seatVisual.x < 25 && right.seatVisual.x > 25)
   assert.notDeepEqual(left.approach, right.approach)
+})
+
+test('the annex wing has its rooms, signs and darkness', () => {
+  const room = map.rooms[0]
+  assert.deepEqual(room.backgroundImage, { src: '/matte-office-v3.png', width: 86 * 32, height: 30 * 32 })
+  assert.deepEqual(room.annex, { reveal: { x: 50, y: 0, width: 36, height: 30 }, triggers: [[49, 15], [49, 16]] })
+  assert.equal(room.signs.length, 7)
+  assert.equal(room.areas['matte-training'].conversation, 'stage')
+  for (let n = 1; n <= 4; n++) assert.equal(room.areas[`one-on-one-${n}`].capacity, 3)
+  assert.equal(room.areas['matte-directors'].capacity, undefined)
+  const training = room.interactions.filter(object => object.id.startsWith('training-seat-'))
+  assert.equal(training.length, 50)
+  for (const seat of training) {
+    assert.equal(seat.sitRange, 0, seat.id)
+    assert.equal(room.tilemap[`${seat.approach.x}, ${seat.approach.y}`].areaId, 'matte-training', seat.id)
+  }
+  for (let n = 1; n <= 4; n++) assert.equal(room.interactions.filter(object => object.id.startsWith(`one-on-one-${n}-`)).length, 3)
+  const mics = room.interactions.filter(object => object.kind === 'speaker' && object.id.startsWith('training-'))
+  assert.equal(mics.length, 2)
+  for (const mic of mics) assert.deepEqual(mic.config, { rangeTiles: 40, flat: true })
+  assert.equal(room.tilemap['49, 15'].impassable, undefined, 'the passage is open')
+  assert.equal(room.tilemap['49, 14'].impassable, true, 'the rest of the east wall stays')
 })

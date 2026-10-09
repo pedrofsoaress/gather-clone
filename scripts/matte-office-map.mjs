@@ -1,8 +1,10 @@
 // Generates the public Matte office. The artwork lives in frontend/public.
 // Run with `node scripts/matte-office-map.mjs > /tmp/matte-office.json`.
 
-const width = 50
-const height = 30
+import { MAP_WIDTH, MAP_HEIGHT, annex, passage, corridor, hallway, walls, doors, training, oneOnOnes, directors, signs, SEAT_VISUAL } from './annex-layout.mjs'
+
+const width = MAP_WIDTH
+const height = MAP_HEIGHT
 const tilemap = {}
 
 for (let y = 0; y < height; y++) {
@@ -30,6 +32,7 @@ block(0, 0, 49, 0)
 block(0, 29, 49, 29)
 block(0, 0, 0, 29)
 block(49, 0, 49, 29)
+open(passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1])
 block(1, 9, 16, 9)
 open(6, 9, 9, 9)
 block(18, 9, 31, 9)
@@ -72,6 +75,28 @@ for (let y = 1; y <= 8; y++) {
   for (let x = 18; x <= 31; x++) tile(x, y).privateAreaId = 'matte-boardroom'
 }
 
+// Annex wing: walls with door openings, furniture, and the areas of each room.
+for (const [x1, y1, x2, y2] of walls) block(x1, y1, x2, y2)
+for (const [x1, y1, x2, y2] of doors) open(x1, y1, x2, y2)
+block(training.screen.x1, training.screen.y1, training.screen.x2, training.screen.y2)
+for (const room of oneOnOnes) block(room.x1 + 1, 22, room.x1 + 3, 23) // round table
+block(79, 21, 83, 22)                                                    // directors' desk
+
+function area(rect, key, id) {
+  for (let y = rect.y1; y <= rect.y2; y++) {
+    for (let x = rect.x1; x <= rect.x2; x++) tile(x, y)[key] = id
+  }
+}
+area(training.interior, 'areaId', training.id)
+for (const room of oneOnOnes) area(room.interior, 'privateAreaId', room.id)
+area(directors.interior, 'privateAreaId', directors.id)
+
+const areas = {
+  [training.id]: { label: training.label, conversation: 'stage' },
+  ...Object.fromEntries(oneOnOnes.map(room => [room.id, { label: room.label, capacity: room.capacity }])),
+  [directors.id]: { label: directors.label },
+}
+
 function officeObject(id, kind, label, [x, y, width, height], [approachX, approachY], extra = {}) {
   return {
     id, kind, label,
@@ -80,6 +105,38 @@ function officeObject(id, kind, label, [x, y, width, height], [approachX, approa
     ...extra,
   }
 }
+
+const trainingObjects = [
+  officeObject('training-screen', 'presentation', 'Tela do treinamento', [training.screen.x1, training.screen.y1, training.screen.x2 - training.screen.x1 + 1, 1], training.presentationApproach, { config: { deckId: 'matte-training', slides: [
+    { title: 'Sala de treinamento', body: 'Quem está no palco fala para a sala toda. Para falar da plateia, use o microfone do corredor.' },
+  ] } }),
+  officeObject('training-stage-mic', 'speaker', 'Microfone do palco', [training.stageMic[0], training.stageMic[1] - 1, 1, 1], training.stageMic, { config: { rangeTiles: 40, flat: true } }),
+  officeObject('training-audience-mic', 'speaker', 'Microfone da plateia', [training.audienceMic[0], training.audienceMic[1] - 1, 1, 1], training.audienceMic, { config: { rangeTiles: 40, flat: true } }),
+]
+
+const trainingSeats = training.seatRows.flatMap((row, rowIndex) => training.seatColumns.map((column, columnIndex) =>
+  officeObject(`training-seat-${rowIndex * 10 + columnIndex + 1}`, 'seat', `Treinamento · fileira ${rowIndex + 1}, lugar ${columnIndex + 1}`,
+    [column - 0.2, row - 0.6, 1.4, 1.6], [column, row],
+    { sitRange: 0, seatVisual: { x: column + SEAT_VISUAL.dx, y: row + SEAT_VISUAL.dy, facing: 'up' } })))
+
+// Each 1:1 room copies the kitchen round table shifted by (x1 - 37, 16).
+const oneOnOneSeats = oneOnOnes.flatMap(room => {
+  const dx = room.x1 - 37
+  const dy = 16
+  return [
+    officeObject(`${room.id}-left`, 'seat', `${room.label} · esquerda`, [37.6 + dx, 5.7 + dy, 1, 1.3], [38 + dx, 5 + dy], { seatVisual: { x: 37.9 + dx, y: 6.15 + dy, facing: 'down' } }),
+    officeObject(`${room.id}-right`, 'seat', `${room.label} · direita`, [39.5 + dx, 5.7 + dy, 1, 1.3], [40 + dx, 5 + dy], { seatVisual: { x: 39.9 + dx, y: 6.15 + dy, facing: 'down' } }),
+    officeObject(`${room.id}-front`, 'seat', `${room.label} · frente`, [37.6 + dx, 7.7 + dy, 1, 1.3], [38 + dx, 8 + dy], { seatVisual: { x: 37.9 + dx, y: 7.85 + dy, facing: 'up' } }),
+  ]
+})
+
+// The directors' desk copies a work-area desk shifted by (+44, +10); the
+// armchairs copy the reception set shifted by (+56.5, +2).
+const directorsObjects = [
+  officeObject('directors-desk', 'desk', 'Diretoria · mesa do Pedro', [79, 21, 5, 2], [81, 23], { seatVisual: { x: 80.5, y: 23.35, facing: 'up' } }),
+  officeObject('directors-armchair-left', 'seat', 'Diretoria · poltrona esquerda', [78.5, 25, 2, 3], [79, 28], { seatVisual: { x: 78.8, y: 25.4, facing: 'right' } }),
+  officeObject('directors-armchair-right', 'seat', 'Diretoria · poltrona direita', [82.5, 25, 2, 3], [83, 28], { seatVisual: { x: 83.1, y: 25.4, facing: 'left' } }),
+]
 
 const interactions = [
   officeObject('lounge-books', 'guide', 'Estante do lounge', [2, 1, 8, 3], [10, 3]),
@@ -112,6 +169,7 @@ const interactions = [
   officeObject('light-work', 'light', 'Luz da área de trabalho', [30, 14, 1, 1], [30, 15], { config: { radiusTiles: 9, color: '#e4fff1', intensity: 0.5 } }),
   officeObject('reception', 'guestbook', 'Recepção', [21, 20, 8, 3], [25, 19]),
   officeObject('pingpong', 'pingpong', 'Pingue-pongue', [35, 21, 4, 5], [34, 23]),
+  ...trainingObjects,
 
   // Individual places are last so their small hit areas take priority over
   // the larger tables and boards underneath them.
@@ -154,14 +212,20 @@ const interactions = [
   officeObject('workshop-stool-left', 'seat', 'Banqueta da oficina · esquerda', [3, 22, 1.2, 1.5], [3, 23], { seatVisual: { x: 3.1, y: 22.65, facing: 'right' } }),
   officeObject('workshop-stool-middle', 'seat', 'Banqueta da oficina · central', [5.8, 24.5, 1.2, 1.4], [6, 26], { seatVisual: { x: 5.9, y: 25.1, facing: 'up' } }),
   officeObject('workshop-stool-right', 'seat', 'Banqueta da oficina · direita', [8.5, 24.5, 1.2, 1.4], [9, 26], { seatVisual: { x: 8.6, y: 25.1, facing: 'up' } }),
+  ...trainingSeats,
+  ...oneOnOneSeats,
+  ...directorsObjects,
 ]
 
 const map = {
   rooms: [{
     name: 'Escritório Matte',
-    backgroundImage: { src: '/matte-office-v2.png', width: width * 32, height: height * 32 },
+    backgroundImage: { src: '/matte-office-v3.png', width: width * 32, height: height * 32 },
     tilemap,
     interactions,
+    areas,
+    annex,
+    signs,
   }],
   spawnpoint: { roomIndex: 0, x: 25, y: 18 },
 }
