@@ -1,4 +1,5 @@
 import type { OfficeObject, Room } from '../session'
+import { areaAt, areaConfig } from './areas'
 
 export type OfficePosition = { x: number, y: number }
 export type OfficeResult = { ok: boolean, error?: string, changed?: boolean, effect?: 'coffee' | 'water' | 'snack' }
@@ -55,6 +56,19 @@ export class OfficeState {
     return position ? { ...position } : null
   }
 
+  // Whether one more visitor fits in the area of this position (always true outside areas).
+  hasRoomFor(position: OfficePosition): boolean {
+    const areaId = areaAt(this.room, position.x, position.y)
+    const capacity = areaConfig(this.room, areaId)?.capacity
+    return capacity === undefined || this.countInArea(areaId) < capacity
+  }
+
+  private countInArea(areaId: string | null): number {
+    let count = 0
+    for (const visitor of this.visitors.values()) if (areaAt(this.room, visitor.position.x, visitor.position.y) === areaId) count++
+    return count
+  }
+
   isNear(uid: string, objectId: string): boolean {
     const object = this.objects.get(objectId)
     const position = this.visitors.get(uid)?.position
@@ -74,6 +88,10 @@ export class OfficeState {
     if (!this.room.tilemap[`${next.x}, ${next.y}`] || this.room.tilemap[`${next.x}, ${next.y}`]?.impassable) return { ok: false, error: 'Passagem bloqueada.' }
     const distance = Math.abs(visitor.position.x - next.x) + Math.abs(visitor.position.y - next.y)
     if (distance !== 1) return { ok: false, error: 'Movimento inválido.' }
+    const targetArea = areaAt(this.room, next.x, next.y)
+    if (targetArea && targetArea !== areaAt(this.room, visitor.position.x, visitor.position.y) && !this.hasRoomFor(next)) {
+      return { ok: false, error: 'Sala cheia.' }
+    }
     const at = this.now()
     if (at - visitor.lastStepAt < Math.max(80, minimumStepMs)) return { ok: false, error: 'Movimento rápido demais.' }
     visitor.position = { ...next }
@@ -84,7 +102,7 @@ export class OfficeState {
       const nearbySeats = [...this.objects.values()]
         .filter(object => object.kind === 'seat' || object.kind === 'desk')
         .map(object => ({ object, distance: Math.abs(next.x - object.approach.x) + Math.abs(next.y - object.approach.y) }))
-        .filter(candidate => candidate.distance <= 1 && !this.occupied.has(candidate.object.id))
+        .filter(candidate => candidate.distance <= (candidate.object.sitRange ?? 1) && !this.occupied.has(candidate.object.id))
         .sort((a, b) => a.distance - b.distance || a.object.id.localeCompare(b.object.id))
       if (nearbySeats.length && this.occupy(uid, nearbySeats[0].object.id).changed) changed = true
     }

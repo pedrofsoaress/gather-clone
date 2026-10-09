@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { OfficeState } from './office/OfficeState'
+import type { AreaConfig } from './office/areas'
 import { validateOfficeMap } from './office/object-config'
 import { OfficeSharedObjects } from './office/OfficeSharedObjects'
 import { PresentationState } from './office/PresentationState'
@@ -26,6 +27,7 @@ export interface Room {
             object?: string,
             impassable?: boolean
             privateAreaId?: string
+            areaId?: string
             teleporter?: {
                 roomIndex: number,
                 x: number,
@@ -34,6 +36,7 @@ export interface Room {
         }
     }
     channelId?: string
+    areas?: Record<string, AreaConfig>
 }
 
 export interface OfficeObject {
@@ -43,8 +46,9 @@ export interface OfficeObject {
     bounds: { x: number, y: number, width: number, height: number },
     approach: { x: number, y: number },
     seatVisual?: { x: number, y: number, facing?: 'up' | 'down' | 'left' | 'right' },
+    sitRange?: 0 | 1,
     effect?: 'coffee' | 'water' | 'snack',
-    config?: { url: string, allowedHosts: string[], roomEditable: boolean } | { deckId: string, slides: { title: string, body?: string, imageUrl?: string }[] } | { rangeTiles: number } | { animationSet: string } | { radiusTiles: number, color: string, intensity: number },
+    config?: { url: string, allowedHosts: string[], roomEditable: boolean } | { deckId: string, slides: { title: string, body?: string, imageUrl?: string }[] } | { rangeTiles: number, flat?: boolean } | { animationSet: string } | { radiusTiles: number, color: string, intensity: number },
 }
 
 export interface Player {
@@ -184,7 +188,7 @@ export class Session {
     public addPlayer(socketId: string, uid: string, username: string, skin: string, resume?: PlacedPosition) {
         this.removePlayer(uid)
         const resumeTile = resume ? this.map_data.rooms[resume.room]?.tilemap[`${resume.x}, ${resume.y}`] : undefined
-        const start = resume && resumeTile && !resumeTile.impassable
+        const start = resume && resumeTile && !resumeTile.impassable && this.roomFeatures[resume.room].office.hasRoomFor(resume)
             ? resume
             : { room: this.map_data.spawnpoint.roomIndex, x: this.map_data.spawnpoint.x, y: this.map_data.spawnpoint.y }
         const spawnIndex = start.room

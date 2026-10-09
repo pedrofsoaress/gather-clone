@@ -123,3 +123,55 @@ test('walking and approved running have different bounded step intervals', () =>
   now = 260
   assert.equal(state.step('walker', { x: 3, y: 0 }).ok, true)
 })
+
+function smallRoomMap(): Room {
+    const tilemap: Room['tilemap'] = {}
+    for (let x = 0; x < 6; x++) for (let y = 0; y < 3; y++) tilemap[`${x}, ${y}`] = {}
+    for (let x = 3; x < 6; x++) for (let y = 0; y < 3; y++) tilemap[`${x}, ${y}`].privateAreaId = 'one-on-one-1'
+    return {
+        name: 'Matte', tilemap,
+        areas: { 'one-on-one-1': { label: '1:1 · 1', capacity: 3 } },
+        interactions: [
+            { id: 'aisle-seat', kind: 'seat', label: 'Lugar', bounds: { x: 1, y: 2, width: 1, height: 1 }, approach: { x: 1, y: 2 }, sitRange: 0 },
+        ],
+    }
+}
+
+test('a fourth visitor cannot step into a full 1:1 room', () => {
+    let now = 0
+    const office = new OfficeState(smallRoomMap(), () => now)
+    for (const [uid, x, y] of [['a', 3, 0], ['b', 4, 0], ['c', 5, 0]] as const) office.addPlayer(uid, { x, y })
+    office.addPlayer('d', { x: 2, y: 0 })
+    now = 1000
+    assert.deepEqual(office.step('d', { x: 3, y: 1 }), { ok: false, error: 'Movimento inválido.' })
+    assert.deepEqual(office.step('d', { x: 3, y: 0 }).ok, false)
+    assert.equal(office.step('d', { x: 3, y: 0 }).error, 'Sala cheia.')
+    assert.equal(office.hasRoomFor({ x: 4, y: 1 }), false)
+    now = 2000
+    assert.equal(office.step('c', { x: 5, y: 1 }).ok, true, 'moving inside a full room is allowed')
+})
+
+test('a free place opens as soon as someone leaves', () => {
+    let now = 0
+    const office = new OfficeState(smallRoomMap(), () => now)
+    for (const [uid, x, y] of [['a', 3, 0], ['b', 4, 0], ['c', 5, 0]] as const) office.addPlayer(uid, { x, y })
+    office.addPlayer('d', { x: 2, y: 0 })
+    office.removePlayer('a')
+    now = 1000
+    assert.equal(office.step('d', { x: 3, y: 0 }).ok, true)
+    assert.equal(office.hasRoomFor({ x: 2, y: 1 }), true, 'outside an area there is always room')
+})
+
+test('a seat with sitRange 0 is taken only on its own tile', () => {
+    let now = 0
+    const office = new OfficeState(smallRoomMap(), () => now)
+    office.addPlayer('a', { x: 0, y: 2 })
+    now = 1000
+    office.step('a', { x: 0, y: 1 })
+    now = 2000
+    office.step('a', { x: 1, y: 1 })
+    assert.deepEqual(office.snapshot().occupancy, {}, 'passing next to the seat does not sit')
+    now = 3000
+    office.step('a', { x: 1, y: 2 })
+    assert.equal(office.snapshot().occupancy['aisle-seat']?.uid, 'a')
+})

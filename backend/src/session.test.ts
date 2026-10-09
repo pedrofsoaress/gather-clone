@@ -60,3 +60,22 @@ test('an old disconnection or another space starts at the spawnpoint', () => {
 test('a resume never places a visitor on a blocked tile', () => {
     assert.deepEqual(reconnectAfter({ room: 0, x: 41, y: 12 }, 5_000).player, { room: 0, x: 25, y: 19 })
 })
+
+test('a visitor resuming into a 1:1 room that filled up returns to the spawnpoint', () => {
+    const tilemap: RealmData['rooms'][number]['tilemap'] = {}
+    for (let x = 0; x < 10; x++) for (let y = 0; y < 3; y++) tilemap[`${x}, ${y}`] = {}
+    for (let x = 6; x < 10; x++) for (let y = 0; y < 3; y++) tilemap[`${x}, ${y}`].privateAreaId = 'one-on-one-1'
+    const manager = new SessionManager()
+    manager.createSession('office', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [{ name: 'Matte', tilemap, areas: { 'one-on-one-1': { label: '1:1 · 1', capacity: 3 } } }] })
+    manager.addPlayerToSession('s-ana', 'office', 'ana', 'Ana', '009', 0)
+    manager.getSession('office').movePlayer('ana', 7, 1)
+    manager.logOutBySocketId('s-ana', 1_000)
+    for (const [uid, x] of [['b', 6], ['c', 8], ['d', 9]] as const) {
+        manager.addPlayerToSession(`s-${uid}`, 'office', uid, uid, '009', 1_000)
+        manager.getSession('office').roomFeatures[0].office.addPlayer(uid, { x, y: 0 }, uid)
+        manager.getSession('office').movePlayer(uid, x, 0)
+    }
+    manager.addPlayerToSession('s-ana-2', 'office', 'ana', 'Ana', '009', 2_000)
+    const ana = manager.getSession('office').getPlayer('ana')
+    assert.deepEqual({ x: ana.x, y: ana.y }, { x: 0, y: 0 })
+})
