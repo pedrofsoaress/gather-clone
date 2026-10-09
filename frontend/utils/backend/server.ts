@@ -2,9 +2,19 @@ import io, { Socket } from 'socket.io-client'
 import { createClient } from '../supabase/client'
 import { request } from './requests'
 
+export type JoinedPosition = { roomIndex: number, x: number, y: number }
+
 type ConnectionResponse = {
     success: boolean
     errorMessage: string
+    // Where the server placed the visitor (their last tile after a quick reload); older servers send nothing.
+    position?: JoinedPosition
+}
+
+function joinedPosition(joined: unknown): JoinedPosition | undefined {
+    const value = joined as Partial<JoinedPosition> | null | undefined
+    if (!value || !Number.isInteger(value.roomIndex) || !Number.isInteger(value.x) || !Number.isInteger(value.y)) return undefined
+    return { roomIndex: value.roomIndex!, x: value.x!, y: value.y! }
 }
 
 const backend_url: string = process.env.NEXT_PUBLIC_BACKEND_URL as string
@@ -34,14 +44,14 @@ class Server {
 
         return new Promise<ConnectionResponse>((resolve) => {
             let settled = false
-            const finish = (success: boolean, errorMessage = '') => {
+            const finish = (success: boolean, errorMessage = '', position?: JoinedPosition) => {
                 if (settled) return
                 settled = true
                 clearTimeout(deadline)
                 this.socket.off('connect_error', onConnectError)
                 this.socket.io.off('reconnect_failed', onReconnectFailed)
                 if (!success) this.disconnect()
-                resolve({ success, errorMessage })
+                resolve(position ? { success, errorMessage, position } : { success, errorMessage })
             }
 
             let lastConnectError = ''
@@ -74,7 +84,7 @@ class Server {
             })
 
             this.socket.on('disconnect', () => { this.connected = false })
-            this.socket.once('joinedRealm', () => finish(true))
+            this.socket.once('joinedRealm', (joined?: unknown) => finish(true, '', joinedPosition(joined)))
 
             this.socket.once('failedToJoinRoom', (reason: string) => finish(false, reason))
 

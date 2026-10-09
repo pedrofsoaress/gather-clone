@@ -64,3 +64,23 @@ test('socket auth does not reuse an expired session token', async () => {
     assert.equal(result.success, false)
     assert.match(result.errorMessage, /sessão expirou/)
 })
+
+test('connect resolves with the position where the server placed the visitor', async () => {
+    const env = harness()
+    const connection = env.server.connect('realm', 'user-1', 'share', 'Pedro')
+    env.handlers.get('joinedRealm')({ roomIndex: 0, x: 70, y: 10 })
+    const result = await connection
+    assert.equal(result.success, true)
+    assert.deepEqual(JSON.parse(JSON.stringify(result.position)), { roomIndex: 0, x: 70, y: 10 })
+})
+
+test('connect resolves without a position when the server does not report one', async () => {
+    for (const payload of [undefined, { roomIndex: 0, x: 'a', y: 3 }, { x: 1, y: 2 }]) {
+        const env = harness()
+        const connection = env.server.connect('realm', 'user-1', 'share', 'Pedro')
+        env.handlers.get('joinedRealm')(payload)
+        const result = await connection
+        assert.equal(result.success, true)
+        assert.equal(result.position, undefined, JSON.stringify(payload))
+    }
+})

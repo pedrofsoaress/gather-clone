@@ -24,6 +24,7 @@ export class PlayApp extends App {
     public blocked: Set<TilePoint> = new Set()
     public keysDown: string[] = []
     private teleportLocation: Point | null = null
+    private startRoomIndex: number | null = null
     private fadeOverlay: PIXI.Graphics = new PIXI.Graphics()
     private fadeDuration: number = 0.5
     public uid: string = ''
@@ -67,6 +68,14 @@ export class PlayApp extends App {
         this.uid = uid
         this.realmId = realmId
         this.player = new Player(skin, this, username, true)
+    }
+
+    // Where the server placed this visitor on joining (their last tile after a quick reload).
+    // Call before init(); without a usable position the visitor starts at the spawnpoint.
+    public setStartPosition = (position?: { roomIndex: number, x: number, y: number }) => {
+        if (!position || !this.realmData.rooms[position.roomIndex]) return
+        this.startRoomIndex = position.roomIndex
+        this.teleportLocation = { x: position.x, y: position.y }
     }
 
     override async loadRoom(index: number) {
@@ -117,15 +126,23 @@ export class PlayApp extends App {
     }
 
     // The annex wing starts dark on every visit; signs stay visible above the darkness.
+    // Once the wing is lit the signs move just under the avatars so they never cover people or name tags.
     private setUpAnnex = () => {
         this.annexLayer?.destroy()
         this.annexLayer = null
         const room = this.realmData.rooms[this.currentRoomIndex]
         if (!room.annex && !room.signs?.length) return
-        this.annexLayer = new AnnexLayer(room.annex, room.signs ?? [])
+        const layer: AnnexLayer = new AnnexLayer(room.annex, room.signs ?? [], () => this.placeSignsUnderAvatars(layer))
+        this.annexLayer = layer
         const index = this.app.stage.getChildIndex(this.interactionLayer!.container) + 1
-        this.app.stage.addChildAt(this.annexLayer.darkness, index)
-        this.app.stage.addChildAt(this.annexLayer.signs, index + 1)
+        this.app.stage.addChildAt(layer.darkness, index)
+        this.app.stage.addChildAt(layer.signs, index + 1)
+        if (layer.revealed) this.placeSignsUnderAvatars(layer)
+    }
+
+    private placeSignsUnderAvatars = (layer: AnnexLayer) => {
+        if (layer.signs.destroyed || layer.signs.parent !== this.app.stage) return
+        this.app.stage.setChildIndex(layer.signs, this.app.stage.getChildIndex(this.layers.object))
     }
 
     public requestOfficeObject = (id: string): boolean => {
@@ -339,7 +356,7 @@ export class PlayApp extends App {
     public async init() {
         await super.init()
         await this.loadAssets()
-        await this.loadRoom(this.realmData.spawnpoint.roomIndex)
+        await this.loadRoom(this.startRoomIndex ?? this.realmData.spawnpoint.roomIndex)
         this.app.stage.eventMode = 'static'
         this.setScale(this.scale)
         this.app.renderer.on('resize', this.resizeEvent)

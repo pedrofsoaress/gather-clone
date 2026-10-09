@@ -61,7 +61,8 @@ function harness() {
             if (name === './Player/skins') return { defaultSkin: '009' }
             if (name === '../signal') return { __esModule: true, default: { emit: (event, value) => signals.push({ event, value }), on() {}, off() {} } }
             if (name === '../video-chat/video-chat') return { videoChat: { leaveChannel: async () => { env.videoLeaves++ } } }
-            if (['../supabase/client', 'gsap', './office/geometry', './office/InteractionLayer', './office/LightingLayer', './office/AnnexLayer', './office/annex-reveal', './office/GamepadController', './office/camera-zoom.mjs'].includes(name)) return {}
+            if (name === './office/geometry') return { nearestObject: () => null }
+            if (['../supabase/client', 'gsap', './office/InteractionLayer', './office/LightingLayer', './office/AnnexLayer', './office/annex-reveal', './office/GamepadController', './office/camera-zoom.mjs'].includes(name)) return {}
             throw new Error(`Unexpected import: ${name}`)
         },
     })
@@ -146,4 +147,20 @@ test('rejoining an older server without a reported position still restores movem
     await env.handlers.get('joinedRealm')()
     assert.deepEqual(env.app.player.currentTilePosition, { x: 40, y: 12 })
     assert.equal(env.app.player.frozen, false)
+})
+
+test('a reload starts where the server kept the visitor', async () => {
+    const env = harness()
+    env.app.setStartPosition({ roomIndex: 0, x: 70, y: 10 })
+    await env.app.spawnLocalPlayer()
+    assert.deepEqual(env.app.player.currentTilePosition, { x: 70, y: 10 })
+})
+
+test('without a usable server position the visitor starts at the spawnpoint', async () => {
+    for (const position of [undefined, { roomIndex: 3, x: 70, y: 10 }]) {
+        const env = harness()
+        env.app.setStartPosition(position)
+        await env.app.spawnLocalPlayer()
+        assert.deepEqual(env.app.player.currentTilePosition, { x: 25, y: 18 }, JSON.stringify(position))
+    }
 })

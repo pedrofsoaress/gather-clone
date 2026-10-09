@@ -29,7 +29,7 @@ const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, realmId,
             app = new PlayApp(uid, realmId, mapData, username, initialSkin)
             setModal('Loading')
             setLoadingText('Connecting to server... This can take a minute after inactivity.')
-            const { success, errorMessage } = await server.connect(realmId, uid, shareId, username)
+            const { success, errorMessage, position } = await server.connect(realmId, uid, shareId, username)
             if (cancelled) return
             if (!success) {
                 setErrorModal('Failed To Connect')
@@ -38,6 +38,7 @@ const PixiApp:React.FC<PixiAppProps> = ({ className, mapData, username, realmId,
             }
 
             setLoadingText('Loading game...')
+            app.setStartPosition(position)
             await app.init()
             if (cancelled) return
             setModal('None')
