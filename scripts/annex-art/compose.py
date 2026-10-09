@@ -123,6 +123,8 @@ COLORS = {
     'monitor_bezel': (1170, 350),           # work desk monitor
     'monitor_blue': (1197, 370),
     'monitor_light': (1188, 370),
+    'monitor_glare': (1170, 362),           # brightest part of the monitor picture
+    'monitor_glare_dim': (1182, 370),
     'speaker': (1440, 562),
     'beige_edge': (160, 272),               # lounge rug border
     'teal_edge': (701, 768),                # reception rug border
@@ -395,16 +397,27 @@ H_OFF = (T - len(PROFILE['h_dark'])) // 2          # first wall row inside the t
 V_OFF = (T - len(PROFILE['v_dark'])) // 2
 
 
-def panels(a, b, windows):
+def panels(a, b, windows, joined_start=False, joined_end=False):
     """Splits a wall run [a, b) in px into (start, end, kind) panels and the
-    positions of the posts between them."""
+    positions of the posts between them. A run gets a dark panel at each end,
+    except at an end joined to another wall: there the window runs on to the
+    junction post, so two posts are not stacked a tile apart."""
     if not windows or b - a < 4 * T:
         return [(a, b, 'dark')], []
     end = round(1.25 * T)
-    m0, m1 = a + end, b - end
+    m0, m1 = a + (0 if joined_start else end), b - (0 if joined_end else end)
     count = max(1, round((m1 - m0) / (5 * T)))
     cuts = [round(m0 + (m1 - m0) * k / count) for k in range(count + 1)]
-    return [(a, m0, 'dark')] + [(cuts[k], cuts[k + 1], 'wood') for k in range(count)] + [(m1, b, 'dark')], cuts
+    segs = [(cuts[k], cuts[k + 1], 'wood') for k in range(count)]
+    if joined_start:
+        cuts = cuts[1:]
+    else:
+        segs = [(a, m0, 'dark')] + segs
+    if joined_end:
+        cuts = cuts[:-1]
+    else:
+        segs = segs + [(m1, b, 'dark')]
+    return segs, cuts
 
 
 def wall_pieces(start, end, gaps):
@@ -416,13 +429,15 @@ def wall_pieces(start, end, gaps):
     return pieces
 
 
-def h_wall(y, start, end, gaps=(), windows=True, posts=()):
+def h_wall(y, start, end, gaps=(), windows=True, posts=(), joined_start=False):
     """Horizontal wall on tile row y, from px start to end, open at gaps.
-    `posts` adds posts at junctions with vertical walls."""
+    `posts` adds posts at junctions with vertical walls; joined_start says the
+    wall starts at such a junction."""
     top, cy = y * T + H_OFF, y * T + T // 2
     centres = []
-    for a, b in wall_pieces(start, end, gaps):
-        segs, cuts = panels(a, b, windows)
+    pieces = wall_pieces(start, end, gaps)
+    for n, (a, b) in enumerate(pieces):
+        segs, cuts = panels(a, b, windows, joined_start=joined_start and n == 0)
         for s0, s1, kind in segs:
             for i, c in enumerate(PROFILE['h_' + kind]):
                 draw.line((s0, top + i, s1 - 1, top + i), fill=c)
@@ -431,13 +446,14 @@ def h_wall(y, start, end, gaps=(), windows=True, posts=()):
         post(c, cy)
 
 
-def v_wall(x, start, end, gaps=(), windows=True, cap_top=True, cap_bottom=True):
-    """Vertical wall on tile column x, from px start to end, open at gaps."""
+def v_wall(x, start, end, gaps=(), windows=True, cap_top=True, cap_bottom=True, joined_end=False):
+    """Vertical wall on tile column x, from px start to end, open at gaps;
+    joined_end says it ends at a junction with a horizontal wall."""
     left, cx = x * T + V_OFF, x * T + T // 2
     pieces = wall_pieces(start, end, gaps)
     centres = []
     for n, (a, b) in enumerate(pieces):
-        segs, cuts = panels(a, b, windows)
+        segs, cuts = panels(a, b, windows, joined_end=joined_end and n == len(pieces) - 1)
         for s0, s1, kind in segs:
             for i, c in enumerate(PROFILE['v_' + kind]):
                 draw.line((left + i, s0, left + i, s1 - 1), fill=c)
@@ -478,15 +494,23 @@ tr = L['training']
 ti = tr['interior']
 dr = L['directors']['interior']
 HALF = T // 2
+co, hw = L['corridor'], L['hallway']
+last_x, last_y = L['MAP_WIDTH'] - 1, L['MAP_HEIGHT'] - 1
+rooms_top = hw['y2'] + 1                       # wall row between the hallway and the small rooms
+# Placement shifts shared with the map (scripts/matte-office-map.mjs): the
+# pieces stand where the map puts their seats.
+TABLE_SHIFT = (lambda x1: x1 - 37, 16)         # kitchen round table -> each 1:1 room
+DESK_SHIFT = (44, 10)                          # right work area desk -> directors
+LOUNGE_SHIFT = (56.5, 2)                       # reception armchairs and coffee table -> directors
 
 # 1. Floors, each reaching to the centre line of its walls.
-quilt((WX, 0, W, 17 * T), 'carpet', seed=11)                                  # training room
+quilt((WX, 0, W, (ti['y2'] + 2) * T), 'carpet', seed=11)                      # training room
 for k, room in enumerate(L['oneOnOnes']):
     r = room['interior']
-    quilt(((r['x1'] - 1) * T + HALF, 19 * T, (r['x2'] + 1) * T + HALF, H), 'kitchen', seed=20 + k)
-quilt(((dr['x1'] - 1) * T + HALF, 19 * T, W, H), 'carpet', seed=31)          # directors
-brick((WX, 0, 53 * T + HALF, H))                                            # corridor
-brick((53 * T, 16 * T + HALF, W, 19 * T + HALF))                            # hallway
+    quilt(((r['x1'] - 1) * T + HALF, rooms_top * T, (r['x2'] + 1) * T + HALF, H), 'kitchen', seed=20 + k)
+quilt(((dr['x1'] - 1) * T + HALF, rooms_top * T, W, H), 'carpet', seed=31)    # directors
+brick((WX, 0, (co['x2'] + 1) * T + HALF, H))                                # corridor
+brick((hw['x1'] * T, (hw['y1'] - 1) * T + HALF, W, (hw['y2'] + 1) * T + HALF))  # hallway
 for x1, y1, x2, y2 in L['doors']:                                           # door sills
     if x1 == x2:
         brick((x1 * T, y1 * T, x1 * T + HALF, (y2 + 1) * T))
@@ -497,7 +521,7 @@ for x1, y1, x2, y2 in L['doors']:                                           # do
 # in the opening, the cut ends of the wall closed with end blocks.
 pas = L['passage']
 p_top, p_bottom = pas['ys'][0] * T, (pas['ys'][-1] + 1) * T
-quilt((47 * T, 14 * T + 12, 48 * T + 27, 17 * T + 4), 'carpet', seed=41, existing=True)
+quilt(((pas['x'] - 2) * T, (pas['ys'][0] - 1) * T + 12, pas['x'] * T - 5, p_bottom + 4), 'carpet', seed=41, existing=True)
 brick((48 * T + 27, p_top, WX, p_bottom))
 cap(48 * T + 26, WX, p_top - 10, p_top)
 cap(48 * T + 26, WX, p_bottom, p_bottom + 10)
@@ -541,9 +565,9 @@ draw.rectangle((bx0, by0, bx1 - 1, by1 - 1), fill=color('monitor_bezel'))
 draw.rectangle((bx0 + 4, by0 + 4, bx1 - 5, by1 - 5), fill=color('monitor_blue'))
 draw.polygon([(bx0 + 120, by1 - 5), (bx0 + 150, by0 + 4), (bx0 + 175, by0 + 4), (bx0 + 145, by1 - 5)],
              fill=color('monitor_light'))
-draw.rectangle((bx0 + 14, by0 + 10, bx0 + 78, by0 + 14), fill=(236, 244, 252, 255))
-draw.rectangle((bx0 + 14, by0 + 20, bx0 + 60, by0 + 22), fill=(196, 222, 248, 255))
-draw.rectangle((bx0 + 14, by0 + 26, bx0 + 66, by0 + 28), fill=(196, 222, 248, 255))
+draw.rectangle((bx0 + 14, by0 + 10, bx0 + 78, by0 + 14), fill=color('monitor_glare'))
+draw.rectangle((bx0 + 14, by0 + 20, bx0 + 60, by0 + 22), fill=color('monitor_glare_dim'))
+draw.rectangle((bx0 + 14, by0 + 26, bx0 + 66, by0 + 28), fill=color('monitor_glare_dim'))
 canvas.alpha_composite(Image.new('RGBA', (bx1 - bx0, 3), (0, 0, 0, 70)), (bx0, by1))
 
 for sxp in (sx0 + 10, sx1 - 10 - 22):
@@ -554,7 +578,11 @@ for sxp in (sx0 + 10, sx1 - 10 - 22):
     draw.ellipse((sxp + 8, 74, sxp + 13, 79), fill=color('post_fill'))
 
 # Aisle rug from the stage to the back of the room.
-rug((67 * T + 18, st1 + 14, 72 * T - 18, 16 * T - 4), 'beige_rug', color('beige_edge'), seed=51)
+mic_x = tr['audienceMic'][0]
+aisle_left = max(c for c in tr['seatColumns'] if c < mic_x) + 1
+aisle_right = min(c for c in tr['seatColumns'] if c > mic_x)
+rug((aisle_left * T + 18, st1 + 14, aisle_right * T - 18, (ti['y2'] + 1) * T - 4), 'beige_rug',
+    color('beige_edge'), seed=51)
 
 
 def mic(tx, ty):
@@ -580,50 +608,54 @@ plant = cut_out('plant')
 plant_tall = cut_out('plant_tall')
 place(plant_tall, ti['x1'] + 0.05, 0.95)
 place(plant_tall, ti['x2'] - 0.85, 0.95)
-place(plant, ti['x1'] + 0.05, 13.55)
-place(plant, ti['x2'] - 0.65, 13.55)
+place(plant, ti['x1'] + 0.05, ti['y2'] - 1.45)
+place(plant, ti['x2'] - 0.65, ti['y2'] - 1.45)
 
-# 5. 1:1 rooms: the kitchen round table shifted by (x1 - 36, 16), without the
-# bottom right chair, a plant and a shelf.
+# 5. 1:1 rooms: the kitchen round table shifted by (x1 - 37, 16), without the
+# bottom right chair; a plant in the bottom left corner and a shelf against
+# the right wall, both clear of the paths from the door to the three seats.
 table = round_table_for_three()
 shelf = cut_out('shelf')
 for room in L['oneOnOnes']:
+    r = room['interior']
     sx, sy = SOURCES['round_table'][:2]
-    place(table, sx + room['x1'] - 36, sy + 16)
-    place(plant, room['x1'] - 0.12, 26.5)
-    place(shelf, room['x1'] + 4.17, 24.67)
+    place(table, sx + TABLE_SHIFT[0](room['x1']), sy + TABLE_SHIFT[1])
+    place(plant, r['x1'] - 0.12, r['y2'] + 0.92 - SOURCES['plant'][3])
+    place(shelf, r['x2'] + 0.17, r['y2'] + 0.96 - SOURCES['shelf'][3])
 
-# 6. Directors' room: rug, desk shifted by (+44, +10), armchairs and coffee
-# table shifted by (+57, +2), a shelf and plants.
-rug((px(78.72), px(24.4), px(84.98), px(27.3)), 'teal_rug', color('teal_edge'), seed=61)
+# 6. Directors' room: desk shifted by (+44, +10), armchairs and coffee table
+# shifted by (+56.5, +2) on a rug centred under them, a tall plant beside the
+# desk. Column x1 stays clear: it is the lane from the door to the armchairs.
+lounge = [SOURCES[n] for n in ('armchair_right', 'armchair_left')]
+rug_x0 = lounge[0][0] + LOUNGE_SHIFT[0] - 0.45
+rug_x1 = lounge[1][0] + lounge[1][2] + LOUNGE_SHIFT[0] + 0.45
+rug((px(rug_x0), px(dr['y1'] + 4.4), px(rug_x1), px(dr['y1'] + 7.3)), 'teal_rug', color('teal_edge'), seed=61)
 sx, sy = SOURCES['desk'][:2]
-place(cut_out('desk'), sx + 44, sy + 10)
+place(cut_out('desk'), sx + DESK_SHIFT[0], sy + DESK_SHIFT[1])
 for name in ('armchair_right', 'armchair_left', 'coffee_table'):
     sx, sy = SOURCES[name][:2]
-    place(cut_out(name), sx + 57, sy + 2)
-place(shelf, dr['x1'] - 0.27, 19.82)
-place(plant_tall, 83.45, 19.6)
-place(plant, dr['x1'] - 0.1, 26.5)
+    place(cut_out(name), sx + LOUNGE_SHIFT[0], sy + LOUNGE_SHIFT[1])
+place(plant_tall, dr['x2'] - 0.55, dr['y1'] - 0.4)
 
 # 7. Interior walls, on top of the floors, from the layout's wall list. Walls
 # of the training room get wood windows; the walls of the private rooms are
 # solid. The outer walls (map edges) are drawn in step 8.
 inner_right = W - len(PROFILE['outer'])
-last_x, last_y = L['MAP_WIDTH'] - 1, L['MAP_HEIGHT'] - 1
 inner = [w for w in L['walls'] if not (w[1] == w[3] in (0, last_y) or w[0] == w[2] == last_x)]
 vertical = [w for w in inner if w[0] == w[2]]
+horizontal = [w for w in inner if w[1] == w[3]]
 for x1, y1, x2, y2 in vertical:
     gaps = [(d[1] * T, (d[3] + 1) * T) for d in L['doors'] if d[0] == d[2] == x1 and y1 <= d[1] <= y2]
     start = face_top if y1 == 0 else y1 * T + HALF
-    end = 29 * T + 6 if y2 == last_y else y2 * T + HALF
-    v_wall(x1, start, end, gaps, windows=y2 <= ti['y2'] + 1, cap_top=False, cap_bottom=False)
-for x1, y1, x2, y2 in inner:
-    if y1 != y2:
-        continue
+    end = last_y * T + 6 if y2 == last_y else y2 * T + HALF
+    joined = any(h[1] == y2 and h[0] <= x1 <= h[2] for h in horizontal)
+    v_wall(x1, start, end, gaps, windows=y2 <= ti['y2'] + 1, cap_top=False, cap_bottom=False, joined_end=joined)
+for x1, y1, x2, y2 in horizontal:
     gaps = [(d[0] * T, (d[2] + 1) * T) for d in L['doors'] if d[1] == d[3] == y1 and x1 <= d[0] <= x2]
     joints = [v[0] * T + HALF for v in vertical if v[1] <= y1 <= v[3]]
     end = inner_right + 4 if x2 == last_x - 1 else (x2 + 1) * T
-    h_wall(y1, x1 * T + V_OFF, end, gaps, windows=y1 <= ti['y2'] + 1, posts=joints)
+    h_wall(y1, x1 * T + V_OFF, end, gaps, windows=y1 <= ti['y2'] + 1, posts=joints,
+           joined_start=any(v[0] == x1 for v in vertical if v[1] <= y1 <= v[3]))
 
 # 8. Outer right and bottom walls, and the joints with the office's outer
 # walls: the top wall runs on over the office's top right corner, and a short
@@ -635,13 +667,13 @@ for i, c in enumerate(outer):
     draw.line((WX - 14, i, WX - 1, i), fill=c)                              # top joint
 joint_x = WX - len(outer)
 for i, c in enumerate(outer):
-    draw.line((joint_x + i, 27 * T + 18, joint_x + i, 29 * T), fill=c)      # bottom joint
+    draw.line((joint_x + i, (last_y - 2) * T + 18, joint_x + i, last_y * T), fill=c)  # bottom joint
 for i, c in enumerate(PROFILE['bottom_top']):                            # bottom wall top
-    draw.line((joint_x, 29 * T + i, W - 1 - len(outer), 29 * T + i), fill=c)
+    draw.line((joint_x, last_y * T + i, W - 1 - len(outer), last_y * T + i), fill=c)
 for i, c in enumerate(PROFILE['bottom_body']):                           # and front face
-    y = 29 * T + len(PROFILE['bottom_top']) + i
+    y = last_y * T + len(PROFILE['bottom_top']) + i
     draw.line((joint_x, y, W - 9, y), fill=c)
-draw.line((joint_x, 29 * T, joint_x, H - 1), fill=outer[0])
+draw.line((joint_x, last_y * T, joint_x, H - 1), fill=outer[0])
 
 canvas.convert('RGB').save(ROOT / 'frontend/public/matte-office-v3.png', optimize=True)
 print('wrote frontend/public/matte-office-v3.png', canvas.size)
