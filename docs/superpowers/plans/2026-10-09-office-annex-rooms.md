@@ -1185,7 +1185,7 @@ open(passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1])
 for (const [x1, y1, x2, y2] of walls) block(x1, y1, x2, y2)
 for (const [x1, y1, x2, y2] of doors) open(x1, y1, x2, y2)
 block(training.screen.x1, training.screen.y1, training.screen.x2, training.screen.y2)
-for (const room of oneOnOnes) block(room.x1 + 2, 22, room.x1 + 4, 23) // round table
+for (const room of oneOnOnes) block(room.x1 + 1, 22, room.x1 + 3, 23) // round table
 block(79, 21, 83, 22)                                                    // directors' desk
 
 function area(rect, key, id) {
@@ -1220,9 +1220,9 @@ const trainingSeats = training.seatRows.flatMap((row, rowIndex) => training.seat
     [column - 0.2, row - 0.6, 1.4, 1.6], [column, row],
     { sitRange: 0, seatVisual: { x: column + SEAT_VISUAL.dx, y: row + SEAT_VISUAL.dy, facing: 'up' } })))
 
-// Each 1:1 room copies the kitchen round table shifted by (x1 - 36, 16).
+// Each 1:1 room copies the kitchen round table shifted by (x1 - 37, 16).
 const oneOnOneSeats = oneOnOnes.flatMap(room => {
-  const dx = room.x1 - 36
+  const dx = room.x1 - 37
   const dy = 16
   return [
     officeObject(`${room.id}-left`, 'seat', `${room.label} · esquerda`, [37.6 + dx, 5.7 + dy, 1, 1.3], [38 + dx, 5 + dy], { seatVisual: { x: 37.9 + dx, y: 6.15 + dy, facing: 'down' } }),
@@ -1232,11 +1232,11 @@ const oneOnOneSeats = oneOnOnes.flatMap(room => {
 })
 
 // The directors' desk copies a work-area desk shifted by (+44, +10); the
-// armchairs copy the reception set shifted by (+57, +2).
+// armchairs copy the reception set shifted by (+56.5, +2).
 const directorsObjects = [
   officeObject('directors-desk', 'desk', 'Diretoria · mesa do Pedro', [79, 21, 5, 2], [81, 23], { seatVisual: { x: 80.5, y: 23.35, facing: 'up' } }),
-  officeObject('directors-armchair-left', 'seat', 'Diretoria · poltrona esquerda', [79, 25, 2, 3], [80, 28], { seatVisual: { x: 79.3, y: 25.4, facing: 'right' } }),
-  officeObject('directors-armchair-right', 'seat', 'Diretoria · poltrona direita', [83, 25, 2, 3], [84, 28], { seatVisual: { x: 83.6, y: 25.4, facing: 'left' } }),
+  officeObject('directors-armchair-left', 'seat', 'Diretoria · poltrona esquerda', [78.5, 25, 2, 3], [79, 28], { seatVisual: { x: 78.8, y: 25.4, facing: 'right' } }),
+  officeObject('directors-armchair-right', 'seat', 'Diretoria · poltrona direita', [82.5, 25, 2, 3], [83, 28], { seatVisual: { x: 83.1, y: 25.4, facing: 'left' } }),
 ]
 ```
 
