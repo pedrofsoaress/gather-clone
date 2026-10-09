@@ -175,3 +175,26 @@ test('a seat with sitRange 0 is taken only on its own tile', () => {
     office.step('a', { x: 1, y: 2 })
     assert.equal(office.snapshot().occupancy['aisle-seat']?.uid, 'a')
 })
+
+test('a sitRange 0 seat is released as soon as the visitor steps off it', () => {
+    let now = 0
+    const tilemap: Room['tilemap'] = {}
+    for (let y = 0; y < 3; y++) tilemap[`0, ${y}`] = {}
+    const office = new OfficeState({
+        name: 'Matte', tilemap,
+        interactions: [
+            { id: 'seat-a', kind: 'seat', label: 'Lugar A', bounds: { x: 0, y: 0, width: 1, height: 1 }, approach: { x: 0, y: 0 }, sitRange: 0 },
+            { id: 'seat-b', kind: 'seat', label: 'Lugar B', bounds: { x: 0, y: 2, width: 1, height: 1 }, approach: { x: 0, y: 2 }, sitRange: 0 },
+        ],
+    }, () => now)
+    office.addPlayer('a', { x: 0, y: 1 })
+    now = 1000
+    assert.equal(office.step('a', { x: 0, y: 0 }).ok, true)
+    assert.deepEqual(Object.keys(office.snapshot().occupancy), ['seat-a'])
+    now = 2000
+    assert.equal(office.step('a', { x: 0, y: 1 }).ok, true)
+    assert.deepEqual(office.snapshot().occupancy, {}, 'the middle tile is not a seat')
+    now = 3000
+    assert.equal(office.step('a', { x: 0, y: 2 }).ok, true)
+    assert.deepEqual(office.snapshot().occupancy, { 'seat-b': { uid: 'a', name: 'a' } })
+})

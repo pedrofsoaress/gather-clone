@@ -97,7 +97,10 @@ export class OfficeState {
     visitor.position = { ...next }
     visitor.lastStepAt = at
     const occupied = this.objectOccupiedBy(uid)
-    let changed = Boolean(occupied && !this.isNear(uid, occupied) && this.release(uid).changed)
+    const seat = occupied ? this.objects.get(occupied) : undefined
+    // A sitRange 0 seat (training audience) is kept only while standing on it.
+    const stillSeated = seat?.sitRange === 0 ? seat.approach.x === next.x && seat.approach.y === next.y : Boolean(occupied && this.isNear(uid, occupied))
+    let changed = Boolean(occupied && !stillSeated && this.release(uid).changed)
     if (!this.objectOccupiedBy(uid)) {
       const nearbySeats = [...this.objects.values()]
         .filter(object => object.kind === 'seat' || object.kind === 'desk')

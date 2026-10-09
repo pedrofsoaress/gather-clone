@@ -88,3 +88,12 @@ test('a flat microphone stops when its speaker walks away from it', () => {
     assert.equal(speakers.expire(), true)
     assert.deepEqual(speakers.snapshotFor('host'), {})
 })
+
+test('a microphone asks to come closer to the microphone, the lounge speaker keeps its own text', () => {
+    const room = trainingRoom()
+    const office = new OfficeState(room)
+    const speakers = new SpeakerState(room, office)
+    office.addPlayer('far', { x: 30, y: 9 })
+    assert.deepEqual(speakers.start('far', 'stage-mic'), { ok: false, error: 'Aproxime-se do microfone.' })
+    assert.deepEqual(setup().state.start('far', 'speaker'), { ok: false, error: 'Aproxime-se da caixa de som.' })
+})

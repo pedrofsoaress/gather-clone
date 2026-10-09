@@ -19,8 +19,15 @@ export class SpeakerState {
     return Math.round(Math.max(0, 1 - Math.hypot(position.x - object.approach.x, position.y - object.approach.y) / object.config.rangeTiles) * 100)
   }
 
+  private isFlat(objectId: string): boolean {
+    const object = this.room.interactions?.find(item => item.id === objectId)
+    return Boolean(object?.config && 'flat' in object.config && object.config.flat)
+  }
+
   start(uid: string, objectId: string): { ok: boolean, error?: string } {
-    if (!this.office.isNear(uid, objectId) || this.volume(uid, objectId) === 0) return { ok: false, error: 'Aproxime-se da caixa de som.' }
+    if (!this.office.isNear(uid, objectId) || this.volume(uid, objectId) === 0) {
+      return { ok: false, error: this.isFlat(objectId) ? 'Aproxime-se do microfone.' : 'Aproxime-se da caixa de som.' }
+    }
     if (this.active.has(objectId) || [...this.active.values()].some(state => state.ownerUid === uid)) return { ok: false, error: 'Já existe um áudio sendo compartilhado.' }
     this.active.set(objectId, { ownerUid: uid, channel: `speaker-${randomUUID()}` })
     return { ok: true }
@@ -49,9 +56,7 @@ export class SpeakerState {
   expire(): boolean {
     let changed = false
     for (const [id, state] of this.active) {
-      const object = this.room.interactions?.find(item => item.id === id)
-      const flat = Boolean(object?.config && 'flat' in object.config && object.config.flat)
-      if (this.volume(state.ownerUid, id) === 0 || (flat && !this.office.isNear(state.ownerUid, id))) { this.active.delete(id); changed = true }
+      if (this.volume(state.ownerUid, id) === 0 || (this.isFlat(id) && !this.office.isNear(state.ownerUid, id))) { this.active.delete(id); changed = true }
     }
     return changed
   }
