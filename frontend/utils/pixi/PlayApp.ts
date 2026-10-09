@@ -11,6 +11,8 @@ import { isWithinMap, nearestObject } from './office/geometry'
 import { InteractionLayer } from './office/InteractionLayer'
 import type { OfficeSnapshot } from './office/types'
 import { LightingLayer } from './office/LightingLayer'
+import { AnnexLayer } from './office/AnnexLayer'
+import { isAnnexTrigger, shouldReveal } from './office/annex-reveal'
 import { GamepadController, type GamepadInput } from './office/GamepadController'
 import type { AvatarSnapshot } from './Player/avatar-actions'
 import { zoomAtCursor } from './office/camera-zoom.mjs'
@@ -42,6 +44,7 @@ export class PlayApp extends App {
     private cameraDrag: { pointerId: number, startX: number, startY: number, pivotX: number, pivotY: number } | null = null
     private cameraManuallyPanned = false
     private lightingLayer: LightingLayer | null = null
+    private annexLayer: AnnexLayer | null = null
     private presentationFocused = false
     private gamepad: GamepadController | null = null
     private gamepadDirection: string | null = null
@@ -76,6 +79,7 @@ export class PlayApp extends App {
         await super.loadRoom(index)
         this.setUpLighting()
         this.setUpRoomInteractions()
+        this.setUpAnnex()
         this.setUpBlockedTiles()
         this.setUpFadeTiles()
         await this.spawnLocalPlayer()
@@ -112,6 +116,18 @@ export class PlayApp extends App {
         this.app.stage.addChildAt(this.interactionLayer.container, this.app.stage.getChildIndex(this.lightingLayer!.container) + 1)
     }
 
+    // The annex wing starts dark on every visit; signs stay visible above the darkness.
+    private setUpAnnex = () => {
+        this.annexLayer?.destroy()
+        this.annexLayer = null
+        const room = this.realmData.rooms[this.currentRoomIndex]
+        if (!room.annex && !room.signs?.length) return
+        this.annexLayer = new AnnexLayer(room.annex, room.signs ?? [])
+        const index = this.app.stage.getChildIndex(this.interactionLayer!.container) + 1
+        this.app.stage.addChildAt(this.annexLayer.darkness, index)
+        this.app.stage.addChildAt(this.annexLayer.signs, index + 1)
+    }
+
     public requestOfficeObject = (id: string): boolean => {
         if (this.disableInput || this.player.frozen) return false
         const room = this.realmData.rooms[this.currentRoomIndex]
@@ -136,6 +152,8 @@ export class PlayApp extends App {
     }
 
     public onLocalPlayerTileChanged = (position: Point) => {
+        const annex = this.realmData.rooms[this.currentRoomIndex].annex
+        if (this.annexLayer && shouldReveal(annex, position.x, position.y)) this.annexLayer.reveal(isAnnexTrigger(annex, position.x, position.y))
         const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
         const nearby = nearestObject(objects, position.x, position.y, 2)
         signal.emit('officeNearby', { objectId: nearby?.id ?? null })
@@ -943,6 +961,8 @@ export class PlayApp extends App {
         this.lightingLayer = null
         this.interactionLayer?.destroy()
         this.interactionLayer = null
+        this.annexLayer?.destroy()
+        this.annexLayer = null
         this.fadeAnimation?.kill()
         this.fadeAnimation = null
         PIXI.Ticker.shared.remove(this.fadeOutTicker)
