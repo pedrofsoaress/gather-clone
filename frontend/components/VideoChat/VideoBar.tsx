@@ -5,6 +5,8 @@ import { ArrowsOut, ArrowsIn, MicrophoneSlash, MapTrifold, SpeakerHigh, SpeakerS
 import AnimatedCharacter from '@/app/play/SkinMenu/AnimatedCharacter'
 import { useVideoChat } from '@/app/hooks/useVideoChat'
 import { videoChat } from '@/utils/video-chat/video-chat'
+import { isModerator } from '@/utils/video-chat/meeting'
+import MeetingControls, { useMeeting, moderate } from './MeetingControls'
 import { RemoteUser, useFloatingOpen, usePeerProfile, useRemoteUsers } from './useRemoteUsers'
 
 type VideoBarProps = {
@@ -23,15 +25,19 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
     const screens = peers.filter(user => user.uid.endsWith('-screen'))
     const cameras = peers.filter(user => !user.uid.endsWith('-screen'))
     const personCount = cameras.length + 1
+    const meeting = useMeeting()
 
     useEffect(() => {
         signal.emit('officeAudioBusy', peers.length > 0)
         return () => signal.emit('officeAudioBusy', false)
     }, [peers.length > 0])
 
-    if (peers.length === 0 && !presentation) return null
+    if (peers.length === 0 && !presentation && !meeting) return null
+
+    if (peers.length === 0 && !presentation) return <div className="pointer-events-none absolute right-3 top-3 z-30"><MeetingControls localUid={localUid} /></div>
 
     if (!meetingMode) return <div className="pointer-events-none absolute right-3 top-3 z-30 flex max-w-[calc(100vw-24px)] flex-col items-end gap-2 text-white">
+        <MeetingControls localUid={localUid} />
         <button type="button" onClick={() => onMeetingModeChange(true)} className="pointer-events-auto flex items-center gap-2 rounded-lg bg-slate-900/95 px-3 py-2 text-sm shadow-lg hover:bg-slate-700" aria-label="Expandir reunião">
             <ArrowsOut size={18} /> Expandir reunião · {personCount}
         </button>
@@ -42,13 +48,14 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
     </div>
 
     const tileProps = { meetingMode: true, localUid, localName, localSkin }
-    return <div className="absolute inset-x-0 bottom-14 top-0 z-30 bg-[#181c2d] text-white">
+    return <div className="absolute inset-x-0 bottom-14 top-0 z-30 flex flex-col bg-[#181c2d] text-white">
         <button type="button" onClick={() => onMeetingModeChange(false)} className={`absolute top-3 z-40 flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm shadow-lg hover:bg-slate-700 ${chatOpen ? 'right-3 sm:right-[352px]' : 'right-3'}`} aria-label="Visualização de mapa">
             <MapTrifold size={18} />
             Visualização de mapa
         </button>
-        <header className="flex h-14 items-center border-b border-slate-700 px-5 pr-48 text-sm font-semibold">Conversa por proximidade · {personCount} {personCount === 1 ? 'pessoa' : 'pessoas'}</header>
-        <section id="video-container" className={`h-[calc(100%-3.5rem)] min-h-0 overflow-y-auto p-3 ${chatOpen ? 'w-full sm:w-[calc(100%-340px)]' : 'w-full'}`}>
+        <header className="flex h-14 shrink-0 items-center border-b border-slate-700 px-5 pr-48 text-sm font-semibold">Conversa por proximidade · {personCount} {personCount === 1 ? 'pessoa' : 'pessoas'}</header>
+        <div className="pointer-events-none flex shrink-0 justify-end px-3 pt-3 empty:hidden"><MeetingControls localUid={localUid} /></div>
+        <section id="video-container" className={`min-h-0 flex-1 overflow-y-auto p-3 ${chatOpen ? 'w-full sm:w-[calc(100%-340px)]' : 'w-full'}`}>
             {screens.length > 0 || presentation ? <div className="grid h-full min-h-[420px] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(220px,25%)] lg:grid-rows-1">
                 {screens.length > 0 ? <RemoteUser key={screens[0].uid} user={screens[0]} {...tileProps} className="relative aspect-video min-h-0 w-full lg:aspect-auto lg:h-full" /> : <div className="min-h-0">{presentation}</div>}
                 <div className="flex min-h-0 gap-2 overflow-x-auto lg:flex-col lg:overflow-y-auto">
@@ -93,6 +100,9 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     const skin = isLocalScreen ? localSkin : profile.skin
     const name = isLocalScreen ? localName : profile.name
     const floating = useFloatingOpen()
+    const meeting = useMeeting()
+    const officeUid = user.user.uid.toString().slice(0, 36)
+    const meetingActive = Boolean(meeting && isModerator(localUid))
     const [expanded, setExpanded] = useState(false)
     const [audioMenuOpen, setAudioMenuOpen] = useState(false)
     const [audioState, setAudioState] = useState(() => videoChat.getRemoteAudio(user.uid))
@@ -155,6 +165,13 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
             {audioMenuOpen && createPortal(<div ref={audioMenu} role="group" aria-label={`Controles de áudio de ${name}`} style={menuPosition} className="fixed z-[70] w-48 space-y-2 rounded-lg border border-slate-600 bg-slate-900 p-3 text-xs text-white shadow-2xl" onMouseDown={event => event.stopPropagation()}>
                 <button type="button" onClick={() => videoChat.setRemoteMuted(user.uid, !audioState.muted)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">{audioState.muted ? 'Ativar áudio para mim' : 'Silenciar só para mim'}</button>
                 <label className="block">Volume · {audioState.volume}%<input type="range" min="0" max="100" value={audioState.volume} onChange={event => videoChat.setRemoteVolume(user.uid, Number(event.target.value))} className="w-full" /></label>
+                {meetingActive && !isScreen && <div className="space-y-1 border-t border-slate-700 pt-2">
+                    <p className="text-white/60">Como apresentador</p>
+                    {user.micEnabled && <button type="button" onClick={() => moderate('mute', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Desligar microfone</button>}
+                    {user.cameraEnabled && <button type="button" onClick={() => moderate('cameraOff', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Desligar câmera</button>}
+                    {meeting?.locked && !meeting.allowed.includes(officeUid) && <button type="button" onClick={() => moderate('allow', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Liberar microfone</button>}
+                    {meeting?.locked && meeting.allowed.includes(officeUid) && <button type="button" onClick={() => moderate('deny', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Bloquear microfone</button>}
+                </div>}
             </div>, document.body)}
         </div>}
     </div>
