@@ -8,10 +8,13 @@ export function useMeeting() {
     const [meeting, setMeeting] = useState<MeetingSnapshot | null>(getMeeting())
     useEffect(() => {
         signal.on('meetingState', setMeeting)
+        setMeeting(getMeeting())
         return () => signal.off('meetingState', setMeeting)
     }, [])
     return meeting
 }
+
+const CARD = 'pointer-events-auto w-72 max-w-[calc(100vw-24px)] space-y-2 rounded-xl bg-slate-950/90 p-3 text-xs text-white shadow-xl'
 
 type Action = 'mute' | 'cameraOff' | 'muteAll' | 'lock' | 'unlock' | 'allow' | 'deny'
 
@@ -39,7 +42,7 @@ function RaisedHand({ uid }: { uid: string }) {
 export default function MeetingControls({ localUid }: { localUid: string }) {
     const meeting = useMeeting()
     if (!meeting) return null
-    if (isModerator(localUid)) return <div className='pointer-events-auto w-72 max-w-[calc(100vw-24px)] space-y-2 rounded-xl bg-slate-950/90 p-3 text-xs text-white shadow-xl'>
+    if (isModerator(localUid)) return <div className={CARD}>
         <p className='font-semibold'>Você está no palco: é o apresentador.</p>
         <div className='flex gap-2'>
             <button type='button' onClick={() => moderate('muteAll')} className='flex-1 rounded bg-slate-700 px-2 py-1.5 hover:bg-slate-600'>Silenciar todos</button>
@@ -47,13 +50,13 @@ export default function MeetingControls({ localUid }: { localUid: string }) {
         </div>
         {meeting.raised.length > 0 && <div>
             <p className='mb-1 text-white/70'>Pedidos para falar</p>
-            <ul className='space-y-1'>{meeting.raised.map(uid => <RaisedHand key={uid} uid={uid} />)}</ul>
+            <ul className='max-h-40 space-y-1 overflow-y-auto'>{meeting.raised.map(uid => <RaisedHand key={uid} uid={uid} />)}</ul>
         </div>}
     </div>
     if (!meeting.locked) return null
     const allowed = meeting.allowed.includes(localUid)
     const raised = meeting.raised.includes(localUid)
-    return <div className='pointer-events-auto w-72 max-w-[calc(100vw-24px)] space-y-2 rounded-xl bg-slate-950/90 p-3 text-xs text-white shadow-xl'>
+    return <div className={CARD}>
         <p>{allowed ? 'O apresentador liberou seu microfone.' : 'O apresentador bloqueou os microfones.'}</p>
         {!allowed && <button type='button' onClick={() => raiseHand(!raised)} className='w-full rounded bg-teal-500 px-2 py-1.5 font-semibold text-slate-950 hover:bg-teal-400'>{raised ? 'Cancelar pedido' : 'Pedir para falar'}</button>}
     </div>

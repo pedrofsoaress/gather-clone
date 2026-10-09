@@ -54,7 +54,7 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
             Visualização de mapa
         </button>
         <header className="flex h-14 shrink-0 items-center border-b border-slate-700 px-5 pr-48 text-sm font-semibold">Conversa por proximidade · {personCount} {personCount === 1 ? 'pessoa' : 'pessoas'}</header>
-        <div className="pointer-events-none flex shrink-0 justify-end px-3 pt-3 empty:hidden"><MeetingControls localUid={localUid} /></div>
+        <div className={`pointer-events-none flex shrink-0 justify-end px-3 pt-3 empty:hidden ${chatOpen ? 'sm:pr-[352px]' : ''}`}><MeetingControls localUid={localUid} /></div>
         <section id="video-container" className={`min-h-0 flex-1 overflow-y-auto p-3 ${chatOpen ? 'w-full sm:w-[calc(100%-340px)]' : 'w-full'}`}>
             {screens.length > 0 || presentation ? <div className="grid h-full min-h-[420px] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(220px,25%)] lg:grid-rows-1">
                 {screens.length > 0 ? <RemoteUser key={screens[0].uid} user={screens[0]} {...tileProps} className="relative aspect-video min-h-0 w-full lg:aspect-auto lg:h-full" /> : <div className="min-h-0">{presentation}</div>}
@@ -159,18 +159,18 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
         {!isScreen && <div className={`absolute ${meetingMode && user.cameraEnabled ? 'right-12' : 'right-2'} top-2 z-20`}>
             <button ref={audioButton} type="button" aria-label={`Áudio de ${name}`} aria-expanded={audioMenuOpen} onClick={() => {
                 const bounds = audioButton.current?.getBoundingClientRect()
-                if (bounds) setMenuPosition({ top: Math.min(bounds.bottom + 6, window.innerHeight - 150), left: Math.max(8, Math.min(bounds.right - 192, window.innerWidth - 200)) })
+                if (bounds) setMenuPosition({ top: Math.max(8, Math.min(bounds.bottom + 6, window.innerHeight - (audioMenu.current?.offsetHeight ?? (meetingActive ? 240 : 150)) - 8)), left: Math.max(8, Math.min(bounds.right - 192, window.innerWidth - 200)) })
                 setAudioMenuOpen(value => !value)
             }} className="rounded-lg bg-black/70 p-2 text-white hover:bg-black">{audioState.muted ? <SpeakerSlash size={18} /> : <SpeakerHigh size={18} />}</button>
-            {audioMenuOpen && createPortal(<div ref={audioMenu} role="group" aria-label={`Controles de áudio de ${name}`} style={menuPosition} className="fixed z-[70] w-48 space-y-2 rounded-lg border border-slate-600 bg-slate-900 p-3 text-xs text-white shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+            {audioMenuOpen && createPortal(<div ref={audioMenu} role="group" aria-label={`Controles de áudio de ${name}`} style={menuPosition} className="fixed z-[70] max-h-[calc(100vh-16px)] w-48 space-y-2 overflow-y-auto rounded-lg border border-slate-600 bg-slate-900 p-3 text-xs text-white shadow-2xl" onMouseDown={event => event.stopPropagation()}>
                 <button type="button" onClick={() => videoChat.setRemoteMuted(user.uid, !audioState.muted)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">{audioState.muted ? 'Ativar áudio para mim' : 'Silenciar só para mim'}</button>
                 <label className="block">Volume · {audioState.volume}%<input type="range" min="0" max="100" value={audioState.volume} onChange={event => videoChat.setRemoteVolume(user.uid, Number(event.target.value))} className="w-full" /></label>
                 {meetingActive && !isScreen && <div className="space-y-1 border-t border-slate-700 pt-2">
                     <p className="text-white/60">Como apresentador</p>
                     {user.micEnabled && <button type="button" onClick={() => moderate('mute', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Desligar microfone</button>}
                     {user.cameraEnabled && <button type="button" onClick={() => moderate('cameraOff', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Desligar câmera</button>}
-                    {meeting?.locked && !meeting.allowed.includes(officeUid) && <button type="button" onClick={() => moderate('allow', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Liberar microfone</button>}
-                    {meeting?.locked && meeting.allowed.includes(officeUid) && <button type="button" onClick={() => moderate('deny', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Bloquear microfone</button>}
+                    {meeting?.locked && !meeting.moderators.includes(officeUid) && !meeting.allowed.includes(officeUid) && <button type="button" onClick={() => moderate('allow', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Liberar microfone</button>}
+                    {meeting?.locked && !meeting.moderators.includes(officeUid) && meeting.allowed.includes(officeUid) && <button type="button" onClick={() => moderate('deny', officeUid)} className="w-full rounded bg-slate-700 px-2 py-1 text-left">Bloquear microfone</button>}
                 </div>}
             </div>, document.body)}
         </div>}
