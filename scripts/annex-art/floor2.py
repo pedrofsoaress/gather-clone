@@ -18,7 +18,7 @@ from PIL import ImageDraw
 sys.dont_write_bytecode = True                  # no __pycache__ beside the scripts
 sys.path.insert(0, os.path.dirname(__file__))
 from kit import (ROOT, T, office, canvas as new_canvas, px, color, shade, cut_out,  # noqa: E402
-                 place, quilt, brick, rug, stairs, PROFILE, SOURCES, CUTS)
+                 place, quilt, brick, rug, stairs, h_wall, v_wall, PROFILE, SOURCES, CUTS, V_OFF)
 
 F = json.loads(subprocess.check_output(
     ['node', '--input-type=module', '-e',
@@ -71,10 +71,29 @@ for k, island in enumerate(F['islands']):
     ox, oy = island['ox'], island['oy']
     rug(canvas, (px(ox - 1.8), px(oy - 1.5), px(ox + 7.8), px(oy + 4.6)), 'beige_rug_clean', beige, seed=110 + k)
 
+# Directors' room: the ground directors' carpet (its clean pool) up to the centre line of its
+# walls, a brick sill in the door, and the teal rug under the armchairs and
+# coffee table, placed against them as in the ground room (scripts/annex-art/compose.py).
+HALF = T // 2
+fd = F['floor2Directors']
+LOUNGE = (fd['lounge']['dx'], fd['lounge']['dy'])
+quilt(canvas, (fd['wallX'] * T + HALF, fd['wallY'] * T + HALF, W, H), 'carpet_clean', seed=131)
+brick(canvas, (fd['door']['x1'] * T, fd['wallY'] * T, (fd['door']['x2'] + 1) * T, fd['wallY'] * T + HALF))
+lounge = [SOURCES[n] for n in ('armchair_right', 'armchair_left')]
+rug(canvas, (px(lounge[0][0] + LOUNGE[0] - 0.45), px(lounge[0][1] + LOUNGE[1] + 0.35),
+             px(lounge[1][0] + lounge[1][2] + LOUNGE[0] + 0.45), px(lounge[0][1] + LOUNGE[1] + 3.25)),
+    'teal_rug', color('teal_edge'), seed=161)
+
 # ---------------------------------------------------------------------------
 # 2. Walls: the annex outer walls on all four edges; the top wall's face has
 # windows cut from the office boardroom's glass wall.
 outer = PROFILE['outer']
+# The directors' room walls first, solid like the ground floor's private rooms;
+# the outer walls drawn next close their ends.
+v_wall(canvas, fd['wallX'], fd['wallY'] * T + HALF, last_y * T + 6, windows=False, cap_top=False, cap_bottom=False)
+h_wall(canvas, fd['wallY'], fd['wallX'] * T + V_OFF, W - len(outer),
+       [(fd['door']['x1'] * T, (fd['door']['x2'] + 1) * T)], windows=False,
+       posts=[fd['wallX'] * T + HALF], joined_start=True, joined_end=True)
 for i, c in enumerate(outer):
     draw.line((0, i, W - 1, i), fill=c)                                    # top
 face_top, face_bottom = len(outer), 2 * T - 1            # the face covers rows 0..1, both impassable
@@ -125,11 +144,19 @@ pw, ph = SOURCES['plant'][2:]
 th = SOURCES['plant_tall'][3]
 bottom = last_y - 0.08                          # against the bottom wall
 place(canvas, plant_tall, st['x2'] + 1.1, bottom - th)
-for x in (12.0, 20.0, 33.0, 41.0):
+for x in (12.0, 20.0, 33.0):
     place(canvas, plant, x, bottom - ph)
 for x in (isl_x1 + 0.05, last_x - 0.15 - pw):
     place(canvas, plant, x, 0.95)
     place(canvas, plant, x, hall_y - 0.1 - ph)
+
+# 5. Directors' room furniture: the office desk at fd['desk'] (as the focus
+# desks: tiles + (0.1, -0.15)), the reception armchairs and coffee table shifted
+# by fd['lounge'], and a plant in the bottom right corner, clear of the seats.
+place(canvas, desks['desk'], fd['desk']['x'] + SOURCES['desk'][0] - 35, fd['desk']['y'] + SOURCES['desk'][1] - 11)
+for name in ('armchair_right', 'armchair_left', 'coffee_table'):
+    sx, sy = SOURCES[name][:2]
+    place(canvas, cut_out(name), sx + LOUNGE[0], sy + LOUNGE[1])
 place(canvas, plant, last_x - 0.15 - pw, bottom - ph)
 
 canvas.convert('RGB').save(ROOT / 'frontend/public/matte-floor2.png', optimize=True)

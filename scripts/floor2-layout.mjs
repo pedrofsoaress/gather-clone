@@ -28,8 +28,30 @@ export const islands = [[30, 4], [40, 4], [30, 14], [40, 14]].map(([ox, oy], ind
   id: `island-${index + 1}`, label: `Ilha ${index + 1}`, ox, oy, area: ISLAND_AREAS[index],
 }))
 
+// Directors' room in the bottom right corner of the hall, in the style of the
+// ground floor's (scripts/annex-layout.mjs `directors`). Its walls are the top
+// row (wallY) and the left column (wallX); the outer walls close it on the
+// right and below. The door in the top wall opens onto the walk under the
+// islands (row 21, outside their private areas). Inside: the office desk with
+// its chair at the back right (desk tiles 5 x 2 from `desk`), and by the door
+// the reception armchairs and coffee table, shifted from the reception set by
+// `lounge` (the ground directors' room uses +56.5, +2).
+export const floor2Directors = {
+  id: 'floor2-directors',
+  label: 'Diretoria',
+  wallX: 36,
+  wallY: 22,
+  interior: { x1: 37, y1: 23, x2: 48, y2: 28 },
+  door: { x1: 40, x2: 41 },
+  desk: { x: 44, y: 23 },
+  lounge: { dx: 15.5, dy: 3 },
+  coffeeTable: { x: 40, y1: 26, y2: 27 },
+  sign: { x: 38.5, y: 22.5 },          // on the top wall, left of the door
+}
+
 export const floor2Signs = [
   { text: 'Área de foco · silêncio', x: 12, y: 1.6 },
   ...islands.map(island => ({ text: island.label, x: island.ox + 3.5, y: island.oy + 5.8 })),
   { text: 'Escada · Térreo', x: 2.5, y: 26.6 },
+  { text: floor2Directors.label, ...floor2Directors.sign },
 ]

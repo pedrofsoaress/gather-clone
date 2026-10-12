@@ -2,7 +2,7 @@
 // Run with `node scripts/matte-office-map.mjs > /tmp/matte-office.json`.
 
 import { MAP_WIDTH, MAP_HEIGHT, annex, passage, corridor, hallway, walls, doors, training, oneOnOnes, directors, signs, SEAT_VISUAL, groundStairs, officeStairs } from './annex-layout.mjs'
-import { FLOOR2_WIDTH, FLOOR2_HEIGHT, floor2Stairs, focusDesks, islands, floor2Signs } from './floor2-layout.mjs'
+import { FLOOR2_WIDTH, FLOOR2_HEIGHT, floor2Stairs, focusDesks, islands, floor2Directors, floor2Signs } from './floor2-layout.mjs'
 
 const width = MAP_WIDTH
 const height = MAP_HEIGHT
@@ -289,6 +289,14 @@ for (const island of islands) {
   block(floor2, island.ox, island.oy, island.ox + 6, island.oy + 3)
   area(floor2, island.area, 'privateAreaId', island.id)
 }
+// Directors' room: walls with the door, the desk and the coffee table, and its private area.
+const fd = floor2Directors
+block(floor2, fd.wallX, fd.wallY, FLOOR2_WIDTH - 2, fd.wallY)
+block(floor2, fd.wallX, fd.wallY, fd.wallX, FLOOR2_HEIGHT - 2)
+open(floor2, fd.door.x1, fd.wallY, fd.door.x2, fd.wallY)
+block(floor2, fd.desk.x, fd.desk.y, fd.desk.x + 4, fd.desk.y + 1)
+block(floor2, fd.coffeeTable.x, fd.coffeeTable.y1, fd.coffeeTable.x, fd.coffeeTable.y2)
+area(floor2, fd.interior, 'privateAreaId', fd.id)
 
 const focusObjects = focusDesks.map((desk, index) => officeObject(desk.id, 'desk', `Área de foco · mesa ${index + 1}`,
   [desk.x, desk.y, 5, 2], [desk.x + 2, desk.y + 2], { focus: true, seatVisual: { x: desk.x + 1.5, y: desk.y + 2.35, facing: 'up' } }))
@@ -306,6 +314,20 @@ const islandSeats = islands.flatMap(island => {
     officeObject(`${island.id}-bottom-right`, 'seat', `${island.label} · inferior direita`, [26 + dx, 14.8 + dy, 1.2, 1.3], [26 + dx, 16 + dy], { seatVisual: { x: 26.1 + dx, y: 15.3 + dy, facing: 'up' } }),
   ]
 })
+
+// The desk copies the ground directors' desk (79, 21) at fd.desk; the armchairs
+// copy the reception set shifted by fd.lounge, so their seats keep the ground
+// offsets. The room is a row shorter than the ground one, so each armchair is
+// approached from the row just below its seat.
+const { dx: lx, dy: ly } = fd.lounge
+const floor2DirectorsObjects = [
+  officeObject(`${fd.id}-desk`, 'desk', 'Diretoria · mesa', [fd.desk.x, fd.desk.y, 5, 2], [fd.desk.x + 2, fd.desk.y + 2],
+    { seatVisual: { x: fd.desk.x + 1.5, y: fd.desk.y + 2.35, facing: 'up' } }),
+  officeObject(`${fd.id}-armchair-left`, 'seat', 'Diretoria · poltrona esquerda', [22 + lx, 23 + ly, 2, 2], [23 + lx - 0.5, 25 + ly],
+    { seatVisual: { x: 22.3 + lx, y: 23.4 + ly, facing: 'right' } }),
+  officeObject(`${fd.id}-armchair-right`, 'seat', 'Diretoria · poltrona direita', [26 + lx, 23 + ly, 2, 2], [27 + lx - 0.5, 25 + ly],
+    { seatVisual: { x: 26.6 + lx, y: 23.4 + ly, facing: 'left' } }),
+]
 
 const floor2Lights = [
   officeObject('light-focus', 'light', 'Luz da área de foco', [12, 1, 1, 1], [12, 2], { config: { radiusTiles: 9, color: '#e4fff1', intensity: 0.5 } }),
@@ -325,8 +347,11 @@ const map = {
     name: '2º andar',
     backgroundImage: { src: '/matte-floor2.png', width: FLOOR2_WIDTH * 32, height: FLOOR2_HEIGHT * 32 },
     tilemap: floor2,
-    interactions: [...floor2Lights, ...focusObjects, ...islandSeats],
-    areas: Object.fromEntries(islands.map(island => [island.id, { label: island.label }])),
+    interactions: [...floor2Lights, ...focusObjects, ...islandSeats, ...floor2DirectorsObjects],
+    areas: {
+      ...Object.fromEntries(islands.map(island => [island.id, { label: island.label }])),
+      [fd.id]: { label: fd.label },
+    },
     signs: floor2Signs,
   }],
   spawnpoint: { roomIndex: 0, x: 25, y: 18 },
