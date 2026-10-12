@@ -362,7 +362,7 @@ export function sockets(io: Server) {
             const session = sessionManager.getPlayerSession(uid)
             const meeting = session?.meetingOf(uid)
             if (!parsed.success || !session || !meeting || session.getPlayer(uid)?.socketId !== socket.id) return reply({ ok: false, error: 'Você não está na sala de treinamento.' })
-            if (Date.now() - lastRaiseHandAt < 1000) return reply({ ok: false, error: 'Aguarde um instante antes de pedir de novo.' })
+            if (Date.now() - lastRaiseHandAt < 1000) return reply({ ok: false, error: 'Aguarde um instante e tente de novo.' })
             lastRaiseHandAt = Date.now()
             if (parsed.data.raised) meeting.state.raised.add(uid)
             else meeting.state.raised.delete(uid)
