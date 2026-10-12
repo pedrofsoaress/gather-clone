@@ -138,8 +138,6 @@ test('equal private ids in different rooms join different Agora channels and ren
     for (const room of [0, 1]) {
         await env.chat.joinChannel('meeting', 'uid', 'realm', room)
         env.flushTimers()
-        await tick()
-        env.flushTimers()
         await env.chat.channelOperation
     }
     assert.equal(env.clients[0].joined.length, 2)
@@ -155,8 +153,6 @@ test('late token resolution after leaving the application cannot reopen a call',
     const env = harness({ manualTimers: true, token: () => { requested = true; return new Promise(resolve => { resolveToken = resolve }) } })
     env.clients[0].connectionState = 'DISCONNECTED'
     await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
-    env.flushTimers()
-    await tick()
     env.flushTimers()
     while (!requested) await Promise.resolve()
     env.chat.destroy()
@@ -181,7 +177,18 @@ test('a token pushed by the server joins at once without asking the server actio
     assert.equal(requested, 0)
 })
 
-test('a join waits briefly for the pushed token, and falls back when Agora rejects it', async () => {
+test('before any pushed token the join asks the server action at once', async () => {
+    let requested = 0
+    const env = harness({ manualTimers: true, token: async () => { requested++; return 'action-token' } })
+    env.clients[0].connectionState = 'DISCONNECTED'
+    await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
+    env.flushTimers()
+    await env.chat.channelOperation
+    assert.equal(requested, 1)
+    assert.equal(env.clients[0].joined.length, 1)
+})
+
+test('once a token was pushed, a join waits briefly for its own and falls back when Agora rejects it', async () => {
     let requested = 0
     const env = harness({ manualTimers: true, token: async () => { requested++; return 'action-token' } })
     env.clients[0].connectionState = 'DISCONNECTED'
@@ -192,9 +199,11 @@ test('a join waits briefly for the pushed token, and falls back when Agora rejec
         if (value === 'rejected-token') throw new Error('CAN_NOT_GET_GATEWAY_SERVER: invalid token')
         this.joined.push(joined); this.connectionState = 'CONNECTED'
     }
+    env.chat.rememberToken('0123456789abcdef', 'another-conversation')
     await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
     env.flushTimers()
     await tick()
+    assert.equal(requested, 0, 'still waiting for the push')
     env.chat.rememberToken(channel, 'rejected-token')
     await env.chat.channelOperation
     assert.deepEqual(tokens, ['rejected-token', 'action-token'])

@@ -5,8 +5,8 @@ import { generateToken } from './generateToken'
 import { TokenCache } from './token-cache'
 import { clampRemoteVolume, createWithDeviceFallback, defaultDeviceId, mediaErrorMessage, readMediaPreferences, resolveDevicePreference, saveMediaPreferences, type MediaPreferences } from './AudioPreference'
 
-// The server pushes the token right after the step that groups people; a join
-// triggered by the local tile change waits this long for it before asking the server action.
+// The server pushes the token right after the step that groups people; once this page has
+// received a push, a join triggered by the local tile change waits this long for it before asking the server action.
 const PUSHED_TOKEN_WAIT_MS = 300
 
 export class VideoChat {

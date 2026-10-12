@@ -6,12 +6,15 @@ export class TokenCache {
     private readonly tokens = new Map<string, { token: string, at: number }>()
     private readonly waiters = new Map<string, Set<(token: string | null) => void>>()
     private readonly now: () => number
+    // Until the first push, the server has no Agora credentials as far as this page knows: nothing to wait for.
+    private pushedTokensSeen = false
 
     constructor(now: () => number = Date.now) {
         this.now = now
     }
 
     public remember(channel: string, token: string) {
+        this.pushedTokensSeen = true
         const at = this.now()
         for (const [key, entry] of this.tokens) if (at - entry.at > TOKEN_TRUST_MS) this.tokens.delete(key)
         this.tokens.set(channel, { token, at })
@@ -26,10 +29,10 @@ export class TokenCache {
     }
 
     // The cached token, or the one pushed within `timeoutMs` (resolved as soon as it is
-    // remembered); null when none arrives in time.
+    // remembered); null when none arrives in time, and at once before any push was seen.
     public wait(channel: string, timeoutMs: number): Promise<string | null> {
         const cached = this.get(channel)
-        if (cached || timeoutMs <= 0) return Promise.resolve(cached)
+        if (cached || timeoutMs <= 0 || !this.pushedTokensSeen) return Promise.resolve(cached)
         return new Promise(resolve => {
             const settle = (token: string | null) => {
                 clearTimeout(timer)
