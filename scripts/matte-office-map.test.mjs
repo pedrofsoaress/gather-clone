@@ -70,14 +70,27 @@ test('the office walls block where the art draws them', () => {
   const ground = map.rooms[0]
   blocked(ground, 1, 1, 48, 1)      // top wall face, door panels of the stair doorways included
   blocked(ground, 1, 2, 15, 2)      // the lounge wall face reaches row 2
-  blocked(ground, 1, 9, 15, 9)      // lounge partition: its wood band is a window
-  blocked(ground, 34, 9, 48, 9)     // kitchen partition
+  blocked(ground, 1, 9, 5, 9)       // lounge partition: dark ends, wood band 6..13 is a passage
+  walkable(ground, 6, 9, 13, 9)
+  blocked(ground, 14, 9, 15, 9)
+  blocked(ground, 34, 9, 35, 9)     // kitchen partition: wood band 36..41 is a passage
+  walkable(ground, 36, 9, 41, 9)
+  blocked(ground, 42, 9, 48, 9)
   walkable(ground, 16, 9, 17, 9)    // the corridors from the stair doorways
   walkable(ground, 32, 9, 33, 9)
-  blocked(ground, 1, 17, 15, 17)    // work area partitions, doors at 16 and 33
-  blocked(ground, 17, 17, 17, 27)
-  blocked(ground, 32, 17, 32, 27)
-  blocked(ground, 34, 17, 48, 17)
+  blocked(ground, 1, 17, 5, 17)     // work area partitions: wood bands are passages, doors at 16 and 33
+  walkable(ground, 6, 17, 13, 17)
+  blocked(ground, 14, 17, 15, 17)
+  blocked(ground, 34, 17, 35, 17)
+  walkable(ground, 36, 17, 43, 17)
+  blocked(ground, 44, 17, 48, 17)
+  for (const x of [17, 32]) {        // the side walls of the workshop and games room
+    blocked(ground, x, 17, x, 18)
+    walkable(ground, x, 19, x, 20)
+    blocked(ground, x, 21, x, 22)
+    walkable(ground, x, 23, x, 24)
+    blocked(ground, x, 25, x, 27)
+  }
   walkable(ground, 16, 16, 16, 18)
   walkable(ground, 33, 16, 33, 18)
   blocked(ground, 1, 27, 16, 27)    // front wall beside the entrance

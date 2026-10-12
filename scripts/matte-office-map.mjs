@@ -30,9 +30,8 @@ function open(map, x1, y1, x2, y2) {
 
 // Office walls, as drawn in the office art (frontend/public/matte-office-v2.png),
 // checked tile by tile on an overlay of this map on the art. Rectangles are
-// inclusive [x1, y1, x2, y2]. The wood bands in the partitions are windows, not
-// doors: the rooms open onto the two brick corridors (x 16..17 and 32..33) that
-// run down from the stair doorways.
+// inclusive [x1, y1, x2, y2]. The dark segments, posts and glass are walls; the
+// orange wood bands in the interior walls are passages (see officeOpenings).
 const officeWalls = {
   top: [0, 0, 49, 0],
   bottom: [0, 29, 49, 29],
@@ -65,7 +64,9 @@ const officeWalls = {
 }
 
 // Openings in those walls. The boardroom's glass row 8 is open from 23 to 26,
-// where its doors are drawn (like the opening in the sill below).
+// where its doors are drawn (like the opening in the sill below). The wood bands
+// of the interior walls are passages: each opens the tiles it covers for more
+// than half (measured on the art; the thin posts inside a band go with it).
 const officeOpenings = {
   annexPassage: [passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1]],
   loungeCorridor: [16, 9, 17, 9],
@@ -73,6 +74,14 @@ const officeOpenings = {
   boardroomDoor: [23, 9, 26, 9],
   workshopDoor: [16, 17, 16, 17],
   gamesDoor: [33, 17, 33, 17],
+  loungeBand: [6, 9, 13, 9],            // wood x 6.34..13.88
+  kitchenBand: [36, 9, 41, 9],          // wood x 36.19..42.19 (42 is 19% wood: wall)
+  leftWorkBand: [6, 17, 13, 17],        // wood x 6.16..13.62
+  rightWorkBand: [36, 17, 43, 17],      // wood x 36.38..43.81
+  workshopUpperBand: [17, 19, 17, 20],  // wood y 18.72..20.5
+  workshopLowerBand: [17, 23, 17, 24],  // wood y 23.31..24.53, the sideboard (16, 22..24) stands behind it
+  gamesUpperBand: [32, 19, 32, 20],
+  gamesLowerBand: [32, 23, 32, 24],     // the sideboard (33, 22..24) stands behind it
 }
 
 for (const [x1, y1, x2, y2] of Object.values(officeWalls)) block(tilemap, x1, y1, x2, y2)
