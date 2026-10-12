@@ -585,21 +585,6 @@ aisle_right = min(c for c in tr['seatColumns'] if c > mic_x)
 rug((aisle_left * T + 18, st1 + 14, aisle_right * T - 18, (ti['y2'] + 1) * T - 4), 'beige_rug',
     color('beige_edge'), seed=51)
 
-
-def mic(tx, ty):
-    """Microphone stand standing on tile (tx, ty)."""
-    cx, base = tx * T + HALF, ty * T + 27
-    dark, light = color('post_dark'), color('post_light')
-    canvas.alpha_composite(Image.new('RGBA', (16, 3), (0, 0, 0, 70)), (cx - 8, base + 2))
-    draw.ellipse((cx - 7, base - 3, cx + 7, base + 3), fill=dark)
-    draw.rectangle((cx - 1, base - 26, cx + 1, base), fill=dark)
-    draw.ellipse((cx - 4, base - 34, cx + 4, base - 24), fill=dark)
-    draw.ellipse((cx - 2, base - 32, cx + 1, base - 29), fill=light)
-
-
-mic(tr['stageMic'][0], tr['stageMic'][1] - 1)
-mic(tr['audienceMic'][0], tr['audienceMic'][1] - 1)
-
 chair = cut_out('chair_up')
 for row in tr['seatRows']:
     for column in tr['seatColumns']:
