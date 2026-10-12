@@ -14,7 +14,7 @@ export function useMeeting() {
     return meeting
 }
 
-const CARD = 'pointer-events-auto w-72 max-w-[calc(100vw-24px)] space-y-2 rounded-xl bg-slate-950/90 p-3 text-xs text-white shadow-xl'
+const CARD = 'pointer-events-auto w-72 max-w-[calc(100vw-24px)] space-y-2 rounded-xl bg-slate-950 p-3 text-xs text-white shadow-xl'
 
 type Action = 'mute' | 'cameraOff' | 'muteAll' | 'lock' | 'unlock' | 'allow' | 'deny'
 

@@ -94,9 +94,9 @@ const VideoChatProvider: React.FC<VideoChatProviderProps> = ({ children }) => {
             }
         }
         const onMeetingState = () => {
-            if (canUnmute()) return
-            if (pendingMicrophone.current) forceMicRef.current = true
-            else void forceMicOff(lockNotice)
+            // A pending toggle re-checks canUnmute() when it settles.
+            if (canUnmute() || pendingMicrophone.current) return
+            void forceMicOff(lockNotice)
         }
         signal.on('meetingState', onMeetingState)
         signal.on('meetingForce', onForce)
