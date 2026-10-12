@@ -416,6 +416,9 @@ export class VideoChat {
     public async joinChannel(channel: string, uid: string, realmId: string, roomIndex: number) {
         const key = `${roomIndex}:${channel}`
         const request = ++this.channelRequest
+        // Without pushed tokens each join calls the server action; the short delay lets a proximity
+        // update that arrives just before the step's ack be replaced instead of minting a stale token.
+        const delay = this.tokens.hasSeenPushes ? 0 : 150
         this.tokens.cancelWaits()
         if (this.channelTimeout) {
             clearTimeout(this.channelTimeout)
@@ -448,9 +451,11 @@ export class VideoChat {
                 try {
                     await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, token, uid)
                 } catch (error) {
-                    // A pushed token Agora rejects (the server's credentials differ): ask the server action once.
+                    // A pushed token Agora rejects (the server's credentials differ): ask the server action,
+                    // and stop using pushed tokens so later calls are not slowed down by them.
                     if (!pushed || request !== this.channelRequest) throw error
-                    this.tokens.forget(uniqueChannelId)
+                    console.warn('Agora rejected the token pushed by the server; using the server action from now on.', error)
+                    this.tokens.rejectPushes()
                     const fallback = await generateToken(uniqueChannelId, uid)
                     if (request !== this.channelRequest) return
                     if (!fallback) throw error
@@ -491,7 +496,7 @@ export class VideoChat {
                 console.error('Failed to join video conversation', error)
                 signal.emit('officeFeedback', { message: 'Não foi possível entrar na chamada de vídeo.' })
             })
-        }, 0)
+        }, delay)
     }
 
     public async leaveChannel() {

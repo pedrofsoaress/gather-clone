@@ -8,6 +8,8 @@ export class TokenCache {
     private readonly now: () => number
     // Until the first push, the server has no Agora credentials as far as this page knows: nothing to wait for.
     private pushedTokensSeen = false
+    // Agora rejected a pushed token (the server's credentials differ): pushes are ignored for the rest of the page.
+    private pushesRejected = false
 
     constructor(now: () => number = Date.now) {
         this.now = now
@@ -23,7 +25,19 @@ export class TokenCache {
         waiting?.forEach(resolve => resolve(token))
     }
 
+    // Whether pushed tokens are worth waiting for: one arrived and Agora has not rejected them.
+    public get hasSeenPushes(): boolean {
+        return this.pushedTokensSeen && !this.pushesRejected
+    }
+
+    public rejectPushes() {
+        this.pushesRejected = true
+        this.tokens.clear()
+        this.cancelWaits()
+    }
+
     public get(channel: string): string | null {
+        if (this.pushesRejected) return null
         const entry = this.tokens.get(channel)
         return entry && this.now() - entry.at <= TOKEN_TRUST_MS ? entry.token : null
     }
@@ -32,7 +46,7 @@ export class TokenCache {
     // remembered); null when none arrives in time, and at once before any push was seen.
     public wait(channel: string, timeoutMs: number): Promise<string | null> {
         const cached = this.get(channel)
-        if (cached || timeoutMs <= 0 || !this.pushedTokensSeen) return Promise.resolve(cached)
+        if (cached || timeoutMs <= 0 || !this.hasSeenPushes) return Promise.resolve(cached)
         return new Promise(resolve => {
             const settle = (token: string | null) => {
                 clearTimeout(timer)

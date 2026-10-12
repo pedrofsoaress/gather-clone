@@ -16,6 +16,8 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
     const captures = []
     const stored = new Map()
     const timers = new Map()
+    const delays = []
+    const warnings = []
     let timerId = 0
     const storage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) }
     const track = (kind, initialId) => ({
@@ -44,14 +46,14 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
     const source = transpile('./video-chat.ts')
     const exports = {}
     const timerApi = {
-        setTimeout: manualTimers ? callback => { timers.set(++timerId, callback); return timerId } : setTimeout,
+        setTimeout: manualTimers ? (callback, ms) => { timers.set(++timerId, callback); delays.push(ms); return timerId } : setTimeout,
         clearTimeout: manualTimers ? id => timers.delete(id) : clearTimeout,
     }
     // The pushed-token wait runs on the same (possibly manual) timers as the join.
     const tokenCache = {}
     vm.runInNewContext(transpile('./token-cache.ts'), { exports: tokenCache, Date, ...timerApi })
     vm.runInNewContext(source, {
-        exports, process: { env: {} }, console,
+        exports, process: { env: {} }, console: { ...console, warn: (...args) => warnings.push(args) },
         ...timerApi,
         navigator: { mediaDevices: { getDisplayMedia: screenCapture, enumerateDevices: async () => devices, addEventListener: (name, fn) => events.set(name, fn), removeEventListener: (name, fn) => { if (events.get(name) === fn) events.delete(name) } } },
         window: { localStorage: storage }, HTMLMediaElement: class {},
@@ -65,7 +67,7 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
             throw new Error(`Unexpected import: ${name}`)
         },
     })
-    return { chat: exports.videoChat, clients, captures, events, signals, setDevices: next => { devices = next }, flushTimers: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()) } }
+    return { chat: exports.videoChat, clients, captures, events, signals, delays, warnings, setDevices: next => { devices = next }, flushTimers: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()) } }
 }
 
 test('first enable clears disconnected saved devices and keeps screen client independent', async () => {
@@ -177,15 +179,25 @@ test('a token pushed by the server joins at once without asking the server actio
     assert.equal(requested, 0)
 })
 
-test('before any pushed token the join asks the server action at once', async () => {
+test('before any pushed token the join waits 150 ms, then asks the server action without waiting for a push', async () => {
     let requested = 0
     const env = harness({ manualTimers: true, token: async () => { requested++; return 'action-token' } })
     env.clients[0].connectionState = 'DISCONNECTED'
     await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
+    assert.deepEqual(env.delays, [150])
     env.flushTimers()
     await env.chat.channelOperation
     assert.equal(requested, 1)
     assert.equal(env.clients[0].joined.length, 1)
+    assert.deepEqual(env.delays, [150], 'no wait for a pushed token')
+})
+
+test('once a token was pushed, the join starts without delay', async () => {
+    const env = harness({ manualTimers: true })
+    env.clients[0].connectionState = 'DISCONNECTED'
+    env.chat.rememberToken(createHash('md5').update('realm-0-meeting').digest('hex').slice(0, 16), 'pushed-token')
+    await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
+    assert.deepEqual(env.delays, [0])
 })
 
 test('once a token was pushed, a join waits briefly for its own and falls back when Agora rejects it', async () => {
@@ -209,6 +221,19 @@ test('once a token was pushed, a join waits briefly for its own and falls back w
     assert.deepEqual(tokens, ['rejected-token', 'action-token'])
     assert.deepEqual(env.clients[0].joined, [channel])
     assert.equal(requested, 1)
+    assert.equal(env.warnings.length, 1)
+
+    // Pushed tokens are no longer used: the next join neither waits nor joins with one.
+    const otherRoom = createHash('md5').update('realm-1-meeting').digest('hex').slice(0, 16)
+    env.chat.rememberToken(otherRoom, 'pushed-again')
+    env.delays.length = 0
+    await env.chat.joinChannel('meeting', 'uid', 'realm', 1)
+    assert.deepEqual(env.delays, [150])
+    env.flushTimers()
+    await env.chat.channelOperation
+    assert.deepEqual(tokens, ['rejected-token', 'action-token', 'action-token'])
+    assert.equal(requested, 2)
+    assert.equal(env.warnings.length, 1)
 })
 
 test('accepting a screen picker after leaving stops capture without publishing', async () => {
