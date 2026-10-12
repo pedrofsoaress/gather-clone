@@ -60,6 +60,7 @@ export class PlayApp extends App {
     private spawning = new Map<string, Promise<void>>()
     private departures = new Map<string, number>()
     private resyncTimer: ReturnType<typeof setTimeout> | null = null
+    private resyncInterval: ReturnType<typeof setInterval> | null = null
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -291,16 +292,21 @@ export class PlayApp extends App {
 
     private async syncOtherPlayers() {
         const known = Object.keys(this.players)
-        const {data, error} = await server.getPlayersInRoom(this.currentRoomIndex)
+        const departuresBefore = new Map(this.departures)
+        const room = this.currentRoomIndex
+        const {data, error} = await server.getPlayersInRoom(room)
         if (error) {
             console.error('Failed to get player positions in room:', error)
             return
         }
+        if (this.eventsRemoved || room !== this.currentRoomIndex) return
 
         // Drop avatars whose departure was missed, e.g. while this connection was down.
         const listed = new Set(data.players.map((player: { uid: string }) => player.uid))
-        for (const uid of known) if (!listed.has(uid)) this.onPlayerLeftRoom(uid)
-        await Promise.all(data.players.filter((player: { uid: string }) => player.uid !== this.uid).map((player: any) => this.updatePlayer(player.uid, player)))
+        for (const uid of known) if (!listed.has(uid) && uid in this.players) this.onPlayerLeftRoom(uid)
+        // Someone who left while the list was in flight stays gone.
+        const current = data.players.filter((player: { uid: string }) => player.uid !== this.uid && (this.departures.get(player.uid) ?? 0) === (departuresBefore.get(player.uid) ?? 0))
+        await Promise.all(current.map((player: any) => this.updatePlayer(player.uid, player)))
 
         this.sortObjectsByY()
     }
@@ -313,6 +319,19 @@ export class PlayApp extends App {
             this.resyncTimer = null
             if (!this.eventsRemoved) void this.syncOtherPlayers()
         }, 1000)
+    }
+
+    // A missed join is otherwise only noticed when that person moves; someone who
+    // stays put (seated in a room) would stay invisible. Check the list regularly
+    // and whenever the tab comes back to the front.
+    private startPeriodicResync = () => {
+        if (this.eventsRemoved || this.resyncInterval) return
+        this.resyncInterval = setInterval(this.scheduleResync, 60000)
+        document.addEventListener('visibilitychange', this.onVisibilityChange)
+    }
+
+    private onVisibilityChange = () => {
+        if (document.visibilityState === 'visible') this.scheduleResync()
     }
 
     private async updatePlayer(uid: string, player: any) {
@@ -375,6 +394,7 @@ export class PlayApp extends App {
         this.requestSnapshots()
         // People who joined while the room was loading arrived before the socket listeners existed.
         await this.syncOtherPlayers()
+        this.startPeriodicResync()
 
         this.fadeOut()
     }
@@ -808,7 +828,11 @@ export class PlayApp extends App {
 
     private getSkinForUid = (uid: string) => {
         const player = this.players[uid]
-        if (!player) return
+        if (!player) {
+            // A video from someone this screen has no avatar for: the join was missed.
+            if (uid !== this.uid && !this.spawning.has(uid)) this.scheduleResync()
+            return
+        }
         this.emitVideoProfile(uid)
     }
 
@@ -998,6 +1022,9 @@ export class PlayApp extends App {
         PIXI.Ticker.shared.remove(this.fadeOutTicker)
         if (this.resyncTimer) clearTimeout(this.resyncTimer)
         this.resyncTimer = null
+        if (this.resyncInterval) clearInterval(this.resyncInterval)
+        this.resyncInterval = null
+        document.removeEventListener('visibilitychange', this.onVisibilityChange)
         this.removeSocketEvents()
         setMeeting(null)
         this.destroyPlayers()
