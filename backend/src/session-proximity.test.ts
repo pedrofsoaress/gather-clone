@@ -33,27 +33,27 @@ test('moving apart resets the stationary participant as well as the moving parti
 test('video conversations start only within a short circular radius', () => {
     const { session, add } = setup()
     add('ana', 10, 5)
-    add('bruno', 13, 5)
-    assert.equal(session.getPlayer('ana').proximityId, null, 'three tiles must not open a call')
-    session.movePlayer('bruno', 12, 7)
+    add('bruno', 14, 5)
+    assert.equal(session.getPlayer('ana').proximityId, null, 'four tiles must not open a call')
+    session.movePlayer('bruno', 13, 7)
     assert.equal(session.getPlayer('ana').proximityId, null, 'square corners are outside the circle')
-    session.movePlayer('bruno', 12, 6)
-    assert.ok(session.getPlayer('ana').proximityId, 'two tiles plus one sideways is nearby')
+    session.movePlayer('bruno', 13, 6)
+    assert.ok(session.getPlayer('ana').proximityId, 'three tiles plus one sideways is nearby')
     assert.equal(session.getPlayer('ana').proximityId, session.getPlayer('bruno').proximityId)
-    assert.deepEqual(session.movePlayer('bruno', 13, 6).sort(), ['ana', 'bruno'])
+    assert.deepEqual(session.movePlayer('bruno', 14, 6).sort(), ['ana', 'bruno'])
     assert.equal(session.getPlayer('ana').proximityId, null, 'stationary participant leaves as soon as the other is too far')
 })
 
 test('splitting and merging groups updates every affected participant without channel churn', () => {
     const { session, add } = setup()
     add('ana', 0)
-    add('bruno', 2)
-    add('carla', 4)
-    add('davi', 6)
+    add('bruno', 3)
+    add('carla', 6)
+    add('davi', 9)
     const originalId = session.getPlayer('ana').proximityId
     assert.ok(originalId)
     assert.equal(session.getPlayer('davi').proximityId, originalId)
-    session.movePlayer('bruno', 1, 0)
+    session.movePlayer('bruno', 2, 0)
     const leftId = session.getPlayer('ana').proximityId
     const rightId = session.getPlayer('carla').proximityId
     assert.ok(leftId)
@@ -62,12 +62,12 @@ test('splitting and merging groups updates every affected participant without ch
     assert.ok(leftId === originalId || rightId === originalId)
     assert.equal(session.getPlayer('bruno').proximityId, leftId)
     assert.equal(session.getPlayer('davi').proximityId, rightId)
-    const changed = session.movePlayer('bruno', 2, 0)
+    const changed = session.movePlayer('bruno', 3, 0)
     const mergedId = session.getPlayer('ana').proximityId
     assert.ok(mergedId === leftId || mergedId === rightId)
     assert.ok(changed.length >= 2)
     assert.ok(Object.values(session.players).every(player => player.proximityId === mergedId))
-    assert.deepEqual(session.movePlayer('davi', 5, 0), [])
+    assert.deepEqual(session.movePlayer('davi', 8, 0), [])
     assert.equal(session.getPlayer('davi').proximityId, mergedId)
 })
 

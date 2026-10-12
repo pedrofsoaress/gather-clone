@@ -427,7 +427,7 @@ export class Session {
         const proximityTiles: string[] = []
         // Keep spontaneous calls close to the avatars. A circular boundary
         // prevents diagonal corners from reaching into distant workstations.
-        const radius = 2.5
+        const radius = 3.5
         const range = Math.floor(radius)
 
         for (let dx = -range; dx <= range; dx++) {
