@@ -84,7 +84,7 @@ test('the annex wing has its rooms, signs and darkness', () => {
   const room = map.rooms[0]
   assert.deepEqual(room.backgroundImage, { src: '/matte-office-v3.png', width: 86 * 32, height: 30 * 32 })
   assert.deepEqual(room.annex, { reveal: { x: 50, y: 0, width: 36, height: 30 }, triggers: [[49, 15], [49, 16]] })
-  assert.equal(room.signs.length, 7)
+  assert.equal(room.signs.length, 8)
   assert.deepEqual(room.areas['matte-training'].meeting, { stage: { x1: 62, y1: 1, x2: 76, y2: 3 } })
   for (let n = 1; n <= 4; n++) assert.equal(room.areas[`one-on-one-${n}`].capacity, 3)
   assert.equal(room.areas['matte-directors'].capacity, undefined)
@@ -108,4 +108,52 @@ test('the 1:1 shelves block walking and the training slide points to the middle 
   }
   const slide = room.interactions.find(object => object.id === 'training-screen').config.slides[0]
   assert.equal(slide.body, 'Quem está no palco apresenta e controla os microfones. Para falar, ligue seu microfone ou clique em Pedir para falar.')
+})
+
+test('the ground floor stairs lead upstairs and back', () => {
+  const [ground, upstairs] = map.rooms
+  for (const x of [50, 51, 52]) {
+    assert.deepEqual(ground.tilemap[`${x}, 26`].teleporter, { roomIndex: 1, x: 2, y: 23 })
+    assert.ok(ground.tilemap[`${x}, 27`].impassable && ground.tilemap[`${x}, 28`].impassable)
+  }
+  for (const x of [1, 2, 3]) {
+    assert.deepEqual(upstairs.tilemap[`${x}, 25`].teleporter, { roomIndex: 0, x: 51, y: 24 })
+    assert.ok(upstairs.tilemap[`${x}, 26`].impassable)
+  }
+  assert.ok(!ground.tilemap['51, 24'].impassable && !ground.tilemap['51, 24'].teleporter)
+  assert.ok(!upstairs.tilemap['2, 23'].impassable && !upstairs.tilemap['2, 23'].teleporter)
+})
+
+test('the second floor has 20 focus desks and 4 islands of 6', () => {
+  const upstairs = map.rooms[1]
+  assert.equal(upstairs.name, '2º andar')
+  assert.equal(upstairs.backgroundImage.src, '/matte-floor2.png')
+  assert.equal(Object.keys(upstairs.tilemap).length, 50 * 30)
+  const focus = upstairs.interactions.filter(item => item.kind === 'desk' && item.focus === true)
+  assert.equal(focus.length, 20)
+  for (let n = 1; n <= 4; n++) {
+    assert.equal(upstairs.areas[`island-${n}`].label, `Ilha ${n}`)
+    const seats = upstairs.interactions.filter(item => item.id.startsWith(`island-${n}-`))
+    assert.equal(seats.length, 6)
+    for (const seat of seats) assert.equal(upstairs.tilemap[`${seat.approach.x}, ${seat.approach.y}`].privateAreaId, `island-${n}`)
+  }
+  assert.equal(upstairs.interactions.filter(item => item.kind === 'seat' || item.kind === 'desk').length, 44)
+  for (const desk of focus) assert.equal(upstairs.tilemap[`${desk.approach.x}, ${desk.approach.y}`].privateAreaId, undefined)
+})
+
+test('every second floor seat is reachable from the stairs arrival', () => {
+  const { tilemap, interactions } = map.rooms[1]
+  const reachable = new Set(['2, 23'])
+  const queue = [[2, 23]]
+  for (let i = 0; i < queue.length; i++) {
+    const [cx, cy] = queue[i]
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const key = `${cx + dx}, ${cy + dy}`
+      if (tilemap[key] && !tilemap[key].impassable && !reachable.has(key)) { reachable.add(key); queue.push([cx + dx, cy + dy]) }
+    }
+  }
+  for (const object of interactions) assert.ok(reachable.has(`${object.approach.x}, ${object.approach.y}`), object.id)
+  assert.ok(map.rooms[1].signs.some(sign => sign.text === 'Área de foco · silêncio'))
+  assert.ok(map.rooms[1].signs.some(sign => sign.text === 'Escada · Térreo'))
+  assert.ok(map.rooms[0].signs.some(sign => sign.text === 'Escada · 2º andar'))
 })

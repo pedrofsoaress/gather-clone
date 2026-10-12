@@ -54,6 +54,7 @@ export const OfficeObjectSchema = z.object({
     facing: z.enum(['up', 'down', 'left', 'right']).optional(),
   }).optional(),
   sitRange: z.union([z.literal(0), z.literal(1)]).optional(),
+  focus: z.boolean().optional(),
   effect: z.enum(['coffee', 'water', 'snack']).optional(),
   config: ObjectConfigSchema.optional(),
 }).superRefine((object, context) => {

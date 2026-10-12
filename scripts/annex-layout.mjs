@@ -71,16 +71,21 @@ export const doors = [
   [80, 19, 81, 19],
 ]
 
+// Stairs to the second floor at the bottom of the corridor. The top step
+// (triggerY) sends people upstairs; `arrival` is where people from upstairs appear.
+export const groundStairs = { x1: 50, y1: 26, x2: 52, y2: 28, triggerY: 26, arrival: [51, 24] }
+
 export const signs = [
   { text: 'Salas →', x: 47.5, y: 14.3 },
   { text: training.label, x: 51.5, y: 6.3 },
   ...oneOnOnes.map(room => ({ text: room.label, x: room.x1 + 2.5, y: 18.5 })),
   { text: 'Diretoria · Pedro Soares', x: 81, y: 18.5 },
+  { text: 'Escada · 2º andar', x: 51.5, y: 24.6 },
 ]
 
 if (process.argv[1]?.endsWith('annex-layout.mjs')) {
   process.stdout.write(JSON.stringify({
     TILE, OFFICE_WIDTH, MAP_WIDTH, MAP_HEIGHT, passage, annex, corridor, hallway,
-    training, SEAT_VISUAL, CHAIR_OFFSET, oneOnOnes, directors, walls, doors, signs,
+    training, SEAT_VISUAL, CHAIR_OFFSET, oneOnOnes, directors, walls, doors, signs, groundStairs,
   }))
 }

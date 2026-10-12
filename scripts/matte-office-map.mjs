@@ -1,7 +1,8 @@
 // Generates the public Matte office. The artwork lives in frontend/public.
 // Run with `node scripts/matte-office-map.mjs > /tmp/matte-office.json`.
 
-import { MAP_WIDTH, MAP_HEIGHT, annex, passage, corridor, hallway, walls, doors, training, oneOnOnes, directors, signs, SEAT_VISUAL } from './annex-layout.mjs'
+import { MAP_WIDTH, MAP_HEIGHT, annex, passage, corridor, hallway, walls, doors, training, oneOnOnes, directors, signs, SEAT_VISUAL, groundStairs } from './annex-layout.mjs'
+import { FLOOR2_WIDTH, FLOOR2_HEIGHT, floor2Stairs, focusDesks, islands, floor2Signs } from './floor2-layout.mjs'
 
 const width = MAP_WIDTH
 const height = MAP_HEIGHT
@@ -11,88 +12,88 @@ for (let y = 0; y < height; y++) {
   for (let x = 0; x < width; x++) tilemap[`${x}, ${y}`] = {}
 }
 
-function tile(x, y) {
-  return tilemap[`${x}, ${y}`]
+function tile(map, x, y) {
+  return map[`${x}, ${y}`]
 }
 
-function block(x1, y1, x2, y2) {
+function block(map, x1, y1, x2, y2) {
   for (let y = y1; y <= y2; y++) {
-    for (let x = x1; x <= x2; x++) tile(x, y).impassable = true
+    for (let x = x1; x <= x2; x++) tile(map, x, y).impassable = true
   }
 }
 
-function open(x1, y1, x2, y2) {
+function open(map, x1, y1, x2, y2) {
   for (let y = y1; y <= y2; y++) {
-    for (let x = x1; x <= x2; x++) delete tile(x, y).impassable
+    for (let x = x1; x <= x2; x++) delete tile(map, x, y).impassable
   }
 }
 
 // Perimeter, partitions, and open doors between the rooms.
-block(0, 0, 49, 0)
-block(0, 29, 49, 29)
-block(0, 0, 0, 29)
-block(49, 0, 49, 29)
-open(passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1])
-block(1, 9, 16, 9)
-open(6, 9, 9, 9)
-block(18, 9, 31, 9)
-open(23, 9, 26, 9)
-block(34, 9, 48, 9)
-open(39, 9, 42, 9)
-block(1, 17, 17, 17)
-open(6, 17, 10, 17)
-block(33, 17, 48, 17)
-open(39, 17, 43, 17)
-block(17, 19, 17, 26)
-open(17, 25, 17, 26)
-block(32, 19, 32, 26)
-open(32, 25, 32, 26)
+block(tilemap, 0, 0, 49, 0)
+block(tilemap, 0, 29, 49, 29)
+block(tilemap, 0, 0, 0, 29)
+block(tilemap, 49, 0, 49, 29)
+open(tilemap, passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1])
+block(tilemap, 1, 9, 16, 9)
+open(tilemap, 6, 9, 9, 9)
+block(tilemap, 18, 9, 31, 9)
+open(tilemap, 23, 9, 26, 9)
+block(tilemap, 34, 9, 48, 9)
+open(tilemap, 39, 9, 42, 9)
+block(tilemap, 1, 17, 17, 17)
+open(tilemap, 6, 17, 10, 17)
+block(tilemap, 33, 17, 48, 17)
+open(tilemap, 39, 17, 43, 17)
+block(tilemap, 17, 19, 17, 26)
+open(tilemap, 17, 25, 17, 26)
+block(tilemap, 32, 19, 32, 26)
+open(tilemap, 32, 25, 32, 26)
 
 // Furniture is drawn in the background image; these rectangles keep players
 // from walking across desks, tables, sofas, counters, and the ping-pong table.
-block(3, 1, 9, 3)     // lounge bookshelf
-block(5, 4, 10, 6)    // lounge sofa
-block(7, 7, 8, 7)     // lounge coffee table
-block(21, 3, 28, 7)   // boardroom table
-block(35, 1, 47, 4)   // kitchen counter and vending machines
-block(38, 6, 40, 7)   // kitchen table; leave a path around each chair
-block(43, 6, 47, 7)   // kitchen bar; stools stay approachable from below
+block(tilemap, 3, 1, 9, 3)     // lounge bookshelf
+block(tilemap, 5, 4, 10, 6)    // lounge sofa
+block(tilemap, 7, 7, 8, 7)     // lounge coffee table
+block(tilemap, 21, 3, 28, 7)   // boardroom table
+block(tilemap, 35, 1, 47, 4)   // kitchen counter and vending machines
+block(tilemap, 38, 6, 40, 7)   // kitchen table; leave a path around each chair
+block(tilemap, 43, 6, 47, 7)   // kitchen bar; stools stay approachable from below
 for (const y of [11, 14]) {
-  block(5, y, 9, y + 1)
-  block(11, y, 15, y + 1)
-  block(35, y, 39, y + 1)
-  block(41, y, 45, y + 1)
+  block(tilemap, 5, y, 9, y + 1)
+  block(tilemap, 11, y, 15, y + 1)
+  block(tilemap, 35, y, 39, y + 1)
+  block(tilemap, 41, y, 45, y + 1)
 }
-block(22, 12, 28, 15) // shared project table
-block(2, 19, 5, 21)   // workshop shelves
-block(5, 22, 11, 24)  // workshop workbench
-block(21, 20, 28, 22) // reception desk
-block(35, 21, 38, 25) // ping-pong table
-block(42, 21, 47, 23) // games lounge sofa
+block(tilemap, 22, 12, 28, 15) // shared project table
+block(tilemap, 2, 19, 5, 21)   // workshop shelves
+block(tilemap, 5, 22, 11, 24)  // workshop workbench
+block(tilemap, 21, 20, 28, 22) // reception desk
+block(tilemap, 35, 21, 38, 25) // ping-pong table
+block(tilemap, 42, 21, 47, 23) // games lounge sofa
 
 // A private voice channel for the glass-walled boardroom.
 for (let y = 1; y <= 8; y++) {
-  for (let x = 18; x <= 31; x++) tile(x, y).privateAreaId = 'matte-boardroom'
+  for (let x = 18; x <= 31; x++) tile(tilemap, x, y).privateAreaId = 'matte-boardroom'
 }
 
 // Annex wing: walls with door openings, furniture, and the areas of each room.
-for (const [x1, y1, x2, y2] of walls) block(x1, y1, x2, y2)
-for (const [x1, y1, x2, y2] of doors) open(x1, y1, x2, y2)
-block(training.screen.x1, training.screen.y1, training.screen.x2, training.screen.y2)
+for (const [x1, y1, x2, y2] of walls) block(tilemap, x1, y1, x2, y2)
+for (const [x1, y1, x2, y2] of doors) open(tilemap, x1, y1, x2, y2)
+block(tilemap, training.screen.x1, training.screen.y1, training.screen.x2, training.screen.y2)
 for (const room of oneOnOnes) {
-  block(room.x1 + 1, 22, room.x1 + 3, 23) // round table
-  block(room.x1 + 4, 25, room.x1 + 4, 28) // shelves
+  block(tilemap, room.x1 + 1, 22, room.x1 + 3, 23) // round table
+  block(tilemap, room.x1 + 4, 25, room.x1 + 4, 28) // shelves
 }
-block(79, 21, 83, 22)                                                    // directors' desk
+block(tilemap, 79, 21, 83, 22)                                                    // directors' desk
 
-function area(rect, key, id) {
+function area(map, rect, key, id) {
   for (let y = rect.y1; y <= rect.y2; y++) {
-    for (let x = rect.x1; x <= rect.x2; x++) tile(x, y)[key] = id
+    for (let x = rect.x1; x <= rect.x2; x++) tile(map, x, y)[key] = id
   }
 }
-area(training.interior, 'privateAreaId', training.id)
-for (const room of oneOnOnes) area(room.interior, 'privateAreaId', room.id)
-area(directors.interior, 'privateAreaId', directors.id)
+area(tilemap, training.interior, 'privateAreaId', training.id)
+for (const room of oneOnOnes) area(tilemap, room.interior, 'privateAreaId', room.id)
+area(tilemap, directors.interior, 'privateAreaId', directors.id)
 
 const areas = {
   [training.id]: { label: training.label, meeting: { stage: { ...training.stage } } },
@@ -218,6 +219,46 @@ const interactions = [
   ...directorsObjects,
 ]
 
+// Ground floor stairs: the top step goes upstairs, the steps below are art only.
+for (let x = groundStairs.x1; x <= groundStairs.x2; x++) {
+  tile(tilemap, x, groundStairs.triggerY).teleporter = { roomIndex: 1, x: floor2Stairs.arrival[0], y: floor2Stairs.arrival[1] }
+}
+block(tilemap, groundStairs.x1, groundStairs.triggerY + 1, groundStairs.x2, groundStairs.y2)
+
+// Second floor.
+const floor2 = {}
+for (let y = 0; y < FLOOR2_HEIGHT; y++) for (let x = 0; x < FLOOR2_WIDTH; x++) floor2[`${x}, ${y}`] = {}
+block(floor2, 0, 0, FLOOR2_WIDTH - 1, 0)
+block(floor2, 0, FLOOR2_HEIGHT - 1, FLOOR2_WIDTH - 1, FLOOR2_HEIGHT - 1)
+block(floor2, 0, 0, 0, FLOOR2_HEIGHT - 1)
+block(floor2, FLOOR2_WIDTH - 1, 0, FLOOR2_WIDTH - 1, FLOOR2_HEIGHT - 1)
+for (let x = floor2Stairs.x1; x <= floor2Stairs.x2; x++) {
+  tile(floor2, x, floor2Stairs.triggerY).teleporter = { roomIndex: 0, x: groundStairs.arrival[0], y: groundStairs.arrival[1] }
+}
+block(floor2, floor2Stairs.x1, floor2Stairs.triggerY + 1, floor2Stairs.x2, floor2Stairs.y2)
+for (const desk of focusDesks) block(floor2, desk.x, desk.y, desk.x + 4, desk.y + 1)
+for (const island of islands) {
+  block(floor2, island.ox, island.oy, island.ox + 6, island.oy + 3)
+  area(floor2, island.area, 'privateAreaId', island.id)
+}
+
+const focusObjects = focusDesks.map((desk, index) => officeObject(desk.id, 'desk', `Área de foco · mesa ${index + 1}`,
+  [desk.x, desk.y, 5, 2], [desk.x + 2, desk.y + 2], { focus: true, seatVisual: { x: desk.x + 1.5, y: desk.y + 2.35, facing: 'up' } }))
+
+// Each island copies the six project-table chairs, shifted from the office table at (22, 12).
+const islandSeats = islands.flatMap(island => {
+  const dx = island.ox - 22
+  const dy = island.oy - 12
+  return [
+    officeObject(`${island.id}-top-left`, 'seat', `${island.label} · superior esquerda`, [22.9 + dx, 11.1 + dy, 1.2, 1.2], [23 + dx, 11 + dy], { seatVisual: { x: 23 + dx, y: 11.5 + dy, facing: 'down' } }),
+    officeObject(`${island.id}-top-right`, 'seat', `${island.label} · superior direita`, [26 + dx, 11.1 + dy, 1.2, 1.2], [26 + dx, 11 + dy], { seatVisual: { x: 26.1 + dx, y: 11.5 + dy, facing: 'down' } }),
+    officeObject(`${island.id}-left`, 'seat', `${island.label} · lateral esquerda`, [21.2 + dx, 13 + dy, 1.2, 2], [20 + dx, 14 + dy], { seatVisual: { x: 21.35 + dx, y: 13.6 + dy, facing: 'right' } }),
+    officeObject(`${island.id}-right`, 'seat', `${island.label} · lateral direita`, [27.8 + dx, 13 + dy, 1.2, 2], [29 + dx, 14 + dy], { seatVisual: { x: 28.1 + dx, y: 13.6 + dy, facing: 'left' } }),
+    officeObject(`${island.id}-bottom-left`, 'seat', `${island.label} · inferior esquerda`, [22.9 + dx, 14.8 + dy, 1.2, 1.3], [23 + dx, 16 + dy], { seatVisual: { x: 23 + dx, y: 15.3 + dy, facing: 'up' } }),
+    officeObject(`${island.id}-bottom-right`, 'seat', `${island.label} · inferior direita`, [26 + dx, 14.8 + dy, 1.2, 1.3], [26 + dx, 16 + dy], { seatVisual: { x: 26.1 + dx, y: 15.3 + dy, facing: 'up' } }),
+  ]
+})
+
 const map = {
   rooms: [{
     name: 'Escritório Matte',
@@ -227,6 +268,13 @@ const map = {
     areas,
     annex,
     signs,
+  }, {
+    name: '2º andar',
+    backgroundImage: { src: '/matte-floor2.png', width: FLOOR2_WIDTH * 32, height: FLOOR2_HEIGHT * 32 },
+    tilemap: floor2,
+    interactions: [...focusObjects, ...islandSeats],
+    areas: Object.fromEntries(islands.map(island => [island.id, { label: island.label }])),
+    signs: floor2Signs,
   }],
   spawnpoint: { roomIndex: 0, x: 25, y: 18 },
 }

@@ -48,6 +48,7 @@ export interface OfficeObject {
     approach: { x: number, y: number },
     seatVisual?: { x: number, y: number, facing?: 'up' | 'down' | 'left' | 'right' },
     sitRange?: 0 | 1,
+    focus?: boolean,
     effect?: 'coffee' | 'water' | 'snack',
     config?: { url: string, allowedHosts: string[], roomEditable: boolean } | { deckId: string, slides: { title: string, body?: string, imageUrl?: string }[] } | { rangeTiles: number, flat?: boolean } | { animationSet: string } | { radiusTiles: number, color: string, intensity: number },
 }
