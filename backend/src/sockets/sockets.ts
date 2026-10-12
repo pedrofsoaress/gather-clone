@@ -6,7 +6,7 @@ import { users } from '../Users'
 import { sessionManager, Session, MAX_PLAYERS_PER_SPACE } from '../session'
 import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand, FocusKnock, FocusAnswer } from './socket-types'
 import { removeExtraSpaces } from '../utils'
-import { kickPlayer, sendMeeting, leaveMeeting, sendProximity } from './helpers'
+import { kickPlayer, sendMeeting, leaveMeeting, sendProximity, sendConversationToken } from './helpers'
 import { KNOCK_ANSWER_MS, withinReach } from '../office/FocusState'
 import { formatEmailToName } from '../utils'
 import { OfficeNotes, validNoteObject, noteStorageKey } from '../office/OfficeNotes'
@@ -171,6 +171,7 @@ export function sockets(io: Server) {
 
                 socket.join(realmData.realmId)
                 socket.emit('joinedRealm', { roomIndex: player.room, x: player.x, y: player.y })
+                sendConversationToken(newSession, uid)
                 emit('playerJoinedRoom', player)
                 sendMeeting(newSession, uid)
                 joiningInProgress.delete(uid)
@@ -254,6 +255,8 @@ export function sockets(io: Server) {
                     const meetingBefore = meetingKey(session, uid)
                     const previousMeeting = session.meetingOf(uid)
                     const changed = session.movePlayer(uid, parsed.data.x, parsed.data.y)
+                    // Before the ack: the client joins its private area as soon as the step is confirmed.
+                    sendConversationToken(session, uid)
                     const meetingAfter = meetingKey(session, uid)
                     if (meetingBefore !== meetingAfter) {
                         if (previousMeeting && previousMeeting.areaId !== session.meetingOf(uid)?.areaId) {
@@ -293,7 +296,11 @@ export function sockets(io: Server) {
             }
             ack(result.ok ? result : { ...result, verifiedPosition: session.featuresFor(uid).office.verifiedPosition(uid) })
             if (result.changed) broadcastRoom(io, session, session.getPlayerRoom(uid), 'officeStateChanged', session.featuresFor(uid).office.snapshot())
-            if (result.changed) sendProximity(session, session.setProximityIdsWithPlayer(uid))
+            if (result.changed) {
+                const changed = session.setProximityIdsWithPlayer(uid)
+                sendConversationToken(session, uid)
+                sendProximity(session, changed)
+            }
             if (result.ok && result.effect) broadcastRoom(io, session, session.getPlayerRoom(uid), 'officeEffect', {
                 objectId: parsed.data.objectId, effect: result.effect, uid, name: session.getPlayer(uid).username,
             })
@@ -587,6 +594,7 @@ export function sockets(io: Server) {
             if (!source || source.roomIndex !== data.roomIndex || source.x !== data.x || source.y !== data.y || !destination || destination.impassable) return reject()
             if (oldRoom !== data.roomIndex) emit('playerLeftRoom', uid)
             const changedPlayers = session.changeRoom(uid, data.roomIndex, data.x, data.y)
+            sendConversationToken(session, uid)
             ack({ ok: true, proximityId: player.proximityId, roomIndex: player.room, verifiedPosition: session.featuresFor(uid).office.verifiedPosition(uid) })
             if (oldRoom !== data.roomIndex) emit('playerJoinedRoom', player)
             else emit('playerTeleported', { uid, x: player.x, y: player.y })

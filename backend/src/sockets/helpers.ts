@@ -1,11 +1,22 @@
 import { sessionManager, Session } from '../session'
 import { io } from '..'
 
+// Pushes the Agora token of the conversation `uid` is in now, so the client
+// has it before deciding to join. Nothing when it is unchanged or the server has no credentials.
+export function sendConversationToken(session: Session, uid: string) {
+    const player = session.getPlayer(uid)
+    if (!player) return
+    const next = session.conversationTokens.next(session, uid)
+    if (next) io.to(player.socketId).emit('conversationToken', next)
+}
+
 // Tells each player in `changed` which proximity call they are in now.
 export function sendProximity(session: Session, changed: Iterable<string>) {
     for (const changedUid of changed) {
         const player = session.getPlayer(changedUid)
-        if (player) io.to(player.socketId).emit('proximityUpdate', { proximityId: player.proximityId })
+        if (!player) continue
+        sendConversationToken(session, changedUid)
+        io.to(player.socketId).emit('proximityUpdate', { proximityId: player.proximityId })
     }
 }
 

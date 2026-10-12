@@ -9,6 +9,7 @@ import { SpeakerState } from './office/SpeakerState'
 import { AvatarActions } from './office/AvatarActions'
 import { MeetingState } from './office/MeetingState'
 import { FocusState, withinReach } from './office/FocusState'
+import { ConversationTokens } from './office/ConversationToken'
 
 export type RealmData = {
     spawnpoint: {
@@ -172,6 +173,7 @@ export class Session {
     private readonly meetings = new Map<string, MeetingState>()
 
     public focus = new FocusState()
+    public readonly conversationTokens = new ConversationTokens()
 
     constructor(id: string, mapData: RealmData) {
         validateOfficeMap(mapData)
@@ -226,6 +228,7 @@ export class Session {
 
     public removePlayer(uid: string): void {
         if (!this.players[uid]) return
+        this.conversationTokens.forget(uid)
         const features = this.featuresFor(uid)
         features.presentations.removePlayer(uid)
         features.speakers.removePlayer(uid)

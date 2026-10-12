@@ -5,13 +5,20 @@ export function conversationChannel(realmId: string, roomIndex: number, groupId:
   return createHash('md5').update(`${realmId}-${roomIndex}-${groupId}`).digest('hex').slice(0, 16)
 }
 
-export function authorizeConversation(session: Session | undefined, authenticatedUid: string, channel: string, mediaUid: string): { channel: string, uid: string } | null {
-  const player = session?.getPlayer(authenticatedUid)
-  if (!session || !player || (mediaUid !== authenticatedUid && mediaUid !== `${authenticatedUid}-screen`)) return null
-  const position = session.featuresFor(authenticatedUid).office.verifiedPosition(authenticatedUid)
+// The Agora channel of the conversation `uid` is in now: the private area of their
+// verified tile, else their proximity call. Null when they are in none.
+export function conversationChannelFor(session: Session, uid: string): string | null {
+  const player = session.getPlayer(uid)
+  if (!player) return null
+  const position = session.featuresFor(uid).office.verifiedPosition(uid)
   if (!position) return null
   const room = session.map_data.rooms[player.room]
   const group = room.tilemap[`${position.x}, ${position.y}`]?.privateAreaId || player.proximityId
-  if (!group || conversationChannel(session.id, player.room, group) !== channel) return null
+  return group ? conversationChannel(session.id, player.room, group) : null
+}
+
+export function authorizeConversation(session: Session | undefined, authenticatedUid: string, channel: string, mediaUid: string): { channel: string, uid: string } | null {
+  if (!session || (mediaUid !== authenticatedUid && mediaUid !== `${authenticatedUid}-screen`)) return null
+  if (conversationChannelFor(session, authenticatedUid) !== channel) return null
   return { channel, uid: mediaUid }
 }
