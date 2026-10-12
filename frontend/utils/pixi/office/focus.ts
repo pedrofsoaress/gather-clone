@@ -4,7 +4,7 @@ export function focusedUids(objects: { id: string, focus?: boolean }[], occupanc
     return new Set(Object.entries(occupancy).filter(([id]) => focusIds.has(id)).map(([, seat]) => seat.uid))
 }
 
-// The focused person this visitor can knock on: the closest within the proximity circle.
+// The focused person this visitor can knock on: the closest within the knock reach (2.5 tiles).
 export function nearestFocused(me: { x: number, y: number }, people: { uid: string, name: string, x: number, y: number }[], focused: Set<string>): { uid: string, name: string } | null {
     const candidates = people
         .filter(person => focused.has(person.uid))

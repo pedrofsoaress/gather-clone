@@ -6,7 +6,7 @@ export type FocusResult = { ok: true, knock: Knock } | { ok: false, error: strin
 export const KNOCK_ANSWER_MS = 30_000
 export const KNOCK_COOLDOWN_MS = 60_000
 
-// Same circle as the proximity tiles (radius 2.5): close enough to talk.
+// The knock reach (radius 2.5 tiles): close enough to talk to someone in focus.
 export function withinReach(a: { x: number, y: number }, b: { x: number, y: number }): boolean {
     const dx = a.x - b.x
     const dy = a.y - b.y

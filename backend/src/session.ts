@@ -67,6 +67,8 @@ export interface Player {
 }
 
 export const defaultSkin = '009'
+const PROXIMITY_RADIUS = 3.5
+const SEATED_PROXIMITY_RADIUS = 2.5
 export const MAX_PLAYERS_PER_SPACE = 80
 
 export const Spawnpoint = z.object({
@@ -365,6 +367,9 @@ export class Session {
         }
         const zoneOf = (player: Player) => focusZone(player) ?? this.map_data.rooms[player.room].tilemap[`${player.x}, ${player.y}`]?.privateAreaId ?? null
         const inStage = (player: Player) => isStageArea(this.map_data.rooms[player.room], areaAt(this.map_data.rooms[player.room], player.x, player.y))
+        const seated = new Set(players.filter(player => this.roomFeatures[player.room].office.seatOf(player.uid)).map(player => player.uid))
+        // Two people working at their seats (front and back desks are 3 tiles apart) keep the shorter reach.
+        const tooFarWhileSeated = (a: Player, b: Player) => seated.has(a.uid) && seated.has(b.uid) && (a.x - b.x) ** 2 + (a.y - b.y) ** 2 > SEATED_PROXIMITY_RADIUS ** 2
         for (const player of players) {
             if (!byRoomTile.has(player.room)) byRoomTile.set(player.room, new Map())
             const roomTiles = byRoomTile.get(player.room)!
@@ -383,7 +388,7 @@ export class Session {
                 const member = group[index]
                 for (const tile of this.getProximityTiles(member.x, member.y)) {
                     for (const neighbor of byRoomTile.get(member.room)?.get(tile) ?? []) {
-                        if (visited.has(neighbor.uid) || zoneOf(neighbor) !== zone || inStage(member) || inStage(neighbor)) continue
+                        if (visited.has(neighbor.uid) || zoneOf(neighbor) !== zone || inStage(member) || inStage(neighbor) || tooFarWhileSeated(member, neighbor)) continue
                         visited.add(neighbor.uid)
                         group.push(neighbor)
                     }
@@ -427,7 +432,9 @@ export class Session {
         const proximityTiles: string[] = []
         // Keep spontaneous calls close to the avatars. A circular boundary
         // prevents diagonal corners from reaching into distant workstations.
-        const radius = 3.5
+        // 3.5 tiles lets the call connect while people walk up to each other;
+        // two seated people only within SEATED_PROXIMITY_RADIUS (see setProximityIdsWithPlayer).
+        const radius = PROXIMITY_RADIUS
         const range = Math.floor(radius)
 
         for (let dx = -range; dx <= range; dx++) {

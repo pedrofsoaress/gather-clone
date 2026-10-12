@@ -170,8 +170,8 @@ export function sockets(io: Server) {
                 const player = newSession.getPlayer(uid)   
 
                 socket.join(realmData.realmId)
-                socket.emit('joinedRealm', { roomIndex: player.room, x: player.x, y: player.y })
                 sendConversationToken(newSession, uid)
+                socket.emit('joinedRealm', { roomIndex: player.room, x: player.x, y: player.y })
                 emit('playerJoinedRoom', player)
                 sendMeeting(newSession, uid)
                 joiningInProgress.delete(uid)
