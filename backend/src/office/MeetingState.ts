@@ -15,6 +15,13 @@ export class MeetingState {
         this.raised.delete(uid)
     }
 
+    // An emptied meeting starts over: unlocked, nobody allowed, no raised hands.
+    reset(): void {
+        this.locked = false
+        this.allowed.clear()
+        this.raised.clear()
+    }
+
     snapshot(areaId: string, moderators: string[]): MeetingSnapshot {
         return { areaId, locked: this.locked, allowed: [...this.allowed].sort(), raised: [...this.raised].sort(), moderators: [...moderators].sort() }
     }

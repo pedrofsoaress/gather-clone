@@ -305,6 +305,16 @@ export class Session {
         return { areaId, state: this.meetings.get(key)!, members: members.map(other => other.uid), moderators: members.filter(onStage).map(other => other.uid) }
     }
 
+    // Takes the visitor out of a meeting read before they moved or left. Returns a member who stays,
+    // or null when the meeting emptied, which resets it so the next one starts unlocked.
+    public leaveMeeting(uid: string, meeting: { state: MeetingState, members: string[] }): string | null {
+        meeting.state.leave(uid)
+        const remaining = meeting.members.find(member => member !== uid)
+        if (remaining) return remaining
+        meeting.state.reset()
+        return null
+    }
+
     public movePlayer(uid: string, x: number, y: number): string[] {
         const oldCoordKey = `${this.players[uid].x}, ${this.players[uid].y}`
         if (this.playerPositions[this.players[uid].room][oldCoordKey]) {

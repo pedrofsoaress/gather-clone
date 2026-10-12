@@ -52,3 +52,21 @@ test('the meeting state survives the moderator leaving the stage', () => {
     assert.equal(meeting.state.locked, true)
     assert.equal(meeting.state.canSpeak('ana', false), true)
 })
+
+test('the last member leaving resets the meeting; earlier ones keep it', () => {
+    const { session, add } = setup()
+    add('host', 12, 0); add('ana', 12, 3)
+    const state = session.meetingOf('host')!.state
+    state.locked = true; state.allowed.add('ana'); state.raised.add('host')
+    const hostLeft = session.meetingOf('host')!
+    session.movePlayer('host', 3, 3)
+    assert.equal(session.leaveMeeting('host', hostLeft), 'ana')
+    assert.equal(state.locked, true)
+    assert.equal(state.raised.size, 0)
+    const anaLeft = session.meetingOf('ana')!
+    session.removePlayer('ana')
+    assert.equal(session.leaveMeeting('ana', anaLeft), null)
+    assert.deepEqual(state.snapshot('matte-training', []), { areaId: 'matte-training', locked: false, allowed: [], raised: [], moderators: [] })
+    add('bia', 12, 3)
+    assert.equal(session.meetingOf('bia')!.state.locked, false, 'the next training starts unlocked')
+})

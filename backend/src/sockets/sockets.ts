@@ -6,7 +6,7 @@ import { users } from '../Users'
 import { sessionManager, Session, MAX_PLAYERS_PER_SPACE } from '../session'
 import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand } from './socket-types'
 import { removeExtraSpaces } from '../utils'
-import { kickPlayer } from './helpers'
+import { kickPlayer, sendMeeting, leaveMeeting } from './helpers'
 import { formatEmailToName } from '../utils'
 import { OfficeNotes, validNoteObject, noteStorageKey } from '../office/OfficeNotes'
 import { canReceiveNearbyChat } from '../office/chat'
@@ -109,12 +109,6 @@ export function sockets(io: Server) {
         }
 
         // Training-room meeting: stage moderators control microphones and cameras.
-        const sendMeeting = (session: Session, uid: string) => {
-            const meeting = session.meetingOf(uid)
-            if (!meeting) return
-            const snapshot = meeting.state.snapshot(meeting.areaId, meeting.moderators)
-            for (const member of meeting.members) io.to(session.getPlayer(member).socketId).emit('meetingState', snapshot)
-        }
         const meetingKey = (session: Session, uid: string) => {
             const meeting = session.meetingOf(uid)
             return meeting ? `${meeting.areaId}|${meeting.moderators.includes(uid)}` : null
@@ -213,11 +207,7 @@ export function sockets(io: Server) {
             const leavingMeeting = session.meetingOf(uid)
             const success = sessionManager.logOutBySocketId(socket.id)
             if (success) {
-                if (leavingMeeting) {
-                    leavingMeeting.state.leave(uid)
-                    const remaining = leavingMeeting.members.find(member => member !== uid)
-                    if (remaining) sendMeeting(session, remaining)
-                }
+                leaveMeeting(session, uid, leavingMeeting)
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
                 users.removeUser(uid)
                 broadcastRoomFeatures(io, session, room)
@@ -272,10 +262,8 @@ export function sockets(io: Server) {
                     const meetingAfter = meetingKey(session, uid)
                     if (meetingBefore !== meetingAfter) {
                         if (previousMeeting && previousMeeting.areaId !== session.meetingOf(uid)?.areaId) {
-                            previousMeeting.state.leave(uid)
                             socket.emit('meetingState', null)
-                            const remaining = previousMeeting.members.find(member => member !== uid)
-                            if (remaining) sendMeeting(session, remaining)
+                            leaveMeeting(session, uid, previousMeeting)
                         }
                         sendMeeting(session, uid)
                     }
@@ -366,6 +354,7 @@ export function sockets(io: Server) {
             ack({ ok: true, snapshot: meeting ? meeting.state.snapshot(meeting.areaId, meeting.moderators) : null })
         })
 
+        let lastRaiseHandAt = 0
         socket.on('meetingRaiseHand', (raw: unknown, ack: unknown) => {
             const reply = (result: { ok: boolean, error?: string }) => { if (typeof ack === 'function') ack(result) }
             const uid = socket.handshake.query.uid as string
@@ -373,6 +362,8 @@ export function sockets(io: Server) {
             const session = sessionManager.getPlayerSession(uid)
             const meeting = session?.meetingOf(uid)
             if (!parsed.success || !session || !meeting || session.getPlayer(uid)?.socketId !== socket.id) return reply({ ok: false, error: 'Você não está na sala de treinamento.' })
+            if (Date.now() - lastRaiseHandAt < 1000) return reply({ ok: false, error: 'Aguarde um instante antes de pedir de novo.' })
+            lastRaiseHandAt = Date.now()
             if (parsed.data.raised) meeting.state.raised.add(uid)
             else meeting.state.raised.delete(uid)
             sendMeeting(session, uid)

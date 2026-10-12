@@ -25,3 +25,10 @@ test('snapshots are plain sorted arrays', () => {
     meeting.locked = true; meeting.raised.add('bia'); meeting.raised.add('ana'); meeting.allowed.add('caio')
     assert.deepEqual(meeting.snapshot('matte-training', ['host']), { areaId: 'matte-training', locked: true, allowed: ['caio'], raised: ['ana', 'bia'], moderators: ['host'] })
 })
+
+test('reset unlocks and clears permissions and raised hands', () => {
+    const meeting = new MeetingState()
+    meeting.locked = true; meeting.allowed.add('ana'); meeting.raised.add('bia')
+    meeting.reset()
+    assert.deepEqual(meeting.snapshot('matte-training', []), { areaId: 'matte-training', locked: false, allowed: [], raised: [], moderators: [] })
+})
