@@ -81,8 +81,10 @@ export default function FocusControls() {
         if (!nearby || pendingUid || inFlight.current || typeof server.socket.emit !== 'function' || !server.socket.connected) return
         const target = nearby
         inFlight.current = true
-        server.socket.emit('focusKnock', { targetUid: target.uid }, (result: Ack) => {
+        // timeout() always calls back, even if the connection drops before the answer.
+        server.socket.timeout(8000).emit('focusKnock', { targetUid: target.uid }, (timeout: Error | null, response: Ack) => {
             inFlight.current = false
+            const result = timeout ? undefined : response
             if (result?.ok) {
                 setPendingUid(target.uid)
                 if (pendingTimer.current) clearTimeout(pendingTimer.current)
