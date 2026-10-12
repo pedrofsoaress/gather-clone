@@ -28,33 +28,62 @@ function open(map, x1, y1, x2, y2) {
   }
 }
 
-// Perimeter, partitions, and open doors between the rooms.
-block(tilemap, 0, 0, 49, 0)
-block(tilemap, 0, 29, 49, 29)
-block(tilemap, 0, 0, 0, 29)
-block(tilemap, 49, 0, 49, 29)
-open(tilemap, passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1])
-block(tilemap, 1, 9, 16, 9)
-open(tilemap, 6, 9, 9, 9)
-block(tilemap, 18, 9, 31, 9)
-open(tilemap, 23, 9, 26, 9)
-block(tilemap, 34, 9, 48, 9)
-open(tilemap, 39, 9, 42, 9)
-block(tilemap, 1, 17, 17, 17)
-open(tilemap, 6, 17, 10, 17)
-block(tilemap, 33, 17, 48, 17)
-open(tilemap, 39, 17, 43, 17)
-block(tilemap, 17, 19, 17, 26)
-open(tilemap, 17, 25, 17, 26)
-block(tilemap, 32, 19, 32, 26)
-open(tilemap, 32, 25, 32, 26)
+// Office walls, as drawn in the office art (frontend/public/matte-office-v2.png),
+// checked tile by tile on an overlay of this map on the art. Rectangles are
+// inclusive [x1, y1, x2, y2]. The wood bands in the partitions are windows, not
+// doors: the rooms open onto the two brick corridors (x 16..17 and 32..33) that
+// run down from the stair doorways.
+const officeWalls = {
+  top: [0, 0, 49, 0],
+  bottom: [0, 29, 49, 29],
+  west: [0, 0, 0, 29],
+  east: [49, 0, 49, 29],
+  backWallFace: [1, 1, 48, 1],          // face of the top wall, with the stair door panels in it
+  loungeBackWall: [1, 2, 15, 2],        // the lounge's wall face reaches down to row 2
+  loungeStairPanel: [15, 3, 15, 3],     // glass panel left of the left stair doorway
+  kitchenStairPanel: [34, 2, 34, 3],    // glass panel right of the right stair doorway
+  kitchenEast: [48, 1, 48, 8],          // the east wall is thicker along the kitchen
+  boardroomWest: [18, 1, 18, 9],        // glass walls of the boardroom
+  boardroomEast: [31, 1, 31, 9],
+  boardroomGlassLeft: [19, 8, 22, 8],
+  boardroomGlassRight: [28, 8, 30, 8],
+  boardroomSill: [18, 9, 31, 9],
+  loungePartition: [1, 9, 15, 9],
+  kitchenPartition: [34, 9, 48, 9],
+  workshopPartition: [1, 17, 17, 17],
+  gamesPartition: [32, 17, 48, 17],
+  workshopEast: [17, 17, 17, 27],
+  gamesWest: [32, 17, 32, 27],
+  workshopFront: [1, 27, 16, 27],       // front wall of the office, beside the entrance
+  gamesFront: [33, 27, 48, 27],
+  entranceLeft: [18, 25, 19, 27],
+  entranceLeftWindow: [20, 26, 22, 27],
+  entranceRightWindow: [28, 26, 29, 27],
+  entranceRightFrame: [27, 27, 27, 27], // (27, 26) above it is a reception armchair's approach tile
+  entranceRight: [30, 25, 31, 27],
+}
+
+// Openings in those walls. The boardroom's glass row 8 is not blocked from 23
+// to 27: its door spans 23..26 (like the opening in the sill below), and 27 is
+// the approach tile of the bottom right chair.
+const officeOpenings = {
+  annexPassage: [passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1]],
+  loungeCorridor: [16, 9, 17, 9],
+  kitchenCorridor: [32, 9, 33, 9],
+  boardroomDoor: [23, 9, 26, 9],
+  workshopDoor: [16, 17, 16, 17],
+  gamesDoor: [33, 17, 33, 17],
+}
+
+for (const [x1, y1, x2, y2] of Object.values(officeWalls)) block(tilemap, x1, y1, x2, y2)
+for (const [x1, y1, x2, y2] of Object.values(officeOpenings)) open(tilemap, x1, y1, x2, y2)
 
 // Furniture is drawn in the background image; these rectangles keep players
 // from walking across desks, tables, sofas, counters, and the ping-pong table.
 block(tilemap, 3, 1, 9, 3)     // lounge bookshelf
 block(tilemap, 5, 4, 10, 6)    // lounge sofa
 block(tilemap, 7, 7, 8, 7)     // lounge coffee table
-block(tilemap, 21, 3, 28, 7)   // boardroom table
+block(tilemap, 21, 3, 28, 6)   // boardroom table; its chair row 7 is the way round inside the glass
 block(tilemap, 35, 1, 47, 4)   // kitchen counter and vending machines
 block(tilemap, 38, 6, 40, 7)   // kitchen table; leave a path around each chair
 block(tilemap, 43, 6, 47, 7)   // kitchen bar; stools stay approachable from below
@@ -70,6 +99,15 @@ block(tilemap, 5, 22, 11, 24)  // workshop workbench
 block(tilemap, 21, 20, 28, 22) // reception desk
 block(tilemap, 35, 21, 38, 25) // ping-pong table
 block(tilemap, 42, 21, 47, 23) // games lounge sofa
+// Built-in pieces standing against the walls.
+block(tilemap, 15, 7, 15, 8)   // lounge slatted divider
+block(tilemap, 1, 10, 2, 13)   // left work area file cabinet and the board on it
+block(tilemap, 48, 10, 48, 13) // right work area tall shelf
+block(tilemap, 2, 18, 4, 18)   // things on top of the workshop shelves
+block(tilemap, 16, 22, 16, 24) // workshop sideboard
+block(tilemap, 1, 24, 2, 26)   // workshop side table by the west wall
+block(tilemap, 3, 25, 3, 26)   // workshop aquarium cabinet
+block(tilemap, 33, 22, 33, 24) // games room sideboard
 
 // A private voice channel for the glass-walled boardroom.
 for (let y = 1; y <= 8; y++) {
@@ -80,6 +118,8 @@ for (let y = 1; y <= 8; y++) {
 for (const [x1, y1, x2, y2] of walls) block(tilemap, x1, y1, x2, y2)
 for (const [x1, y1, x2, y2] of doors) open(tilemap, x1, y1, x2, y2)
 block(tilemap, training.screen.x1, training.screen.y1, training.screen.x2, training.screen.y2)
+block(tilemap, corridor.x1, 1, MAP_WIDTH - 2, 1)                       // face of the back wall
+for (const x of [training.stage.x1, training.stage.x2]) block(tilemap, x, 2, x, 2) // stage speakers
 for (const room of oneOnOnes) {
   block(tilemap, room.x1 + 1, 22, room.x1 + 3, 23) // round table
   block(tilemap, room.x1 + 4, 25, room.x1 + 4, 28) // shelves

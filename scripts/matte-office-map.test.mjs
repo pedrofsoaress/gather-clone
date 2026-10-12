@@ -34,27 +34,63 @@ test('every functional Matte fixture has a distinct hotspot', () => {
 
 test('every hotspot fits the art and has a reachable approach tile', () => {
   const { tilemap, interactions } = map.rooms[0]
-  const { x, y } = map.spawnpoint
-  const reachable = new Set([`${x}, ${y}`])
-  const queue = [[x, y]]
-  for (let i = 0; i < queue.length; i++) {
-    const [currentX, currentY] = queue[i]
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nextX = currentX + dx
-      const nextY = currentY + dy
-      const key = `${nextX}, ${nextY}`
-      if (tilemap[key] && !tilemap[key].impassable && !reachable.has(key)) {
-        reachable.add(key)
-        queue.push([nextX, nextY])
-      }
-    }
-  }
-
+  const reachable = reachableFrom(tilemap, map.spawnpoint.x, map.spawnpoint.y)
   for (const object of interactions) {
     const { x: left, y: top, width, height } = object.bounds
     assert.ok(left >= 0 && top >= 0, object.id)
     assert.ok(left + width <= 86 && top + height <= 30, object.id)
     assert.ok(reachable.has(`${object.approach.x}, ${object.approach.y}`), object.id)
+  }
+})
+
+const blocked = (room, x1, y1, x2, y2) => {
+  for (let y = y1; y <= y2; y++) for (let x = x1; x <= x2; x++) assert.equal(room.tilemap[`${x}, ${y}`].impassable, true, `${x}, ${y} is a wall`)
+}
+const walkable = (room, x1, y1, x2, y2) => {
+  for (let y = y1; y <= y2; y++) for (let x = x1; x <= x2; x++) assert.ok(!room.tilemap[`${x}, ${y}`].impassable, `${x}, ${y} is open`)
+}
+
+test('the boardroom glass walls block, except the door', () => {
+  const ground = map.rooms[0]
+  blocked(ground, 18, 1, 18, 9)
+  blocked(ground, 31, 1, 31, 9)
+  blocked(ground, 19, 1, 30, 1)
+  blocked(ground, 19, 8, 22, 8)
+  blocked(ground, 28, 8, 30, 8)
+  walkable(ground, 23, 8, 26, 9)
+  walkable(ground, 19, 2, 20, 7)    // the way round the table inside the glass
+  walkable(ground, 21, 7, 28, 7)
+})
+
+test('the office walls block where the art draws them', () => {
+  const ground = map.rooms[0]
+  blocked(ground, 1, 1, 48, 1)      // top wall face, door panels of the stair doorways included
+  blocked(ground, 1, 2, 15, 2)      // the lounge wall face reaches row 2
+  blocked(ground, 1, 9, 15, 9)      // lounge partition: its wood band is a window
+  blocked(ground, 34, 9, 48, 9)     // kitchen partition
+  walkable(ground, 16, 9, 17, 9)    // the corridors from the stair doorways
+  walkable(ground, 32, 9, 33, 9)
+  blocked(ground, 1, 17, 15, 17)    // work area partitions, doors at 16 and 33
+  blocked(ground, 17, 17, 17, 27)
+  blocked(ground, 32, 17, 32, 27)
+  blocked(ground, 34, 17, 48, 17)
+  walkable(ground, 16, 16, 16, 18)
+  walkable(ground, 33, 16, 33, 18)
+  blocked(ground, 1, 27, 16, 27)    // front wall beside the entrance
+  blocked(ground, 33, 27, 48, 27)
+  blocked(ground, 18, 25, 19, 27)
+  blocked(ground, 30, 25, 31, 27)
+  walkable(ground, 23, 26, 26, 28) // the glass entrance doors
+  blocked(ground, 50, 1, 84, 1)     // the annex back wall face
+  walkable(ground, 49, 15, 49, 16)  // the passage to the annex
+})
+
+test('no approach tile is a wall on either floor', () => {
+  for (const room of map.rooms) {
+    for (const object of room.interactions) {
+      const tile = room.tilemap[`${object.approach.x}, ${object.approach.y}`]
+      assert.ok(tile && !tile.impassable && !tile.teleporter, `${room.name}: ${object.id}`)
+    }
   }
 })
 
@@ -175,15 +211,7 @@ test('the second floor has 20 focus desks and 4 islands of 6', () => {
 
 test('every second floor seat is reachable from the stairs arrival', () => {
   const { tilemap, interactions } = map.rooms[1]
-  const reachable = new Set(['2, 23'])
-  const queue = [[2, 23]]
-  for (let i = 0; i < queue.length; i++) {
-    const [cx, cy] = queue[i]
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const key = `${cx + dx}, ${cy + dy}`
-      if (tilemap[key] && !tilemap[key].impassable && !reachable.has(key)) { reachable.add(key); queue.push([cx + dx, cy + dy]) }
-    }
-  }
+  const reachable = reachableFrom(tilemap, 2, 23)
   for (const object of interactions) assert.ok(reachable.has(`${object.approach.x}, ${object.approach.y}`), object.id)
   assert.ok(map.rooms[1].signs.some(sign => sign.text === 'Área de foco · silêncio'))
   assert.ok(map.rooms[1].signs.some(sign => sign.text === 'Escada · Térreo'))
