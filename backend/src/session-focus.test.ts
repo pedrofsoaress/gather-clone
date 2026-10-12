@@ -12,11 +12,11 @@ function setup() {
     const interactions = [desk('focus-a', 1, 2, true), desk('focus-b', 5, 6, true), desk('plain', 9, 10, false)]
     const session = new Session('office', { spawnpoint: { roomIndex: 0, x: 0, y: 5 }, rooms: [{ name: 'Matte', tilemap, interactions }] })
     const add = (uid: string, x: number, y: number) => { session.addPlayer(`s-${uid}`, uid, uid, '009'); session.roomFeatures[0].office.addPlayer(uid, { x, y }, uid); session.movePlayer(uid, x, y) }
-    // Starts one tile below the desk's approach tile and steps onto it, which seats the visitor.
+    // Focus desks are never taken by walking past: the visitor stands at the approach tile and clicks the desk.
     const sitAt = (uid: string, x: number) => {
-        add(uid, x, 4)
-        assert.ok(session.roomFeatures[0].office.step(uid, { x, y: 3 }).ok)
-        session.movePlayer(uid, x, 3)
+        add(uid, x, 3)
+        assert.ok(session.roomFeatures[0].office.occupy(uid, x < 4 ? 'focus-a' : 'focus-b').ok)
+        session.setProximityIdsWithPlayer(uid)
     }
     const pair = (focused: string, knocker: string) => {
         let n = 0
@@ -76,6 +76,11 @@ test('an accepted knock joins the two; walking away or standing up ends it', () 
     pair('ana', 'bia')
     assert.ok(session.getPlayer('ana').proximityId)
     assert.ok(session.featuresFor('ana').office.release('ana').ok)
+    session.setProximityIdsWithPlayer('ana')
+    assert.equal(session.focus.partnerOf('ana'), null)
+    const shared = session.getPlayer('ana').proximityId
+    assert.ok(shared)
+    assert.equal(session.getPlayer('bia').proximityId, shared)
     session.movePlayer('ana', 8, 5)
     assert.equal(session.getPlayer('ana').proximityId, null)
     assert.equal(session.getPlayer('bia').proximityId, null)
@@ -92,4 +97,15 @@ test('removing a player ends their pair', () => {
     session.setProximityIdsWithPlayer('bia')
     assert.equal(session.focus.partnerOf('ana'), null)
     assert.equal(session.getPlayer('ana').proximityId, null)
+})
+
+test('walking next to a free focus desk does not seat you, clicking does', () => {
+    const { session, add } = setup()
+    add('ana', 2, 4)
+    const office = session.roomFeatures[0].office
+    assert.ok(office.step('ana', { x: 2, y: 3 }).ok)
+    session.movePlayer('ana', 2, 3)
+    assert.equal(session.isFocused('ana'), false)
+    assert.ok(office.occupy('ana', 'focus-a').ok)
+    assert.equal(session.isFocused('ana'), true)
 })

@@ -80,7 +80,7 @@ export const signs = [
   { text: training.label, x: 51.5, y: 6.3 },
   ...oneOnOnes.map(room => ({ text: room.label, x: room.x1 + 2.5, y: 18.5 })),
   { text: 'Diretoria · Pedro Soares', x: 81, y: 18.5 },
-  { text: 'Escada · 2º andar', x: 51.5, y: 24.6 },
+  { text: 'Escada · 2º andar', x: 51.5, y: 27.6 },
 ]
 
 if (process.argv[1]?.endsWith('annex-layout.mjs')) {

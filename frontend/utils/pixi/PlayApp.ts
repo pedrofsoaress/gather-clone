@@ -451,6 +451,7 @@ export class PlayApp extends App {
         const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find(item => item.id === occupiedId)
         otherPlayer.setSeatedVisual(object?.seatVisual ?? null)
         this.sortObjectsByY()
+        this.updateFocus()
     }
 
     public async init() {

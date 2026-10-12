@@ -260,6 +260,11 @@ const islandSeats = islands.flatMap(island => {
   ]
 })
 
+const floor2Lights = [
+  officeObject('light-focus', 'light', 'Luz da área de foco', [12, 1, 1, 1], [12, 2], { config: { radiusTiles: 9, color: '#e4fff1', intensity: 0.5 } }),
+  officeObject('light-islands', 'light', 'Luz das ilhas', [37, 1, 1, 1], [37, 2], { config: { radiusTiles: 9, color: '#fff2bb', intensity: 0.5 } }),
+]
+
 const map = {
   rooms: [{
     name: 'Escritório Matte',
@@ -273,7 +278,7 @@ const map = {
     name: '2º andar',
     backgroundImage: { src: '/matte-floor2.png', width: FLOOR2_WIDTH * 32, height: FLOOR2_HEIGHT * 32 },
     tilemap: floor2,
-    interactions: [...focusObjects, ...islandSeats],
+    interactions: [...floor2Lights, ...focusObjects, ...islandSeats],
     areas: Object.fromEntries(islands.map(island => [island.id, { label: island.label }])),
     signs: floor2Signs,
   }],

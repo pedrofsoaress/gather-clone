@@ -103,7 +103,7 @@ export class OfficeState {
     let changed = Boolean(occupied && !stillSeated && this.release(uid).changed)
     if (!this.objectOccupiedBy(uid)) {
       const nearbySeats = [...this.objects.values()]
-        .filter(object => object.kind === 'seat' || object.kind === 'desk')
+        .filter(object => (object.kind === 'seat' || object.kind === 'desk') && !object.focus)
         .map(object => ({ object, distance: Math.abs(next.x - object.approach.x) + Math.abs(next.y - object.approach.y) }))
         .filter(candidate => candidate.distance <= (candidate.object.sitRange ?? 1) && !this.occupied.has(candidate.object.id))
         .sort((a, b) => a.distance - b.distance || a.object.id.localeCompare(b.object.id))

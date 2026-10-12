@@ -30,6 +30,6 @@ export const islands = [[30, 4], [40, 4], [30, 14], [40, 14]].map(([ox, oy], ind
 
 export const floor2Signs = [
   { text: 'Área de foco · silêncio', x: 12, y: 1.6 },
-  ...islands.map(island => ({ text: island.label, x: island.ox + 3.5, y: island.oy - 1.6 })),
-  { text: 'Escada · Térreo', x: 2.5, y: 23.6 },
+  ...islands.map(island => ({ text: island.label, x: island.ox + 3.5, y: island.oy + 5.8 })),
+  { text: 'Escada · Térreo', x: 2.5, y: 26.6 },
 ]

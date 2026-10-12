@@ -15,6 +15,8 @@ export default function FocusControls() {
     const [nearby, setNearby] = useState<{ uid: string, name: string } | null>(null)
     const [knocks, setKnocks] = useState<Knock[]>([])
     const [pendingUid, setPendingUid] = useState<string | null>(null)
+    const [talkingUid, setTalkingUid] = useState<string | null>(null)
+    const inFlight = useRef(false)
     const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const clearPending = () => {
         if (pendingTimer.current) clearTimeout(pendingTimer.current)
@@ -35,12 +37,14 @@ export default function FocusControls() {
             timers.set(knock.knockId, setTimeout(() => remove(knock.knockId), KNOCK_LIFETIME_MS))
         }
         const onClosed = ({ knockId }: { knockId: string }) => remove(knockId)
-        const onAnswered = ({ accepted, name }: { accepted: boolean, name: string }) => {
+        const onAnswered = ({ accepted, name, uid }: { accepted: boolean, name: string, uid?: string }) => {
             clearPending()
+            if (accepted && uid) setTalkingUid(uid)
             signal.emit('officeFeedback', {
                 message: accepted ? `${name} aceitou. Vocês estão conversando.` : `${name} está em foco agora.`,
             })
         }
+        const onProximity = ({ proximityId }: { proximityId: string | null }) => { if (!proximityId) setTalkingUid(null) }
         const onNearby = (value: { uid: string, name: string } | null) => setNearby(value)
 
         const attach = () => {
@@ -48,10 +52,12 @@ export default function FocusControls() {
             socket.on('focusKnocked', onKnocked)
             socket.on('focusKnockClosed', onClosed)
             socket.on('focusAnswered', onAnswered)
+            socket.on('proximityUpdate', onProximity)
             return () => {
                 socket.off('focusKnocked', onKnocked)
                 socket.off('focusKnockClosed', onClosed)
                 socket.off('focusAnswered', onAnswered)
+                socket.off('proximityUpdate', onProximity)
             }
         }
         let detach: (() => void) | undefined
@@ -69,10 +75,14 @@ export default function FocusControls() {
         }
     }, [])
 
+    useEffect(() => { if (talkingUid && nearby?.uid !== talkingUid) setTalkingUid(null) }, [nearby, talkingUid])
+
     const knock = () => {
-        if (!nearby || pendingUid || typeof server.socket.emit !== 'function' || !server.socket.connected) return
+        if (!nearby || pendingUid || inFlight.current || typeof server.socket.emit !== 'function' || !server.socket.connected) return
         const target = nearby
+        inFlight.current = true
         server.socket.emit('focusKnock', { targetUid: target.uid }, (result: Ack) => {
+            inFlight.current = false
             if (result?.ok) {
                 setPendingUid(target.uid)
                 if (pendingTimer.current) clearTimeout(pendingTimer.current)
@@ -91,7 +101,7 @@ export default function FocusControls() {
     }
 
     return <>
-        {nearby && nearby.uid !== pendingUid && <div className='pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2'>
+        {nearby && nearby.uid !== pendingUid && nearby.uid !== talkingUid && <div className='pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2'>
             <button type='button' onClick={knock} className='pointer-events-auto rounded-xl bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-xl hover:bg-teal-400'>Chamar {nearby.name}</button>
         </div>}
         {knocks.length > 0 && <div className='pointer-events-none absolute left-1/2 top-16 z-30 flex -translate-x-1/2 flex-col gap-2'>

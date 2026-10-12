@@ -383,7 +383,7 @@ export function sockets(io: Server) {
                 if (!session.focus.expire(result.knock.id)) return
                 const knocker = session.getPlayer(uid)
                 const focused = session.getPlayer(target.uid)
-                if (knocker) io.to(knocker.socketId).emit('focusAnswered', { accepted: false, name: target.username })
+                if (knocker) io.to(knocker.socketId).emit('focusAnswered', { accepted: false, name: target.username, uid: target.uid })
                 if (focused) io.to(focused.socketId).emit('focusKnockClosed', { knockId: result.knock.id })
             }, KNOCK_ANSWER_MS)
         })
@@ -402,7 +402,7 @@ export function sockets(io: Server) {
             ack({ ok: true })
             if (parsed.data.accept) sendProximity(session, session.setProximityIdsWithPlayer(uid))
             const paired = session.focus.partnerOf(uid) === result.knock.from
-            if (knocker) io.to(knocker.socketId).emit('focusAnswered', { accepted: parsed.data.accept && paired, name: me.username })
+            if (knocker) io.to(knocker.socketId).emit('focusAnswered', { accepted: parsed.data.accept && paired, name: me.username, uid })
         })
 
         socket.on('meetingModerate', (raw: unknown, ack: unknown) => {
