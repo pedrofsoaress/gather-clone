@@ -43,10 +43,11 @@ const officeWalls = {
   loungeStairPanel: [15, 3, 15, 3],     // glass panel left of the left stair doorway
   kitchenStairPanel: [34, 2, 34, 3],    // glass panel right of the right stair doorway
   kitchenEast: [48, 1, 48, 8],          // the east wall is thicker along the kitchen
+  loungeWest: [1, 3, 1, 8],             // and along the lounge, the same strip on the west side
   boardroomWest: [18, 1, 18, 9],        // glass walls of the boardroom
   boardroomEast: [31, 1, 31, 9],
   boardroomGlassLeft: [19, 8, 22, 8],
-  boardroomGlassRight: [28, 8, 30, 8],
+  boardroomGlassRight: [27, 8, 30, 8],
   boardroomSill: [18, 9, 31, 9],
   loungePartition: [1, 9, 15, 9],
   kitchenPartition: [34, 9, 48, 9],
@@ -59,13 +60,12 @@ const officeWalls = {
   entranceLeft: [18, 25, 19, 27],
   entranceLeftWindow: [20, 26, 22, 27],
   entranceRightWindow: [28, 26, 29, 27],
-  entranceRightFrame: [27, 27, 27, 27], // (27, 26) above it is a reception armchair's approach tile
+  entranceRightFrame: [27, 26, 27, 27], // the right frame of the glass doors, as (22, 26..27) on the left
   entranceRight: [30, 25, 31, 27],
 }
 
-// Openings in those walls. The boardroom's glass row 8 is not blocked from 23
-// to 27: its door spans 23..26 (like the opening in the sill below), and 27 is
-// the approach tile of the bottom right chair.
+// Openings in those walls. The boardroom's glass row 8 is open from 23 to 26,
+// where its doors are drawn (like the opening in the sill below).
 const officeOpenings = {
   annexPassage: [passage.x, passage.ys[0], passage.x, passage.ys[passage.ys.length - 1]],
   loungeCorridor: [16, 9, 17, 9],
@@ -225,9 +225,9 @@ const interactions = [
   officeObject('boardroom-top-right', 'seat', 'Reunião · superior direita', [26.3, 2.8, 1.3, 1.4], [27, 2], { seatVisual: { x: 26.65, y: 4, facing: 'down' } }),
   officeObject('boardroom-left', 'seat', 'Reunião · lateral esquerda', [20.7, 4.1, 1.2, 2.2], [20, 5], { seatVisual: { x: 20.9, y: 4.6, facing: 'right' } }),
   officeObject('boardroom-right', 'seat', 'Reunião · lateral direita', [28.1, 4.1, 1.2, 2.2], [29, 5], { seatVisual: { x: 28.25, y: 4.6, facing: 'left' } }),
-  officeObject('boardroom-bottom-left', 'seat', 'Reunião · inferior esquerda', [22.3, 6.4, 1.3, 1.6], [23, 8], { seatVisual: { x: 22.65, y: 7, facing: 'up' } }),
-  officeObject('boardroom-bottom-middle', 'seat', 'Reunião · inferior central', [24.3, 6.4, 1.3, 1.6], [25, 8], { seatVisual: { x: 24.65, y: 7, facing: 'up' } }),
-  officeObject('boardroom-bottom-right', 'seat', 'Reunião · inferior direita', [26.3, 6.4, 1.3, 1.6], [27, 8], { seatVisual: { x: 26.65, y: 7, facing: 'up' } }),
+  officeObject('boardroom-bottom-left', 'seat', 'Reunião · inferior esquerda', [22.3, 6.4, 1.3, 1.6], [23, 7], { seatVisual: { x: 22.65, y: 7, facing: 'up' } }),
+  officeObject('boardroom-bottom-middle', 'seat', 'Reunião · inferior central', [24.3, 6.4, 1.3, 1.6], [25, 7], { seatVisual: { x: 24.65, y: 7, facing: 'up' } }),
+  officeObject('boardroom-bottom-right', 'seat', 'Reunião · inferior direita', [26.3, 6.4, 1.3, 1.6], [27, 7], { seatVisual: { x: 26.65, y: 7, facing: 'up' } }),
 
   officeObject('kitchen-top-left', 'seat', 'Cozinha · superior esquerda', [37.6, 5.7, 1, 1.3], [38, 5], { seatVisual: { x: 37.9, y: 6.15, facing: 'down' } }),
   officeObject('kitchen-top-right', 'seat', 'Cozinha · superior direita', [39.5, 5.7, 1, 1.3], [40, 5], { seatVisual: { x: 39.9, y: 6.15, facing: 'down' } }),
@@ -245,8 +245,8 @@ const interactions = [
   officeObject('project-bottom-right', 'seat', 'Projetos · inferior direita', [26, 14.8, 1.2, 1.3], [26, 16], { seatVisual: { x: 26.1, y: 15.3, facing: 'up' } }),
 
   officeObject('reception-desk-chair', 'seat', 'Cadeira da recepção', [24.3, 18.6, 1.5, 1.7], [24, 19], { seatVisual: { x: 24.55, y: 19.5, facing: 'down' } }),
-  officeObject('reception-seats', 'seat', 'Poltrona esquerda', [22, 23, 2, 3], [23, 26], { seatVisual: { x: 22.3, y: 23.4, facing: 'right' } }),
-  officeObject('reception-chair-right', 'seat', 'Poltrona direita', [26, 23, 2, 3], [27, 26], { seatVisual: { x: 26.6, y: 23.4, facing: 'left' } }),
+  officeObject('reception-seats', 'seat', 'Poltrona esquerda', [22, 23, 2, 3], [23, 25], { seatVisual: { x: 22.3, y: 23.4, facing: 'right' } }),
+  officeObject('reception-chair-right', 'seat', 'Poltrona direita', [26, 23, 2, 3], [27, 25], { seatVisual: { x: 26.6, y: 23.4, facing: 'left' } }),
 
   officeObject('games-sofa', 'seat', 'Sofá dos jogos · esquerda', [42.8, 21, 1.5, 2.1], [43, 24], { seatVisual: { x: 43.25, y: 21.6, facing: 'down' } }),
   officeObject('games-sofa-middle', 'seat', 'Sofá dos jogos · meio', [44.3, 21, 1.5, 2.1], [45, 24], { seatVisual: { x: 44.75, y: 21.6, facing: 'down' } }),
@@ -269,7 +269,11 @@ for (const stairs of officeStairs) {
   for (let x = stairs.x1; x <= stairs.x2; x++) {
     tile(tilemap, x, stairs.triggerY).teleporter = { roomIndex: 1, x: floor2Stairs.arrival[0], y: floor2Stairs.arrival[1] }
   }
-  block(tilemap, stairs.x1 - 1, stairs.signY, stairs.x2 + 1, stairs.signY) // the wall the sign hangs on
+  // The sign hangs on the back wall face (officeWalls.backWallFace); the mat in front stays open.
+  for (let x = stairs.x1; x <= stairs.x2; x++) {
+    if (tile(tilemap, x, stairs.signY).impassable !== true) throw new Error(`stairs sign over walkable ${x}, ${stairs.signY}`)
+    if (tile(tilemap, x, stairs.frontY).impassable) throw new Error(`stairs front ${x}, ${stairs.frontY} is blocked`)
+  }
 }
 
 // Second floor.

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { map } from './matte-office-map.mjs'
+import { officeStairs } from './annex-layout.mjs'
 
 // Tiles reachable on foot from (x, y). Teleporters are stepped on but not walked through.
 function reachableFrom(tilemap, x, y) {
@@ -56,8 +57,11 @@ test('the boardroom glass walls block, except the door', () => {
   blocked(ground, 31, 1, 31, 9)
   blocked(ground, 19, 1, 30, 1)
   blocked(ground, 19, 8, 22, 8)
-  blocked(ground, 28, 8, 30, 8)
+  blocked(ground, 27, 8, 30, 8)
   walkable(ground, 23, 8, 26, 9)
+  for (const id of ['boardroom-bottom-left', 'boardroom-bottom-middle', 'boardroom-bottom-right']) {
+    assert.equal(ground.interactions.find(item => item.id === id).approach.y, 7, id)
+  }
   walkable(ground, 19, 2, 20, 7)    // the way round the table inside the glass
   walkable(ground, 21, 7, 28, 7)
 })
@@ -81,6 +85,10 @@ test('the office walls block where the art draws them', () => {
   blocked(ground, 18, 25, 19, 27)
   blocked(ground, 30, 25, 31, 27)
   walkable(ground, 23, 26, 26, 28) // the glass entrance doors
+  blocked(ground, 22, 26, 22, 27)   // and their frames
+  blocked(ground, 27, 26, 27, 27)
+  blocked(ground, 1, 3, 1, 8)       // the strips along the lounge and kitchen side walls
+  blocked(ground, 48, 1, 48, 8)
   blocked(ground, 50, 1, 84, 1)     // the annex back wall face
   walkable(ground, 49, 15, 49, 16)  // the passage to the annex
 })
@@ -178,12 +186,17 @@ test('the ground floor stairs lead upstairs and back', () => {
 test('the stair doorways beside the boardroom lead upstairs too', () => {
   const ground = map.rooms[0]
   const reachable = reachableFrom(ground.tilemap, map.spawnpoint.x, map.spawnpoint.y)
-  for (const x of [16, 17, 32, 33]) {
-    assert.deepEqual(ground.tilemap[`${x}, 2`].teleporter, { roomIndex: 1, x: 2, y: 23 }, `${x}, 2`)
-    assert.ok(!ground.tilemap[`${x}, 2`].impassable, `${x}, 2 can be stepped on`)
-    assert.ok(!ground.tilemap[`${x}, 3`].impassable && !ground.tilemap[`${x}, 3`].teleporter, `${x}, 3 is the way in`)
-    assert.ok(reachable.has(`${x}, 2`), `${x}, 2 is reachable from the spawn`)
+  for (const stairs of officeStairs) {
+    for (let x = stairs.x1; x <= stairs.x2; x++) {
+      const trigger = ground.tilemap[`${x}, ${stairs.triggerY}`]
+      const front = ground.tilemap[`${x}, ${stairs.frontY}`]
+      assert.deepEqual(trigger.teleporter, { roomIndex: 1, x: 2, y: 23 }, `${x}, ${stairs.triggerY}`)
+      assert.ok(!trigger.impassable, `${x}, ${stairs.triggerY} can be stepped on`)
+      assert.ok(!front.impassable && !front.teleporter, `${x}, ${stairs.frontY} is the way in`)
+      assert.ok(reachable.has(`${x}, ${stairs.triggerY}`), `${x}, ${stairs.triggerY} is reachable from the spawn`)
+    }
   }
+  assert.deepEqual(officeStairs.map(stairs => [stairs.x1, stairs.x2]), [[16, 17], [32, 33]])
   const stairSigns = ground.signs.filter(sign => sign.text === 'Escada · 2º andar' && sign.y < 5)
   assert.deepEqual(stairSigns.map(sign => [sign.x, sign.y]), [[17, 1], [33, 1]])
   for (const sign of stairSigns) {
