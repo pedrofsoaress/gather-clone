@@ -248,6 +248,23 @@ export class Player {
         this.currentTilePosition = { x, y }
     }
 
+    // Walking: the tile being stepped into; null while standing still.
+    public get movingTo(): Point | null {
+        return this.targetPosition && this.path[this.pathIndex] ? { x: this.path[this.pathIndex][0], y: this.path[this.pathIndex][1] } : null
+    }
+
+    // Other people's avatars can be clicked; the click never reaches the floor (no walking).
+    public setClickable(onClick: () => void) {
+        this.parent.eventMode = 'static'
+        this.parent.cursor = 'pointer'
+        this.parent.hitArea = new PIXI.Rectangle(-18, -58, 36, 62)
+        this.parent.on('pointerdown', (event: PIXI.FederatedPointerEvent) => {
+            if (event.button !== 0) return
+            event.stopPropagation()
+            onClick()
+        })
+    }
+
     public isAtTile(x: number, y: number): boolean {
         const position = this.convertTilePosToPlayerPos(x, y)
         return this.targetPosition === null &&

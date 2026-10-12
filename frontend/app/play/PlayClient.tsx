@@ -10,6 +10,7 @@ import VideoBar from '@/components/VideoChat/VideoBar'
 import { AgoraVideoChatProvider } from '../hooks/useVideoChat'
 import OfficeHud from './OfficeHud'
 import FocusControls from './FocusControls'
+import FollowControls from './FollowControls'
 import OfficeChat from './OfficeChat'
 import PresentationViewer from './PresentationViewer'
 import type { PresentationSnapshot } from '@/utils/pixi/office/types'
@@ -147,6 +148,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, realmId, uid,
                 <OfficeNotifications meetingMode={meetingMode} />
                 <OfficeHud key={roomIndex} objects={mapData.rooms[roomIndex].interactions ?? []} uid={uid} presentations={presentations} onPresentationFocus={setSelectedPresentationId} />
                 <FocusControls />
+                <FollowControls />
                 <OfficeChat uid={uid} meetingMode={meetingMode} open={chatOpen} onOpenChange={setChatOpen} />
             </div>}
             {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={async (chosenName, chosenSkin) => {

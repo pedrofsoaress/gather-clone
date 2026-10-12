@@ -78,7 +78,7 @@ export default function OfficeHud({ objects, uid, presentations, onPresentationF
     if (objects.length === 0) return null
 
     return <>
-        {!active && <div className="absolute right-3 top-3 z-20 rounded-xl border border-teal-300/40 bg-slate-950/85 px-3 py-2 text-sm text-white shadow-lg">
+        {!active && <div data-follow-avoid className="absolute right-3 top-3 z-20 rounded-xl border border-teal-300/40 bg-slate-950/85 px-3 py-2 text-sm text-white shadow-lg">
             {hovered ? `Clique em ${hovered.label}${snapshot.occupancy[hovered.id] ? ` · ${snapshot.occupancy[hovered.id].name}` : ''}` : nearby ? `E · ${nearby.label}` : 'Clique nos móveis ou pontos verdes para interagir'}
         </div>}
         {!active && nearby && <button

@@ -34,9 +34,9 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
 
     if (peers.length === 0 && !presentation && !meeting) return null
 
-    if (peers.length === 0 && !presentation) return <div className="pointer-events-none absolute right-3 top-3 z-30"><MeetingControls localUid={localUid} /></div>
+    if (peers.length === 0 && !presentation) return <div data-follow-avoid className="pointer-events-none absolute right-3 top-3 z-30"><MeetingControls localUid={localUid} /></div>
 
-    if (!meetingMode) return <div className="pointer-events-none absolute right-3 top-3 z-30 flex max-w-[calc(100vw-24px)] flex-col items-end gap-2 text-white">
+    if (!meetingMode) return <div data-follow-avoid className="pointer-events-none absolute right-3 top-3 z-30 flex max-w-[calc(100vw-24px)] flex-col items-end gap-2 text-white">
         <MeetingControls localUid={localUid} />
         <button type="button" onClick={() => onMeetingModeChange(true)} className="pointer-events-auto flex items-center gap-2 rounded-lg bg-slate-900/95 px-3 py-2 text-sm shadow-lg hover:bg-slate-700" aria-label="Expandir reunião">
             <ArrowsOut size={18} /> Expandir reunião · {personCount}

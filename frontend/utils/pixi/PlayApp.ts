@@ -13,6 +13,7 @@ import type { OfficeSnapshot } from './office/types'
 import { LightingLayer } from './office/LightingLayer'
 import { AnnexLayer } from './office/AnnexLayer'
 import { focusedUids, nearestFocused } from './office/focus'
+import { FOLLOW_TICK_MS, departureStairs, followStopNotice, followStopTellsTarget, isNextTo, rankFollowTiles, sameTile, shouldReplan, trackFollowProgress, type FollowProgress, type FollowStopReason } from './office/follow'
 import { isAnnexTrigger, shouldReveal } from './office/annex-reveal'
 import { GamepadController, type GamepadInput } from './office/GamepadController'
 import type { AvatarSnapshot } from './Player/avatar-actions'
@@ -22,6 +23,13 @@ import { setLocalMeetingUid, setMeeting, type MeetingSnapshot } from '../video-c
 
 // After this long a pending avatar load is treated as stuck and tried again.
 const SPAWN_STALE_MS = 12000
+
+// Following someone: their last known tile (from the server), the walk planned towards
+// them, and the stairs they took while the follower walks to the same passage.
+type Follow = {
+    uid: string, name: string, phase: 'follow' | 'stairs', stairs: Point | null,
+    targetTile: Point | null, previousTile: Point | null, goal: Point | null, progress: FollowProgress,
+}
 
 export class PlayApp extends App {
     private scale: number = 1.5
@@ -71,6 +79,9 @@ export class PlayApp extends App {
     private departures = new Map<string, number>()
     private resyncTimer: ReturnType<typeof setTimeout> | null = null
     private resyncInterval: ReturnType<typeof setInterval> | null = null
+    private follow: Follow | null = null
+    private followTimer: ReturnType<typeof setInterval> | null = null
+    private avatarMenu: { uid: string, tile: Point, pivotX: number, pivotY: number, scale: number } | null = null
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -93,6 +104,9 @@ export class PlayApp extends App {
 
     override async loadRoom(index: number) {
         this.releaseMovement()
+        this.closeAvatarMenu()
+        // Only the stairs taken after the followed person keep following across rooms.
+        if (this.follow?.phase !== 'stairs') this.stopFollowing('manual')
         for (const player of Object.values(this.players)) player.destroy()
         this.currentRoomIndex = index
         this.players = {}
@@ -131,7 +145,7 @@ export class PlayApp extends App {
         const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
         this.interactionLayer = new InteractionLayer(
             objects,
-            (id) => this.requestOfficeObject(id),
+            (id) => this.onObjectClicked(id),
             (object) => signal.emit('officeHover', { objectId: object?.id ?? null }),
         )
         this.interactionLayer.setOccupancy(this.officeSnapshot.occupancy)
@@ -159,8 +173,15 @@ export class PlayApp extends App {
         this.app.stage.setChildIndex(layer.signs, this.app.stage.getChildIndex(this.layers.object))
     }
 
+    private onObjectClicked = (id: string) => {
+        // The click that closes the "Seguir" button does nothing else.
+        if (this.avatarMenu) { this.closeAvatarMenu(); return }
+        this.requestOfficeObject(id)
+    }
+
     public requestOfficeObject = (id: string): boolean => {
         if (this.disableInput || this.player.frozen) return false
+        this.stopFollowing('manual')
         const room = this.realmData.rooms[this.currentRoomIndex]
         const object = room.interactions?.find((item) => item.id === id)
         if (!object) return false
@@ -388,6 +409,7 @@ export class PlayApp extends App {
         if (this.eventsRemoved || this.diagnostics || !new URLSearchParams(window.location.search).has('diag')) return
         const box = document.createElement('div')
         box.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9999;max-width:420px;padding:8px 10px;border-radius:8px;background:rgba(2,6,23,.92);color:#e2e8f0;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;pointer-events:none'
+        box.dataset.followAvoid = ''
         document.body.appendChild(box)
         this.diagnostics = box
         const render = () => {
@@ -443,6 +465,7 @@ export class PlayApp extends App {
             return
         }
         otherPlayer.setPosition(x, y)
+        otherPlayer.setClickable(() => this.onAvatarClicked(uid))
         this.layers.object.addChild(otherPlayer.parent)
         this.players[uid] = otherPlayer
         otherPlayer.applyAvatarState(this.avatarSnapshot[uid])
@@ -557,12 +580,15 @@ export class PlayApp extends App {
     private clickEvents = () => {
         this.app.stage.on('pointerdown', (e: PIXI.FederatedPointerEvent) => {
             if (e.button !== 0) return
+            // The click that closes the "Seguir" button does not walk.
+            if (this.avatarMenu) { this.closeAvatarMenu(); return }
             if (this.player.frozen || this.disableInput) return  
 
             const clickPosition = e.getLocalPosition(this.app.stage)
             const { x, y } = this.convertScreenToTileCoordinates(clickPosition.x, clickPosition.y)
             const room = this.realmData.rooms[this.currentRoomIndex]
             if (room.backgroundImage && !isWithinMap(x, y, room.backgroundImage.width / 32, room.backgroundImage.height / 32)) return
+            this.stopFollowing('manual')
             this.pendingOfficeObjectId = null
             this.player.moveToTile(x, y)
             this.player.setMovementMode('mouse')
@@ -669,6 +695,7 @@ export class PlayApp extends App {
 
         if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(key)) return
         event.preventDefault()
+        this.stopFollowing('manual')
         this.pendingOfficeObjectId = null
         this.player.keydown(event)
         this.keyboardKeys.add(key)
@@ -701,6 +728,7 @@ export class PlayApp extends App {
             if (this.gamepadDirection && !this.keyboardKeys.has(this.gamepadDirection)) this.keysDown = this.keysDown.filter(key => key !== this.gamepadDirection)
             this.gamepadDirection = direction
             if (direction) {
+                this.stopFollowing('manual')
                 this.pendingOfficeObjectId = null
                 this.keysDown = this.keysDown.filter(key => key !== direction)
                 this.keysDown.push(direction)
@@ -744,6 +772,7 @@ export class PlayApp extends App {
         if (!result?.ok) {
             if (result?.verifiedPosition) this.player.setPosition(result.verifiedPosition.x, result.verifiedPosition.y)
             signal.emit('officeFeedback', { message: result?.error ?? 'Passagem indisponível.' })
+            if (this.follow?.phase === 'stairs') this.stopFollowing('unreachable')
         } else {
             this.player.resetConversation()
             if (this.currentRoomIndex === roomIndex) {
@@ -759,6 +788,7 @@ export class PlayApp extends App {
         this.roomTransitioning = false
         if (result?.ok) {
             await this.syncOtherPlayers()
+            this.resumeFollowAfterStairs()
             server.socket.emit('officeGetSnapshot', (response: { ok: boolean, snapshot?: OfficeSnapshot }) => { if (response?.ok && response.snapshot) this.onOfficeStateChanged(response.snapshot) })
             server.socket.emit('avatarGetSnapshot', (response: { ok: boolean, snapshot?: AvatarSnapshot }) => { if (response?.ok && response.snapshot) this.onAvatarState(response.snapshot) })
             signal.emit('officeRoomReady')
@@ -802,6 +832,133 @@ export class PlayApp extends App {
         }
     }
 
+    // Clicking someone offers "Seguir {nome}" next to their avatar (in page coordinates).
+    private onAvatarClicked = (uid: string) => {
+        const player = this.players[uid]
+        if (!player || this.disableInput || this.player.frozen || this.roomTransitioning) return
+        this.closeAvatarMenu()
+        if (this.follow?.uid === uid) return
+        const bounds = this.app.canvas.getBoundingClientRect()
+        const point = player.parent.toGlobal({ x: 18, y: -30 })
+        this.avatarMenu = { uid, tile: { ...player.currentTilePosition }, pivotX: this.app.stage.pivot.x, pivotY: this.app.stage.pivot.y, scale: this.scale }
+        PIXI.Ticker.shared.add(this.watchAvatarMenu)
+        signal.emit('avatarMenu', {
+            uid, name: player.username,
+            screenX: bounds.left + point.x * bounds.width / this.app.screen.width,
+            screenY: bounds.top + point.y * bounds.height / this.app.screen.height,
+        })
+    }
+
+    // The button stays next to the avatar: it closes when the camera or the person moves.
+    private watchAvatarMenu = () => {
+        const menu = this.avatarMenu
+        if (!menu) return
+        const player = this.players[menu.uid]
+        const pivot = this.app.stage.pivot
+        if (!player || !sameTile(player.currentTilePosition, menu.tile) || pivot.x !== menu.pivotX || pivot.y !== menu.pivotY || this.scale !== menu.scale) this.closeAvatarMenu()
+    }
+
+    private closeAvatarMenu = () => {
+        if (!this.avatarMenu) return
+        this.avatarMenu = null
+        PIXI.Ticker.shared.remove(this.watchAvatarMenu)
+        signal.emit('avatarMenu', null)
+    }
+
+    private onFollowStart = ({ uid }: { uid: string }) => {
+        this.closeAvatarMenu()
+        const target = this.players[uid]
+        if (!target || uid === this.uid || this.follow?.uid === uid || this.eventsRemoved || this.reconnecting) return
+        this.stopFollowing('switched')
+        this.follow = {
+            uid, name: target.username, phase: 'follow', stairs: null,
+            targetTile: { ...target.currentTilePosition }, previousTile: null, goal: null,
+            progress: { since: Date.now(), position: { ...this.player.verifiedPosition } },
+        }
+        server.socket.emit('followStart', { targetUid: uid })
+        signal.emit('followState', { name: target.username })
+        this.followTimer = setInterval(this.followTick, FOLLOW_TICK_MS)
+        this.planFollow()
+    }
+
+    private onFollowStopRequest = () => this.stopFollowing('stopped')
+
+    private stopFollowing = (reason: FollowStopReason) => {
+        const follow = this.follow
+        if (!follow) return
+        this.follow = null
+        if (this.followTimer) clearInterval(this.followTimer)
+        this.followTimer = null
+        if (followStopTellsTarget(reason)) server.socket.emit('followStop', { targetUid: follow.uid })
+        const message = followStopNotice(reason, follow.name)
+        if (message) signal.emit('officeNotice', { message, key: `follow-stop:${follow.uid}:${reason}` })
+        signal.emit('followState', { name: null })
+    }
+
+    private followPaused = () => this.player.frozen || this.roomTransitioning || this.reconnecting
+
+    // Walks towards a free tile next to the person (or to the stairs they took) with the
+    // normal movement, so the server sees ordinary steps. Plans only when needed.
+    private planFollow = () => {
+        const follow = this.follow
+        if (!follow || this.followPaused()) return
+        const at = this.player.movingTo ?? this.player.currentTilePosition
+        const moving = Boolean(this.player.movingTo)
+        const candidates = follow.phase === 'stairs' ? (follow.stairs ? [follow.stairs] : []) : follow.targetTile ? rankFollowTiles({
+            target: follow.targetTile, previous: follow.previousTile, self: at,
+            tilemap: this.realmData.rooms[this.currentRoomIndex].tilemap, blocked: this.blocked,
+            occupied: Object.entries(this.players).filter(([uid]) => uid !== follow.uid).map(([, player]) => player.currentTilePosition),
+        }) : []
+        if (!shouldReplan({ candidates, lastGoal: follow.goal, moving, at })) return
+        this.pendingOfficeObjectId = null
+        this.player.setMovementMode('mouse')
+        follow.goal = candidates.find(tile => this.player.moveToTile(tile.x, tile.y)) ?? null
+    }
+
+    private followTick = () => {
+        const follow = this.follow
+        if (!follow) return
+        if (this.followPaused()) {
+            follow.progress = { since: Date.now(), position: { ...this.player.verifiedPosition } }
+            return
+        }
+        this.planFollow()
+        const settled = follow.phase === 'follow' && !this.player.movingTo && Boolean(follow.targetTile && isNextTo(this.player.currentTilePosition, follow.targetTile))
+        const { stuck, ...progress } = trackFollowProgress(follow.progress, { now: Date.now(), position: this.player.verifiedPosition, settled })
+        follow.progress = progress
+        if (stuck) this.stopFollowing('unreachable')
+    }
+
+    private onFollowedMoved = (tile: Point) => {
+        const follow = this.follow
+        if (!follow || follow.phase !== 'follow' || sameTile(follow.targetTile, tile)) return
+        follow.previousTile = follow.targetTile
+        follow.targetTile = tile
+        this.planFollow()
+    }
+
+    // Gone from this room: through a passage the follower takes the same one, otherwise they left.
+    private onFollowedLeft = () => {
+        const follow = this.follow
+        if (!follow || follow.phase !== 'follow') return
+        const stairs = departureStairs(this.realmData.rooms[this.currentRoomIndex].tilemap, follow.targetTile)
+        if (!stairs) { this.stopFollowing('left'); return }
+        Object.assign(follow, { phase: 'stairs', stairs, goal: null, progress: { since: Date.now(), position: { ...this.player.verifiedPosition } } })
+        this.planFollow()
+    }
+
+    // After the stairs, the new room's people are known: find the person again.
+    private resumeFollowAfterStairs = () => {
+        const follow = this.follow
+        if (!follow || follow.phase !== 'stairs') return
+        const target = this.players[follow.uid]
+        if (!target) { this.stopFollowing('left'); return }
+        Object.assign(follow, {
+            phase: 'follow', stairs: null, targetTile: { ...target.currentTilePosition }, previousTile: null, goal: null,
+            progress: { since: Date.now(), position: { ...this.player.verifiedPosition } },
+        })
+    }
+
     private destroyPlayers = () => {
         for (const player of Object.values(this.players)) {
             player.destroy()
@@ -811,6 +968,8 @@ export class PlayApp extends App {
 
     private onPlayerLeftRoom = (uid: string) => {
         this.departures.set(uid, (this.departures.get(uid) ?? 0) + 1)
+        if (this.follow?.uid === uid) this.onFollowedLeft()
+        if (this.avatarMenu?.uid === uid) this.closeAvatarMenu()
         if (this.players[uid]) {
             this.players[uid].destroy()
             this.layers.object.removeChild(this.players[uid].parent)
@@ -821,6 +980,11 @@ export class PlayApp extends App {
 
     private onPlayerJoinedRoom = (playerData: any) => {
         if (this.roomTransitioning) return
+        // Came back before the follower reached the stairs: keep following here.
+        const follow = this.follow
+        if (follow && follow.uid === playerData.uid && follow.phase === 'stairs') {
+            Object.assign(follow, { phase: 'follow', stairs: null, targetTile: { x: playerData.x, y: playerData.y }, previousTile: null, goal: null })
+        }
         this.updatePlayer(playerData.uid, playerData)
         signal.emit('officeNotice', { message: `${playerData.username || 'Uma pessoa'} entrou no escritório.`, key: `joined:${playerData.uid}` })
     }
@@ -828,6 +992,7 @@ export class PlayApp extends App {
     private onPlayerMoved = (data: any) => {
         if (this.roomTransitioning) return
         if (this.blocked.has(`${data.x}, ${data.y}`)) return
+        if (this.follow?.uid === data.uid) this.onFollowedMoved({ x: data.x, y: data.y })
 
         const player = this.players[data.uid]
         if (player) {
@@ -867,6 +1032,9 @@ export class PlayApp extends App {
         signal.on('officeResync', this.onOfficeResync)
         signal.on('officePresentationFocus', this.onPresentationFocus)
         signal.on('officeLightPreference', this.onLightPreference)
+        signal.on('followStart', this.onFollowStart)
+        signal.on('followStop', this.onFollowStopRequest)
+        signal.on('avatarMenuDismiss', this.closeAvatarMenu)
     }
 
     private removeSignalListeners = () => {
@@ -879,6 +1047,9 @@ export class PlayApp extends App {
         signal.off('officeResync', this.onOfficeResync)
         signal.off('officePresentationFocus', this.onPresentationFocus)
         signal.off('officeLightPreference', this.onLightPreference)
+        signal.off('followStart', this.onFollowStart)
+        signal.off('followStop', this.onFollowStopRequest)
+        signal.off('avatarMenuDismiss', this.closeAvatarMenu)
     }
 
     private onPresentationFocus = ({ active }: { active: boolean }) => {
@@ -936,6 +1107,7 @@ export class PlayApp extends App {
 
     private onKicked = (message: string) => {
         this.kicked = true
+        this.stopFollowing('silent')
         this.removeEvents()
         void videoChat.leaveChannel()
         signal.emit('showKickedModal', message)
@@ -948,6 +1120,9 @@ export class PlayApp extends App {
         if (!server.socket.active) return this.endSession()
         if (this.reconnecting) return
         this.reconnecting = true
+        // The server tells the followed person once this connection is gone.
+        this.stopFollowing('silent')
+        this.closeAvatarMenu()
         this.releaseMovement()
         this.player.setFrozen(true)
         signal.emit('officeNotice', { message: 'A conexão caiu. Reconectando ao escritório...', key: 'office-reconnecting' })
@@ -1087,6 +1262,8 @@ export class PlayApp extends App {
     private removeEvents = () => {
         if (this.eventsRemoved) return
         this.eventsRemoved = true
+        this.stopFollowing('silent')
+        this.closeAvatarMenu()
         if (this.initialized) {
             this.cancelCameraDrag()
             this.app.canvas.removeEventListener('contextmenu', this.preventCanvasContextMenu)
