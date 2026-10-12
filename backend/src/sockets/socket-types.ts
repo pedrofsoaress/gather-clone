@@ -44,5 +44,7 @@ export const AvatarAction = z.object({ action: z.enum(['idle', 'dance', 'pet']),
 export const AvatarRun = z.object({ running: z.boolean() })
 export const MeetingModerate = z.object({ action: z.enum(['mute', 'cameraOff', 'muteAll', 'lock', 'unlock', 'allow', 'deny']), targetUid: z.string().uuid().optional() })
 export const MeetingRaiseHand = z.object({ raised: z.boolean() })
+export const FocusKnock = z.object({ targetUid: z.string().uuid() })
+export const FocusAnswer = z.object({ knockId: z.string().min(1).max(64), accept: z.boolean() })
 
 export type OnEventCallback = (args: { session: Session, data?: any }) => void

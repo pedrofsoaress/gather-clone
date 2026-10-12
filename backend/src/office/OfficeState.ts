@@ -243,6 +243,12 @@ export class OfficeState {
     return { occupancy, games }
   }
 
+  // The seat or desk this visitor occupies, if any.
+  seatOf(uid: string): OfficeObject | null {
+    const objectId = this.objectOccupiedBy(uid)
+    return objectId ? this.objects.get(objectId) ?? null : null
+  }
+
   private objectOccupiedBy(uid: string): string | null {
     for (const [objectId, occupant] of this.occupied) if (occupant === uid) return objectId
     return null

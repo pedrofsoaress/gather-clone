@@ -4,9 +4,10 @@ import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
 import { sessionManager, Session, MAX_PLAYERS_PER_SPACE } from '../session'
-import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand } from './socket-types'
+import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand, FocusKnock, FocusAnswer } from './socket-types'
 import { removeExtraSpaces } from '../utils'
-import { kickPlayer, sendMeeting, leaveMeeting } from './helpers'
+import { kickPlayer, sendMeeting, leaveMeeting, sendProximity } from './helpers'
+import { KNOCK_ANSWER_MS, withinReach } from '../office/FocusState'
 import { formatEmailToName } from '../utils'
 import { OfficeNotes, validNoteObject, noteStorageKey } from '../office/OfficeNotes'
 import { canReceiveNearbyChat } from '../office/chat'
@@ -211,10 +212,7 @@ export function sockets(io: Server) {
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
                 users.removeUser(uid)
                 broadcastRoomFeatures(io, session, room)
-                for (const changedUid of session.setProximityIdsWithPlayer(uid)) {
-                    const player = session.getPlayer(changedUid)
-                    io.to(player.socketId).emit('proximityUpdate', { proximityId: player.proximityId })
-                }
+                sendProximity(session, session.setProximityIdsWithPlayer(uid))
             }
         })
 
@@ -224,10 +222,7 @@ export function sockets(io: Server) {
             const session = sessionManager.getPlayerSession(uid)
             if (!session || session.getPlayer(uid)?.socketId !== socket.id) return ack({ ok: false, error: 'Fora do escritório.' })
             const changed = new Set([uid, ...session.setProximityIdsWithPlayer(uid)])
-            for (const changedUid of changed) {
-                const player = session.getPlayer(changedUid)
-                io.to(player.socketId).emit('proximityUpdate', { proximityId: player.proximityId })
-            }
+            sendProximity(session, changed)
             ack({ ok: true, snapshot: session.featuresFor(uid).office.snapshot() })
         })
 
@@ -268,10 +263,7 @@ export function sockets(io: Server) {
                         sendMeeting(session, uid)
                     }
                     emit('playerMoved', { uid, ...parsed.data })
-                    for (const changedUid of changed) {
-                        const player = session.getPlayer(changedUid)
-                        io.to(player.socketId).emit('proximityUpdate', { proximityId: player.proximityId })
-                    }
+                    sendProximity(session, changed)
                     broadcastRoom(io, session, session.getPlayerRoom(uid), 'avatarState', features.avatars.snapshot())
                 }
                 if (typeof ack === 'function') ack({ ...result, roomIndex: session.getPlayerRoom(uid), verifiedPosition: features.office.verifiedPosition(uid) })
@@ -301,6 +293,7 @@ export function sockets(io: Server) {
             }
             ack(result.ok ? result : { ...result, verifiedPosition: session.featuresFor(uid).office.verifiedPosition(uid) })
             if (result.changed) broadcastRoom(io, session, session.getPlayerRoom(uid), 'officeStateChanged', session.featuresFor(uid).office.snapshot())
+            if (result.changed) sendProximity(session, session.setProximityIdsWithPlayer(uid))
             if (result.ok && result.effect) broadcastRoom(io, session, session.getPlayerRoom(uid), 'officeEffect', {
                 objectId: parsed.data.objectId, effect: result.effect, uid, name: session.getPlayer(uid).username,
             })
@@ -368,6 +361,48 @@ export function sockets(io: Server) {
             else meeting.state.raised.delete(uid)
             sendMeeting(session, uid)
             reply({ ok: true })
+        })
+
+        socket.on('focusKnock', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const uid = socket.handshake.query.uid as string
+            const parsed = FocusKnock.safeParse(raw)
+            const session = sessionManager.getPlayerSession(uid)
+            const me = session?.getPlayer(uid)
+            if (!parsed.success || !session || !me || me.socketId !== socket.id) return ack({ ok: false, error: 'Chamada inválida.' })
+            const target = session.getPlayer(parsed.data.targetUid)
+            if (!target || target.room !== me.room || !session.isFocused(target.uid) || session.isFocused(uid) || !withinReach(me, target)) {
+                return ack({ ok: false, error: 'Chegue perto de quem está em foco para chamar.' })
+            }
+            const result = session.focus.knock(uid, target.uid)
+            if (!result.ok) return ack(result)
+            io.to(target.socketId).emit('focusKnocked', { knockId: result.knock.id, fromUid: uid, fromName: me.username })
+            ack({ ok: true })
+            setTimeout(() => {
+                if (!session.focus.expire(result.knock.id)) return
+                const knocker = session.getPlayer(uid)
+                const focused = session.getPlayer(target.uid)
+                if (knocker) io.to(knocker.socketId).emit('focusAnswered', { accepted: false, name: target.username })
+                if (focused) io.to(focused.socketId).emit('focusKnockClosed', { knockId: result.knock.id })
+            }, KNOCK_ANSWER_MS)
+        })
+
+        socket.on('focusAnswer', async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            const uid = socket.handshake.query.uid as string
+            const parsed = FocusAnswer.safeParse(raw)
+            const session = sessionManager.getPlayerSession(uid)
+            const me = session?.getPlayer(uid)
+            if (!parsed.success || !session || !me || me.socketId !== socket.id) return ack({ ok: false, error: 'Chamada inválida.' })
+            const result = session.focus.answer(parsed.data.knockId, uid, parsed.data.accept)
+            if (!result.ok) return ack(result)
+            const knocker = session.getPlayer(result.knock.from)
+            ack({ ok: true })
+            if (parsed.data.accept) sendProximity(session, session.setProximityIdsWithPlayer(uid))
+            const paired = session.focus.partnerOf(uid) === result.knock.from
+            if (knocker) io.to(knocker.socketId).emit('focusAnswered', { accepted: parsed.data.accept && paired, name: me.username })
         })
 
         socket.on('meetingModerate', (raw: unknown, ack: unknown) => {
@@ -557,10 +592,7 @@ export function sockets(io: Server) {
             else emit('playerTeleported', { uid, x: player.x, y: player.y })
             broadcastRoomFeatures(io, session, oldRoom)
             if (oldRoom !== data.roomIndex) broadcastRoomFeatures(io, session, data.roomIndex)
-            for (const changedUid of changedPlayers) {
-                const changedPlayer = session.getPlayer(changedUid)
-                io.to(changedPlayer.socketId).emit('proximityUpdate', { proximityId: changedPlayer.proximityId })
-            }
+            sendProximity(session, changedPlayers)
         })
 
         on('changedSkin', ChangedSkin, ({ session, data }) => {

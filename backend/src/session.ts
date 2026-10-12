@@ -8,6 +8,7 @@ import { PresentationState } from './office/PresentationState'
 import { SpeakerState } from './office/SpeakerState'
 import { AvatarActions } from './office/AvatarActions'
 import { MeetingState } from './office/MeetingState'
+import { FocusState, withinReach } from './office/FocusState'
 
 export type RealmData = {
     spawnpoint: {
@@ -169,6 +170,8 @@ export class Session {
     public readonly roomFeatures: { office: OfficeState, external: OfficeSharedObjects, presentations: PresentationState, speakers: SpeakerState, avatars: AvatarActions }[]
     // `${room}:${areaId}` -> lock, allowed speakers and raised hands of that meeting area.
     private readonly meetings = new Map<string, MeetingState>()
+
+    public focus = new FocusState()
 
     constructor(id: string, mapData: RealmData) {
         validateOfficeMap(mapData)
@@ -335,13 +338,29 @@ export class Session {
         return this.setProximityIdsWithPlayer(uid)
     }
 
+    // Seated at a focus desk: out of every proximity call unless a knock was accepted.
+    public isFocused(uid: string): boolean {
+        const player = this.players[uid]
+        return Boolean(player && this.roomFeatures[player.room].office.seatOf(uid)?.focus)
+    }
+
     public setProximityIdsWithPlayer(_uid: string): string[] {
         // A movement can split or merge an entire conversation. Rebuild all
         // current groups so stationary people and the room just left also update.
         // This deliberately supports an already-removed uid after disconnection.
         const players = Object.values(this.players).sort((a, b) => a.uid.localeCompare(b.uid))
         const byRoomTile = new Map<number, Map<string, Player[]>>()
-        const zoneOf = (player: Player) => this.map_data.rooms[player.room].tilemap[`${player.x}, ${player.y}`]?.privateAreaId ?? null
+        this.focus.prune((focused, knocker) => {
+            const a = this.players[focused]
+            const b = this.players[knocker]
+            return Boolean(a && b && a.room === b.room && this.isFocused(focused) && !this.isFocused(knocker) && withinReach(a, b))
+        })
+        const focusZone = (player: Player) => {
+            const focused = this.focus.focusedOf(player.uid)
+            if (focused) return `focus:${focused}`
+            return this.isFocused(player.uid) ? `focus:${player.uid}` : null
+        }
+        const zoneOf = (player: Player) => focusZone(player) ?? this.map_data.rooms[player.room].tilemap[`${player.x}, ${player.y}`]?.privateAreaId ?? null
         const inStage = (player: Player) => isStageArea(this.map_data.rooms[player.room], areaAt(this.map_data.rooms[player.room], player.x, player.y))
         for (const player of players) {
             if (!byRoomTile.has(player.room)) byRoomTile.set(player.room, new Map())
