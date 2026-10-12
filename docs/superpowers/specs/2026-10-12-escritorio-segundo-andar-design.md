@@ -75,3 +75,14 @@ Uma escada no térreo leva a um segundo andar, que é uma sala nova no mesmo est
 5. Quem está na Ilha 1 conversa com toda a Ilha 1 e não ouve a Ilha 2.
 6. O andar de cima tem 44 lugares sentados e o escritório continua aceitando 80 pessoas.
 7. Testes automáticos cobrem: troca de andar validada pelo servidor, isolamento do modo foco na conversa por proximidade, chamada (aceitar, recusar, expirar, repetir antes de 1 minuto, fim ao se afastar ou levantar) e as áreas das ilhas.
+
+## Revisão (12/10/2026): micro cabines
+
+O Pedro aprovou trocar o modo foco por micro cabines. As 20 mesas da metade esquerda viram **Cabine 1** a **Cabine 20** (mesma ordem, mesmas mesas e cadeiras), e o resto do andar não muda.
+
+- **Sentar:** pisar na cadeira da cabine senta a pessoa. Quem passa pelo corredor logo abaixo não senta sem querer.
+- **Conversa fechada:** cada cabine é uma conversa fechada, como as ilhas. A área da cabine é a fileira da cadeira (os 5 quadradinhos na frente da mesa). Quem está ali conversa só com quem está na mesma cabine; quem está fora não ouve. Para falar com alguém, é só entrar na fileira da cabine da pessoa. O corredor abaixo de cada fileira de cabines continua com conversa por proximidade normal.
+- **Paredes de vidro:** divisórias finas de vidro, no estilo da sala de reunião do térreo (vidro azul claro com moldura escura), separam cabines vizinhas, nas colunas entre as mesas (x 6, 12 e 18) e à direita da última mesa (x 24). Cada divisória vai do fundo da mesa até a fileira da cadeira e bloqueia a passagem. A frente fica aberta. As cabines da esquerda encostam na parede do prédio. O corredor de tijolos ao lado das cabines fica com 2 quadradinhos (x 25 e 26) e continua livre. Os vasos de planta que ficavam entre as mesas saíram.
+- **Plaquinha:** "Área de foco · silêncio" virou "Cabines", no mesmo lugar.
+- **Modo foco:** nenhuma mesa liga o modo foco agora. O código do modo foco (servidor e site) continua no projeto, desligado, caso o Pedro queira voltar com ele.
+- O andar continua com 47 lugares (20 cabines, 24 nas ilhas e 3 na diretoria).
