@@ -5,7 +5,9 @@ export async function request(url: string, params: Record<string, any> = {}, acc
     }
 
     const queryString = new URLSearchParams(params).toString()
-    const fullUrl = `${process.env.NEXT_PUBLIC_BACKEND_URL}/${url}${queryString ? '?' + queryString : ''}`
+    // In the browser, go through the site's own address (see app/api/backend): the backend accepts one origin only.
+    const base = typeof window === 'undefined' ? process.env.NEXT_PUBLIC_BACKEND_URL : '/api/backend'
+    const fullUrl = `${base}/${url}${queryString ? '?' + queryString : ''}`
 
     const headers = new Headers();
     if (access_token) {
