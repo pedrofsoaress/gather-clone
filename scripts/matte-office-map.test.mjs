@@ -205,13 +205,13 @@ test('the stair doorways beside the boardroom lead upstairs too', () => {
   for (const x of [50, 51, 52]) assert.deepEqual(ground.tilemap[`${x}, 26`].teleporter, { roomIndex: 1, x: 2, y: 23 })
 })
 
-test('the second floor has 20 focus desks and 4 islands of 6', () => {
+test('the second floor has 20 micro cabins and 4 islands of 6', () => {
   const upstairs = map.rooms[1]
   assert.equal(upstairs.name, '2º andar')
   assert.equal(upstairs.backgroundImage.src, '/matte-floor2.png')
   assert.equal(Object.keys(upstairs.tilemap).length, 50 * 30)
-  const focus = upstairs.interactions.filter(item => item.kind === 'desk' && item.focus === true)
-  assert.equal(focus.length, 20)
+  const cabins = upstairs.interactions.filter(item => item.id.startsWith('cabin-'))
+  assert.deepEqual(cabins.map(item => item.id), Array.from({ length: 20 }, (_, i) => `cabin-${i + 1}`))
   for (let n = 1; n <= 4; n++) {
     assert.equal(upstairs.areas[`island-${n}`].label, `Ilha ${n}`)
     const seats = upstairs.interactions.filter(item => item.id.startsWith(`island-${n}-`))
@@ -219,7 +219,42 @@ test('the second floor has 20 focus desks and 4 islands of 6', () => {
     for (const seat of seats) assert.equal(upstairs.tilemap[`${seat.approach.x}, ${seat.approach.y}`].privateAreaId, `island-${n}`)
   }
   assert.equal(upstairs.interactions.filter(item => item.kind === 'seat' || item.kind === 'desk').length, 47)
-  for (const desk of focus) assert.equal(upstairs.tilemap[`${desk.approach.x}, ${desk.approach.y}`].privateAreaId, undefined)
+})
+
+test('each micro cabin is a closed conversation behind glass side walls', () => {
+  const upstairs = map.rooms[1]
+  for (const room of map.rooms) assert.equal(room.interactions.filter(item => 'focus' in item).length, 0, `${room.name} has no focus desks`)
+  const cabins = upstairs.interactions.filter(item => item.id.startsWith('cabin-'))
+  assert.equal(cabins.length, 20)
+  for (const [index, cabin] of cabins.entries()) {
+    const n = index + 1
+    const { x, y } = cabin.bounds
+    assert.deepEqual([cabin.kind, cabin.label, cabin.sitRange], ['desk', `Cabine ${n}`, 0], cabin.id)
+    assert.deepEqual(cabin.bounds, { x, y, width: 5, height: 2 }, cabin.id)
+    assert.deepEqual(cabin.approach, { x: x + 2, y: y + 2 }, cabin.id)
+    assert.deepEqual(cabin.seatVisual, { x: x + 1.5, y: y + 2.35, facing: 'up' }, cabin.id)
+    assert.deepEqual(upstairs.areas[cabin.id], { label: `Cabine ${n}` })
+    blocked(upstairs, x, y, x + 4, y + 1)                     // the desk
+    walkable(upstairs, x, y + 2, x + 4, y + 3)                // the chair row and the aisle below it
+    for (let tx = x; tx <= x + 4; tx++) {
+      assert.equal(upstairs.tilemap[`${tx}, ${y + 2}`].privateAreaId, cabin.id, `${tx}, ${y + 2}`)
+      assert.equal(upstairs.tilemap[`${tx}, ${y + 3}`].privateAreaId, undefined, `aisle ${tx}, ${y + 3} is public`)
+    }
+    blocked(upstairs, x - 1, y, x - 1, y + 2)                 // glass (or the outer wall) on the left
+    blocked(upstairs, x + 5, y, x + 5, y + 2)                 // and on the right
+  }
+  // The glass walls stand on the columns between the desks and right of the last one.
+  for (const x of [6, 12, 18, 24]) {
+    for (const y of [3, 7, 11, 15, 19]) {
+      blocked(upstairs, x, y, x, y + 2)
+      walkable(upstairs, x, y + 3, x, y + 3)
+    }
+  }
+  walkable(upstairs, 25, 2, 26, 28)                         // the corridor beside the cabins
+  walkable(upstairs, 1, 2, 26, 2)                           // the walk under the back wall
+  const sign = upstairs.signs.find(item => item.text === 'Cabines')
+  assert.deepEqual([sign.x, sign.y], [12, 1.6])
+  assert.equal(upstairs.signs.filter(item => item.text.includes('foco')).length, 0)
 })
 
 test('the second floor has a private directors room with a desk and two armchairs', () => {
@@ -250,16 +285,16 @@ test('the second floor has a private directors room with a desk and two armchair
   const sign = upstairs.signs.find(item => item.text === 'Diretoria')
   assert.ok(sign)
   for (const x of [37, 38, 39]) assert.equal(upstairs.tilemap[`${x}, ${Math.floor(sign.y)}`].impassable, true)
-  // The hall from the stairs to the islands and the focus area stays open.
+  // The hall from the stairs to the islands and the cabins stays open.
   walkable(upstairs, 4, 22, 35, 28)
   walkable(upstairs, 27, 21, 48, 21)
 })
 
-test('every second floor seat is reachable from the stairs arrival', () => {
+test('every second floor approach is reachable from the stairs arrival', () => {
   const { tilemap, interactions } = map.rooms[1]
   const reachable = reachableFrom(tilemap, 2, 23)
   for (const object of interactions) assert.ok(reachable.has(`${object.approach.x}, ${object.approach.y}`), object.id)
-  assert.ok(map.rooms[1].signs.some(sign => sign.text === 'Área de foco · silêncio'))
+  assert.ok(map.rooms[1].signs.some(sign => sign.text === 'Cabines'))
   assert.ok(map.rooms[1].signs.some(sign => sign.text === 'Escada · Térreo'))
   assert.ok(map.rooms[0].signs.some(sign => sign.text === 'Escada · 2º andar'))
 })

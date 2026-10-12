@@ -2,7 +2,7 @@
 // Run with `node scripts/matte-office-map.mjs > /tmp/matte-office.json`.
 
 import { MAP_WIDTH, MAP_HEIGHT, annex, passage, corridor, hallway, walls, doors, training, oneOnOnes, directors, signs, SEAT_VISUAL, groundStairs, officeStairs } from './annex-layout.mjs'
-import { FLOOR2_WIDTH, FLOOR2_HEIGHT, floor2Stairs, focusDesks, islands, floor2Directors, floor2Signs } from './floor2-layout.mjs'
+import { FLOOR2_WIDTH, FLOOR2_HEIGHT, floor2Stairs, cabins, cabinWalls, islands, floor2Directors, floor2Signs } from './floor2-layout.mjs'
 
 const width = MAP_WIDTH
 const height = MAP_HEIGHT
@@ -288,7 +288,12 @@ for (let x = floor2Stairs.x1; x <= floor2Stairs.x2; x++) {
   tile(floor2, x, floor2Stairs.triggerY).teleporter = { roomIndex: 0, x: groundStairs.arrival[0], y: groundStairs.arrival[1] }
 }
 block(floor2, floor2Stairs.x1, floor2Stairs.triggerY + 1, floor2Stairs.x2, floor2Stairs.y2)
-for (const desk of focusDesks) block(floor2, desk.x, desk.y, desk.x + 4, desk.y + 1)
+// Micro cabins: the desk, the glass side walls, and the chair row as the cabin's closed conversation.
+for (const cabin of cabins) {
+  block(floor2, cabin.x, cabin.y, cabin.x + 4, cabin.y + 1)
+  area(floor2, { x1: cabin.x, y1: cabin.y + 2, x2: cabin.x + 4, y2: cabin.y + 2 }, 'privateAreaId', cabin.id)
+}
+for (const wall of cabinWalls) block(floor2, wall.x, wall.y1, wall.x, wall.y2)
 for (const island of islands) {
   block(floor2, island.ox, island.oy, island.ox + 6, island.oy + 3)
   area(floor2, island.area, 'privateAreaId', island.id)
@@ -302,8 +307,10 @@ block(floor2, fd.desk.x, fd.desk.y, fd.desk.x + 4, fd.desk.y + 1)
 block(floor2, fd.coffeeTable.x, fd.coffeeTable.y1, fd.coffeeTable.x, fd.coffeeTable.y2)
 area(floor2, fd.interior, 'privateAreaId', fd.id)
 
-const focusObjects = focusDesks.map((desk, index) => officeObject(desk.id, 'desk', `Área de foco · mesa ${index + 1}`,
-  [desk.x, desk.y, 5, 2], [desk.x + 2, desk.y + 2], { focus: true, seatVisual: { x: desk.x + 1.5, y: desk.y + 2.35, facing: 'up' } }))
+// Stepping onto a cabin's chair sits you down (sitRange 0), so people walking
+// along the aisle below do not.
+const cabinObjects = cabins.map(cabin => officeObject(cabin.id, 'desk', cabin.label,
+  [cabin.x, cabin.y, 5, 2], [cabin.x + 2, cabin.y + 2], { sitRange: 0, seatVisual: { x: cabin.x + 1.5, y: cabin.y + 2.35, facing: 'up' } }))
 
 // Each island copies the six project-table chairs, shifted from the office table at (22, 12).
 const islandSeats = islands.flatMap(island => {
@@ -334,7 +341,7 @@ const floor2DirectorsObjects = [
 ]
 
 const floor2Lights = [
-  officeObject('light-focus', 'light', 'Luz da área de foco', [12, 1, 1, 1], [12, 2], { config: { radiusTiles: 9, color: '#e4fff1', intensity: 0.5 } }),
+  officeObject('light-cabins', 'light', 'Luz das cabines', [12, 1, 1, 1], [12, 2], { config: { radiusTiles: 9, color: '#e4fff1', intensity: 0.5 } }),
   officeObject('light-islands', 'light', 'Luz das ilhas', [37, 1, 1, 1], [37, 2], { config: { radiusTiles: 9, color: '#fff2bb', intensity: 0.5 } }),
 ]
 
@@ -351,8 +358,9 @@ const map = {
     name: '2º andar',
     backgroundImage: { src: '/matte-floor2.png', width: FLOOR2_WIDTH * 32, height: FLOOR2_HEIGHT * 32 },
     tilemap: floor2,
-    interactions: [...floor2Lights, ...focusObjects, ...islandSeats, ...floor2DirectorsObjects],
+    interactions: [...floor2Lights, ...cabinObjects, ...islandSeats, ...floor2DirectorsObjects],
     areas: {
+      ...Object.fromEntries(cabins.map(cabin => [cabin.id, { label: cabin.label }])),
       ...Object.fromEntries(islands.map(island => [island.id, { label: island.label }])),
       [fd.id]: { label: fd.label },
     },

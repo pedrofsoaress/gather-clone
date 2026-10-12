@@ -9,12 +9,19 @@ export const FLOOR2_HEIGHT = 30
 // to the ground floor; `arrival` is where people from the ground floor appear.
 export const floor2Stairs = { x1: 1, y1: 25, x2: 3, y2: 28, triggerY: 25, arrival: [2, 23] }
 
-// Focus desks: a work-area desk (5 x 2 tiles) with its chair on the row below.
-export const FOCUS_COLUMNS = [1, 7, 13, 19]
-export const FOCUS_ROWS = [3, 7, 11, 15, 19]
-export const focusDesks = FOCUS_ROWS.flatMap((y, row) => FOCUS_COLUMNS.map((x, column) => ({
-  id: `focus-desk-${row * FOCUS_COLUMNS.length + column + 1}`, x, y,
-})))
+// Micro cabins: a work-area desk (5 x 2 tiles) with its chair on the row below,
+// between glass side walls. Each cabin's chair row is its own closed
+// conversation; the aisle row under it stays public. The glass walls stand on
+// the gap columns between the desks and on the column right of the last desk,
+// from the desk's top row down to the chair row; the outer wall closes the
+// left cabins. The front (the aisle side) is open.
+export const CABIN_COLUMNS = [1, 7, 13, 19]
+export const CABIN_ROWS = [3, 7, 11, 15, 19]
+export const cabins = CABIN_ROWS.flatMap((y, row) => CABIN_COLUMNS.map((x, column) => {
+  const n = row * CABIN_COLUMNS.length + column + 1
+  return { id: `cabin-${n}`, label: `Cabine ${n}`, x, y }
+}))
+export const cabinWalls = CABIN_ROWS.flatMap(y => CABIN_COLUMNS.map(x => ({ x: x + 5, y1: y, y2: y + 2 })))
 
 // Team islands: copies of the office project table (7 x 4 tiles at ox, oy) with
 // its six chairs, each inside its own private conversation area.
@@ -50,7 +57,7 @@ export const floor2Directors = {
 }
 
 export const floor2Signs = [
-  { text: 'Área de foco · silêncio', x: 12, y: 1.6 },
+  { text: 'Cabines', x: 12, y: 1.6 },
   ...islands.map(island => ({ text: island.label, x: island.ox + 3.5, y: island.oy + 5.8 })),
   { text: 'Escada · Térreo', x: 2.5, y: 26.6 },
   { text: floor2Directors.label, ...floor2Directors.sign },

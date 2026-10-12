@@ -13,12 +13,12 @@ import os
 import subprocess
 import sys
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 sys.dont_write_bytecode = True                  # no __pycache__ beside the scripts
 sys.path.insert(0, os.path.dirname(__file__))
 from kit import (ROOT, T, office, canvas as new_canvas, px, color, shade, cut_out,  # noqa: E402
-                 place, quilt, brick, rug, stairs, h_wall, v_wall, PROFILE, SOURCES, CUTS, V_OFF)
+                 place, quilt, brick, rug, stairs, h_wall, v_wall, cap, POST_IMG, PROFILE, SOURCES, CUTS, V_OFF)
 
 F = json.loads(subprocess.check_output(
     ['node', '--input-type=module', '-e',
@@ -29,11 +29,19 @@ last_x, last_y = F['FLOOR2_WIDTH'] - 1, F['FLOOR2_HEIGHT'] - 1
 canvas = new_canvas(W, H)
 draw = ImageDraw.Draw(canvas)
 
-columns, rows = F['FOCUS_COLUMNS'], F['FOCUS_ROWS']
-focus_x2 = max(columns) + 4                     # last tile of the focus desks
-hall_y = max(rows) + 3                          # first row of the hall below the desks
-corridor = (focus_x2 + 1, focus_x2 + 3)         # brick walk between the two halves
+columns, rows = F['CABIN_COLUMNS'], F['CABIN_ROWS']
+cabins_x2 = max(columns) + 4                    # last tile of the cabin desks
+hall_y = max(rows) + 3                          # first row of the hall below the cabins
+corridor = (cabins_x2 + 1, cabins_x2 + 3)       # brick walk between the two halves
 isl_x1 = corridor[1] + 1
+
+# The cabins' glass side walls stand on the gap columns between the desks (and
+# on the first corridor column, right of the last desk). The desks' art sits
+# a little left of their tiles' centre (a desk top on x..x+4 spans px 7..139
+# from x), so each wall is drawn halfway between the two desks it parts, 7 px
+# left of its column's centre: the 13 px wall covers px 3..15 of its column.
+GLASS_LEFT, GLASS_W = 3, POST_IMG.width
+carpet_x2 = corridor[0] * T + GLASS_LEFT + GLASS_W   # the carpet reaches the right face of the last wall
 
 # ---------------------------------------------------------------------------
 # Pieces. The desks are the office work-area desks; each variant is placed so
@@ -53,17 +61,17 @@ for name, (bx, by, dx, dy) in DESK_VARIANTS.items():
         CUTS[name] = {'keep': [(kx + bx - 35 + dx / T, ky + by - 11 + dy / T, kw, kh)]}
 desks = {name: cut_out(name) for name in DESK_VARIANTS}
 table = cut_out('project_table')
-stool = cut_out('plant_stool')
 plant = cut_out('plant')
 plant_tall = cut_out('plant_tall')
 
 # ---------------------------------------------------------------------------
-# 1. Floors: the work-area carpet under the focus desks (down to their chair
-# row), the lighter kitchen floor under the islands, brick in the corridor
-# between them and in the hall along the bottom, a rug in each island area.
-quilt(canvas, (0, 0, (focus_x2 + 1) * T, hall_y * T), 'carpet_clean', seed=101)
+# 1. Floors: the work-area carpet under the cabins (down to their chair row,
+# and right to the outer face of their last glass wall), the lighter kitchen
+# floor under the islands, brick in the corridor between them and in the hall
+# along the bottom, a rug in each island area.
+quilt(canvas, (0, 0, carpet_x2, hall_y * T), 'carpet_clean', seed=101)
 quilt(canvas, (isl_x1 * T, 0, W, hall_y * T), 'kitchen', seed=102)
-brick(canvas, (corridor[0] * T, 0, (corridor[1] + 1) * T, H))
+brick(canvas, (carpet_x2, 0, (corridor[1] + 1) * T, H))
 brick(canvas, (0, hall_y * T, W, H))
 # Rugs centred on the table and its chairs (art centre: ox + 3, oy + 1.55).
 beige = color('beige_edge')
@@ -120,9 +128,9 @@ stairs(canvas, st['x1'], st['y1'], st['x2'], st['y2'], 'down')
 
 # ---------------------------------------------------------------------------
 # 4. Furniture, then plants (in front of the walls' lower edge).
-# Focus desks: the two desk variants in a checker pattern, at (x + 0.1, y - 0.15).
+# Cabin desks: the two desk variants in a checker pattern, at (x + 0.1, y - 0.15).
 names = list(DESK_VARIANTS)
-for desk in F['focusDesks']:
+for desk in F['cabins']:
     row, column = rows.index(desk['y']), columns.index(desk['x'])
     name = names[(row + column) % len(names)]
     place(canvas, desks[name], desk['x'] + SOURCES['desk'][0] - 35, desk['y'] + SOURCES['desk'][1] - 11)
@@ -131,11 +139,42 @@ for island in F['islands']:
     sx, sy = SOURCES['project_table'][:2]
     place(canvas, table, sx + island['ox'] - 22, sy + island['oy'] - 12)
 
-# Low plants on stands between the desk columns, every other desk row, in the
-# middle of the gap between two desks (clear of the seats on the row below).
-for y in rows[::2]:
-    for x in columns[:-1]:
-        place(canvas, stool, x + 4.74, y + 0.35)
+# The cabins' glass side walls: a pane of the boardroom's front glass seen
+# from above (its pale cyan body with a lit edge and slanted reflections, a
+# little see-through), in a thin dark frame with end caps like the office
+# wall posts and a mullion where the desk meets the chair, and a soft shadow
+# on the floor to its right.
+GLASS = {name: office.getpixel(xy)[:3] for name, xy in
+         (('edge', (649, 262)), ('body', (649, 268)), ('low', (649, 290)))}
+
+
+def mix(a, b, t):
+    return tuple(round(u + (v - u) * t) for u, v in zip(a, b))
+
+
+def glass_wall(img, x, y1, y2):
+    """A glass side wall on tile column x, rows y1..y2 (inclusive)."""
+    w, h = GLASS_W, (y2 + 1 - y1) * T
+    layer = Image.new('RGBA', (w + 3, h))
+    d = ImageDraw.Draw(layer)
+    for i, a in enumerate((60, 32, 12)):                       # shadow on the floor
+        d.line((w + i, 3, w + i, h - 1), fill=(0, 0, 0, a))
+    d.rectangle((0, 0, w - 1, h - 1), fill=color('post_dark'))  # frame
+    d.rectangle((1, 0, w - 2, h - 1), fill=GLASS['body'] + (215,))
+    d.line((1, 0, 1, h - 1), fill=GLASS['edge'] + (255,))      # lit edge of the pane
+    d.line((w - 2, 0, w - 2, h - 1), fill=GLASS['low'] + (255,))
+    for k in range(8, h - 12, 26):                             # reflections
+        d.line((2, k + 7, w - 3, k), fill=mix(GLASS['body'], GLASS['edge'], 0.6) + (215,))
+        d.line((2, k + 11, w - 3, k + 4), fill=mix(GLASS['body'], GLASS['edge'], 0.3) + (215,))
+    x0 = x * T + GLASS_LEFT
+    img.alpha_composite(layer, (x0, y1 * T))
+    cap(img, x0, x0 + w, y1 * T, y1 * T + 5)
+    cap(img, x0, x0 + w, y2 * T - 2, y2 * T + 2)                # mullion: the chair row starts
+    cap(img, x0, x0 + w, (y2 + 1) * T - 7, (y2 + 1) * T)
+
+
+for wall in F['cabinWalls']:
+    glass_wall(canvas, wall['x'], wall['y1'], wall['y2'])
 
 # Plants: by the stairs and along the bottom wall of the hall, and in the
 # corners of the islands' half; none on a seat, in the corridor or on the
@@ -150,7 +189,7 @@ for x in (isl_x1 + 0.05, last_x - 0.15 - pw):
     place(canvas, plant, x, 0.95)
     place(canvas, plant, x, hall_y - 0.1 - ph)
 
-# 5. Directors' room furniture: the office desk at fd['desk'] (as the focus
+# 5. Directors' room furniture: the office desk at fd['desk'] (as the cabin
 # desks: tiles + (0.1, -0.15)), the reception armchairs and coffee table shifted
 # by fd['lounge'], and a plant in the bottom right corner, clear of the seats.
 place(canvas, desks['desk'], fd['desk']['x'] + SOURCES['desk'][0] - 35, fd['desk']['y'] + SOURCES['desk'][1] - 11)
