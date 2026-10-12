@@ -19,6 +19,9 @@ import { zoomAtCursor } from './office/camera-zoom.mjs'
 import { videoChat } from '../video-chat/video-chat'
 import { setLocalMeetingUid, setMeeting, type MeetingSnapshot } from '../video-chat/meeting'
 
+// After this long a pending avatar load is treated as stuck and tried again.
+const SPAWN_STALE_MS = 12000
+
 export class PlayApp extends App {
     private scale: number = 1.5
     public player: Player
@@ -57,7 +60,11 @@ export class PlayApp extends App {
     private eventsRemoved = false
     private roomTransitioning = false
     private reconnecting = false
-    private spawning = new Map<string, Promise<void>>()
+    private spawning = new Map<string, { promise: Promise<void>, startedAt: number, token: number }>()
+    private spawnToken = 0
+    private lastSync: { at: number, ok: boolean, listed: string[], error?: string } | null = null
+    private diagnostics: HTMLDivElement | null = null
+    private diagnosticsTimer: ReturnType<typeof setInterval> | null = null
     private departures = new Map<string, number>()
     private resyncTimer: ReturnType<typeof setTimeout> | null = null
     private resyncInterval: ReturnType<typeof setInterval> | null = null
@@ -297,8 +304,10 @@ export class PlayApp extends App {
         const {data, error} = await server.getPlayersInRoom(room)
         if (error) {
             console.error('Failed to get player positions in room:', error)
+            this.lastSync = { at: Date.now(), ok: false, listed: [], error: String(error.message ?? error) }
             return
         }
+        this.lastSync = { at: Date.now(), ok: true, listed: data.players.map((player: { username: string }) => player.username) }
         if (this.eventsRemoved || room !== this.currentRoomIndex) return
 
         // Drop avatars whose departure was missed, e.g. while this connection was down.
@@ -334,9 +343,42 @@ export class PlayApp extends App {
         if (document.visibilityState === 'visible') this.scheduleResync()
     }
 
+    private isSpawning = (uid: string) => {
+        const pending = this.spawning.get(uid)
+        return Boolean(pending && Date.now() - pending.startedAt < SPAWN_STALE_MS)
+    }
+
+    // Opening the office with ?diag in the address shows what this screen knows about
+    // the people in the room, so a missing avatar can be diagnosed from a screenshot.
+    private startDiagnostics = () => {
+        if (this.eventsRemoved || this.diagnostics || !new URLSearchParams(window.location.search).has('diag')) return
+        const box = document.createElement('div')
+        box.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9999;max-width:420px;padding:8px 10px;border-radius:8px;background:rgba(2,6,23,.92);color:#e2e8f0;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;pointer-events:none'
+        document.body.appendChild(box)
+        this.diagnostics = box
+        const render = () => {
+            const age = (at: number) => `${Math.round((Date.now() - at) / 1000)}s`
+            const known = Object.entries(this.players).map(([uid, player]) => `  ${player.username} (${uid.slice(0, 4)}) ${player.currentTilePosition.x},${player.currentTilePosition.y}`)
+            const spawning = [...this.spawning.entries()].map(([uid, pending]) => `  ${uid.slice(0, 4)} há ${age(pending.startedAt)}`)
+            const sync = this.lastSync ? `${this.lastSync.ok ? 'ok' : 'ERRO ' + this.lastSync.error} há ${age(this.lastSync.at)}: ${this.lastSync.listed.join(', ')}` : 'nenhuma'
+            box.textContent = [
+                `eu: ${this.player.username} (${this.uid.slice(0, 4)}) ${this.player.currentTilePosition.x},${this.player.currentTilePosition.y}`,
+                `conexão: ${server.socket.connected ? 'ok' : 'caiu'} · aba: ${document.visibilityState}${this.reconnecting ? ' · reconectando' : ''}`,
+                `vejo (${known.length}):`, ...known,
+                `carregando (${spawning.length}):`, ...spawning,
+                `última lista do servidor: ${sync}`,
+            ].join('\n')
+        }
+        render()
+        this.diagnosticsTimer = setInterval(render, 1000)
+    }
+
     private async updatePlayer(uid: string, player: any) {
         const pending = this.spawning.get(uid)
-        if (pending) await pending
+        // A spawn that has not finished in a while (an avatar image that never
+        // arrived) must not block every later attempt for that person.
+        if (pending && Date.now() - pending.startedAt < SPAWN_STALE_MS) await pending.promise
+        else if (pending) this.spawning.delete(uid)
         if (this.eventsRemoved) return
         if (uid in this.players) {
             if (this.players[uid].skin !== player.skin) {
@@ -346,20 +388,23 @@ export class PlayApp extends App {
                 this.players[uid].setPosition(player.x, player.y)
             }
         } else {
-            const spawn = this.spawnPlayer(player.uid, player.skin, player.username, player.x, player.y)
-                .finally(() => this.spawning.delete(uid))
-            this.spawning.set(uid, spawn)
+            const token = ++this.spawnToken
+            const spawn = this.spawnPlayer(player.uid, player.skin, player.username, player.x, player.y, token)
+                .catch(error => console.error('Failed to show avatar', uid, error))
+                .finally(() => { if (this.spawning.get(uid)?.token === token) this.spawning.delete(uid) })
+            this.spawning.set(uid, { promise: spawn, startedAt: Date.now(), token })
             await spawn
         }
     }
 
-    private async spawnPlayer(uid: string, skin: string, username: string, x: number, y: number) {
+    private async spawnPlayer(uid: string, skin: string, username: string, x: number, y: number, token: number) {
         const departures = this.departures.get(uid) ?? 0
         const room = this.currentRoomIndex
         const otherPlayer = new Player(skin, this, username)
         await otherPlayer.init()
-        // The person may have left, or this screen changed rooms, while the avatar loaded.
-        if (this.eventsRemoved || room !== this.currentRoomIndex || departures !== (this.departures.get(uid) ?? 0)) {
+        // The person may have left, this screen changed rooms, or a newer attempt replaced this one while the avatar loaded.
+        const replaced = this.spawning.get(uid)?.token !== token || uid in this.players
+        if (this.eventsRemoved || room !== this.currentRoomIndex || departures !== (this.departures.get(uid) ?? 0) || replaced) {
             otherPlayer.destroy()
             return
         }
@@ -395,6 +440,7 @@ export class PlayApp extends App {
         // People who joined while the room was loading arrived before the socket listeners existed.
         await this.syncOtherPlayers()
         this.startPeriodicResync()
+        this.startDiagnostics()
 
         this.fadeOut()
     }
@@ -750,7 +796,7 @@ export class PlayApp extends App {
         const player = this.players[data.uid]
         if (player) {
             player.moveToTile(data.x, data.y)
-        } else if (!this.spawning.has(data.uid)) {
+        } else if (!this.isSpawning(data.uid)) {
             this.scheduleResync()
         }
     }
@@ -830,7 +876,7 @@ export class PlayApp extends App {
         const player = this.players[uid]
         if (!player) {
             // A video from someone this screen has no avatar for: the join was missed.
-            if (uid !== this.uid && !this.spawning.has(uid)) this.scheduleResync()
+            if (uid !== this.uid && !this.isSpawning(uid)) this.scheduleResync()
             return
         }
         this.emitVideoProfile(uid)
@@ -1024,6 +1070,10 @@ export class PlayApp extends App {
         this.resyncTimer = null
         if (this.resyncInterval) clearInterval(this.resyncInterval)
         this.resyncInterval = null
+        if (this.diagnosticsTimer) clearInterval(this.diagnosticsTimer)
+        this.diagnosticsTimer = null
+        this.diagnostics?.remove()
+        this.diagnostics = null
         document.removeEventListener('visibilitychange', this.onVisibilityChange)
         this.removeSocketEvents()
         setMeeting(null)

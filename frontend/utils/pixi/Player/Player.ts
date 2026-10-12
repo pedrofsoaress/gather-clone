@@ -14,6 +14,24 @@ import { actionFrames, actionPose, movementSpeed, type AvatarActionState } from 
 import { outlineCanvas } from './outline-pixels'
 import { AvatarDecorations } from './AvatarDecorations'
 const AVATAR_SCALE = 1.5
+
+// Loads an avatar image; a download that never finishes (seen in background tabs)
+// would otherwise stay cached forever, so a retry asks for a fresh copy.
+const SKIN_LOAD_TIMEOUT_MS = 8000
+async function loadSkinImage(src: string): Promise<string> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Avatar image timed out')), SKIN_LOAD_TIMEOUT_MS) })
+    try {
+        await Promise.race([PIXI.Assets.load(src), timeout])
+        return src
+    } catch {
+        const retry = `${src}?retry=${Date.now()}`
+        await PIXI.Assets.load(retry)
+        return retry
+    } finally {
+        clearTimeout(timer)
+    }
+}
 function formatText(message: string, maxLength: number): string {
     message = message.trim()
     const words = message.split(' ')
@@ -99,8 +117,7 @@ export class Player {
     }
 
     private async loadAnimations(skin = this.skin) {
-        const src = `/sprites/characters/Character_${skin}.png`
-        await PIXI.Assets.load(src)
+        const src = await loadSkinImage(`/sprites/characters/Character_${skin}.png`)
         if (this.destroyed) return
 
         const spriteSheetData = JSON.parse(JSON.stringify(playerSpriteSheetData))
