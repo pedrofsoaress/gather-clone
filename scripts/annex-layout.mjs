@@ -75,17 +75,27 @@ export const doors = [
 // (triggerY) sends people upstairs; `arrival` is where people from upstairs appear.
 export const groundStairs = { x1: 50, y1: 26, x2: 52, y2: 28, triggerY: 26, arrival: [51, 24] }
 
+// The office's own stairs: the two doorways in its top wall, one on each side
+// of the glass boardroom. The back tile of each doorway (triggerY) sends people
+// to the second floor; the mat in front of it (frontY) stays walkable, and the
+// sign sits on the door panel above (signY, row 1, impassable).
+export const officeStairs = [
+  { x1: 16, x2: 17, triggerY: 2, frontY: 3, signY: 1 },
+  { x1: 32, x2: 33, triggerY: 2, frontY: 3, signY: 1 },
+]
+
 export const signs = [
   { text: 'Salas →', x: 47.5, y: 14.3 },
   { text: training.label, x: 51.5, y: 6.3 },
   ...oneOnOnes.map(room => ({ text: room.label, x: room.x1 + 2.5, y: 18.5 })),
   { text: 'Diretoria · Pedro Soares', x: 81, y: 18.5 },
   { text: 'Escada · 2º andar', x: 51.5, y: 27.6 },
+  ...officeStairs.map(stairs => ({ text: 'Escada · 2º andar', x: (stairs.x1 + stairs.x2 + 1) / 2, y: stairs.signY })),
 ]
 
 if (process.argv[1]?.endsWith('annex-layout.mjs')) {
   process.stdout.write(JSON.stringify({
     TILE, OFFICE_WIDTH, MAP_WIDTH, MAP_HEIGHT, passage, annex, corridor, hallway,
-    training, SEAT_VISUAL, CHAIR_OFFSET, oneOnOnes, directors, walls, doors, signs, groundStairs,
+    training, SEAT_VISUAL, CHAIR_OFFSET, oneOnOnes, directors, walls, doors, signs, groundStairs, officeStairs,
   }))
 }

@@ -1,7 +1,7 @@
 // Generates the public Matte office. The artwork lives in frontend/public.
 // Run with `node scripts/matte-office-map.mjs > /tmp/matte-office.json`.
 
-import { MAP_WIDTH, MAP_HEIGHT, annex, passage, corridor, hallway, walls, doors, training, oneOnOnes, directors, signs, SEAT_VISUAL, groundStairs } from './annex-layout.mjs'
+import { MAP_WIDTH, MAP_HEIGHT, annex, passage, corridor, hallway, walls, doors, training, oneOnOnes, directors, signs, SEAT_VISUAL, groundStairs, officeStairs } from './annex-layout.mjs'
 import { FLOOR2_WIDTH, FLOOR2_HEIGHT, floor2Stairs, focusDesks, islands, floor2Signs } from './floor2-layout.mjs'
 
 const width = MAP_WIDTH
@@ -224,6 +224,13 @@ for (let x = groundStairs.x1; x <= groundStairs.x2; x++) {
   tile(tilemap, x, groundStairs.triggerY).teleporter = { roomIndex: 1, x: floor2Stairs.arrival[0], y: floor2Stairs.arrival[1] }
 }
 block(tilemap, groundStairs.x1, groundStairs.triggerY + 1, groundStairs.x2, groundStairs.y2)
+// The office's stair doorways beside the boardroom also go upstairs, from their back tile.
+for (const stairs of officeStairs) {
+  for (let x = stairs.x1; x <= stairs.x2; x++) {
+    tile(tilemap, x, stairs.triggerY).teleporter = { roomIndex: 1, x: floor2Stairs.arrival[0], y: floor2Stairs.arrival[1] }
+  }
+  block(tilemap, stairs.x1 - 1, stairs.signY, stairs.x2 + 1, stairs.signY) // the wall the sign hangs on
+}
 
 // Second floor.
 const floor2 = {}

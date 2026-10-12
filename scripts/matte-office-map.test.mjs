@@ -2,6 +2,21 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { map } from './matte-office-map.mjs'
 
+// Tiles reachable on foot from (x, y). Teleporters are stepped on but not walked through.
+function reachableFrom(tilemap, x, y) {
+  const reachable = new Set([`${x}, ${y}`])
+  const queue = [[x, y]]
+  for (let i = 0; i < queue.length; i++) {
+    const [cx, cy] = queue[i]
+    if (tilemap[`${cx}, ${cy}`].teleporter) continue
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const key = `${cx + dx}, ${cy + dy}`
+      if (tilemap[key] && !tilemap[key].impassable && !reachable.has(key)) { reachable.add(key); queue.push([cx + dx, cy + dy]) }
+    }
+  }
+  return reachable
+}
+
 test('every functional Matte fixture has a distinct hotspot', () => {
   const interactions = map.rooms[0].interactions
   assert.equal(interactions.length, 126)
@@ -84,7 +99,7 @@ test('the annex wing has its rooms, signs and darkness', () => {
   const room = map.rooms[0]
   assert.deepEqual(room.backgroundImage, { src: '/matte-office-v3.png', width: 86 * 32, height: 30 * 32 })
   assert.deepEqual(room.annex, { reveal: { x: 50, y: 0, width: 36, height: 30 }, triggers: [[49, 15], [49, 16]] })
-  assert.equal(room.signs.length, 8)
+  assert.equal(room.signs.length, 10)
   assert.deepEqual(room.areas['matte-training'].meeting, { stage: { x1: 62, y1: 1, x2: 76, y2: 3 } })
   for (let n = 1; n <= 4; n++) assert.equal(room.areas[`one-on-one-${n}`].capacity, 3)
   assert.equal(room.areas['matte-directors'].capacity, undefined)
@@ -122,6 +137,23 @@ test('the ground floor stairs lead upstairs and back', () => {
   }
   assert.ok(!ground.tilemap['51, 24'].impassable && !ground.tilemap['51, 24'].teleporter)
   assert.ok(!upstairs.tilemap['2, 23'].impassable && !upstairs.tilemap['2, 23'].teleporter)
+})
+
+test('the stair doorways beside the boardroom lead upstairs too', () => {
+  const ground = map.rooms[0]
+  const reachable = reachableFrom(ground.tilemap, map.spawnpoint.x, map.spawnpoint.y)
+  for (const x of [16, 17, 32, 33]) {
+    assert.deepEqual(ground.tilemap[`${x}, 2`].teleporter, { roomIndex: 1, x: 2, y: 23 }, `${x}, 2`)
+    assert.ok(!ground.tilemap[`${x}, 2`].impassable, `${x}, 2 can be stepped on`)
+    assert.ok(!ground.tilemap[`${x}, 3`].impassable && !ground.tilemap[`${x}, 3`].teleporter, `${x}, 3 is the way in`)
+    assert.ok(reachable.has(`${x}, 2`), `${x}, 2 is reachable from the spawn`)
+  }
+  const stairSigns = ground.signs.filter(sign => sign.text === 'Escada · 2º andar' && sign.y < 5)
+  assert.deepEqual(stairSigns.map(sign => [sign.x, sign.y]), [[17, 1], [33, 1]])
+  for (const sign of stairSigns) {
+    for (const x of [Math.floor(sign.x) - 1, Math.floor(sign.x)]) assert.equal(ground.tilemap[`${x}, ${sign.y}`].impassable, true, `sign over ${x}, ${sign.y}`)
+  }
+  for (const x of [50, 51, 52]) assert.deepEqual(ground.tilemap[`${x}, 26`].teleporter, { roomIndex: 1, x: 2, y: 23 })
 })
 
 test('the second floor has 20 focus desks and 4 islands of 6', () => {

@@ -37,5 +37,5 @@ test('four 1:1 rooms and the directors room do not overlap and each has a door',
 })
 
 test('signs use the agreed Portuguese texts', () => {
-  assert.deepEqual(layout.signs.map(sign => sign.text), ['Salas →', 'Sala de treinamento', '1:1 · 1', '1:1 · 2', '1:1 · 3', '1:1 · 4', 'Diretoria · Pedro Soares', 'Escada · 2º andar'])
+  assert.deepEqual(layout.signs.map(sign => sign.text), ['Salas →', 'Sala de treinamento', '1:1 · 1', '1:1 · 2', '1:1 · 3', '1:1 · 4', 'Diretoria · Pedro Soares', 'Escada · 2º andar', 'Escada · 2º andar', 'Escada · 2º andar'])
 })
