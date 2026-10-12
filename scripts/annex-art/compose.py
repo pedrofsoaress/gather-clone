@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw
 sys.dont_write_bytecode = True                  # no __pycache__ beside the scripts
 sys.path.insert(0, os.path.dirname(__file__))
 from kit import (L, T, OFFICE_W, H, ROOT, office, canvas as new_canvas, px, color, shade, cut_out,  # noqa: E402
-                 round_table_for_three, place, quilt, brick, rug, h_wall, v_wall, cap,
+                 round_table_for_three, place, quilt, brick, rug, h_wall, v_wall, cap, stairs,
                  PROFILE, SOURCES, V_OFF)
 
 W = L['MAP_WIDTH'] * T
@@ -61,6 +61,8 @@ for x1, y1, x2, y2 in L['doors']:                                           # do
         brick(canvas, (x1 * T, y1 * T, x1 * T + HALF, (y2 + 1) * T))
     else:
         brick(canvas, (x1 * T, y1 * T, (x2 + 1) * T, y1 * T + HALF))
+gs = L['groundStairs']                                                      # stairs to the 2nd floor
+stairs(canvas, gs['x1'], gs['y1'], gs['x2'], gs['y2'], 'down')
 
 # 2. Passage through the office east wall: carpet over the corner plant, brick
 # in the opening, the cut ends of the wall closed with end blocks.

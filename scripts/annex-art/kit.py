@@ -54,6 +54,12 @@ SOURCES = {
     'plant_tall': (1.2, 14.08, 1.8, 2.92),
     # Tall shelf with a plant on top, by the east wall of the right work area.
     'shelf': (47.72, 9.85, 1.11, 4.29),
+    # Project table with its six chairs, on the corridor bricks between the work
+    # areas (the 1:1 rooms use the kitchen table instead). Its table tiles start
+    # at (22, 12): shift by (ox - 22, oy - 12) to put the table at (ox, oy).
+    'project_table': (21.0, 11.0, 8.0, 5.1),
+    # Plant on a small wooden stand, by the workshop (a low plant between desks).
+    'plant_stool': (12.45, 19.25, 1.05, 2.4),
 }
 
 # How each piece is cut out (see cut_out): `keep` shapes are always opaque,
@@ -75,6 +81,11 @@ CUTS = {
               'ground': (47.6, 16.72, 1.0, 0.3, 80)},
     # Its sides touch the crop border, so the floor is sampled beside it.
     'shelf': {'floor_from': (45.2, 11.5, 1.8, 2.0), 'erase': [(47.72, 9.85, 0.07, 2.0)]},
+    # The stand's dark legs read as shadow: dropped, with a drawn contact shadow.
+    'plant_stool': {'tol': 28, 'shadow': 'drop', 'erase_px': [(0, 64, 33, 76), (0, 0, 1, 76)],
+                    'ground': (12.5, 21.0, 0.95, 0.3, 90)},
+    # The bricks' joints leave holes in the table's shadow: closed.
+    'project_table': {'fill_shadow': 5},
     'plant_tall': {'keep': [(1.57, 16.02, 0.96, 0.95, 'ellipse')], 'shadow': 'drop',
                    'erase': [(1.2, 15.85, 0.3, 0.3)],
                    'ground': (1.55, 16.7, 1.0, 0.3, 80)},
@@ -87,6 +98,12 @@ FLOOR_POOLS = {
     'kitchen': [(34.1, 4.6, 35.4, 6.3), (35.6, 5.0, 37.55, 8.9), (41.1, 4.7, 43.2, 8.9)],
     'beige_rug': [(4.7, 6.3, 6.5, 8.3), (8.4, 6.3, 9.7, 8.3), (4.3, 5.0, 5.0, 8.3)],
     'teal_rug': [(22.1, 24.45, 27.9, 25.0), (24.05, 22.3, 25.95, 22.95)],
+    # The work-area carpet without the wall, brick and plant edges some of the
+    # 'carpet' rectangles touch (second floor).
+    'carpet_clean': [(34.08, 10.05, 35.12, 16.85), (45.1, 11.3, 47.15, 16.85), (35.0, 10.05, 39.4, 10.75),
+                     (40.5, 10.05, 46.9, 10.75), (3.45, 11.7, 4.9, 16.85)],
+    # The lounge rug without the leaf tips of the plant beside it (second floor).
+    'beige_rug_clean': [(4.45, 6.4, 6.45, 8.35), (8.55, 6.4, 9.75, 8.35)],
 }
 
 # Wall profiles: one pixel line across an office wall (office px), repeated
@@ -217,6 +234,8 @@ def cut_out(name):
     for rect in opts.get('erase_px', []):                # crop pixels, inclusive
         ImageDraw.Draw(im).rectangle(rect, fill=(0, 0, 0, 0))
     despeckle(im)
+    if 'fill_shadow' in opts:
+        fill_shadow(im, opts['fill_shadow'])
     if 'ground' in opts:                                 # soft contact shadow, drawn
         gx, gy, gw, gh, alpha = opts['ground']
         under = Image.new('RGBA', im.size)
@@ -224,6 +243,44 @@ def cut_out(name):
         under.alpha_composite(im)
         im = under
     return im
+
+
+def fill_shadow(im, size):
+    """Closes the holes a patterned floor (brick joints) leaves in a drop
+    shadow: transparent pixels and small floor-colored specks inside the closed
+    shadow area become shadow of the typical darkness."""
+    from PIL import ImageFilter
+    alpha = im.getchannel('A')
+    shadow = alpha.point(lambda v: 255 if 0 < v < 255 else 0)
+    closed = shadow.filter(ImageFilter.MaxFilter(size)).filter(ImageFilter.MinFilter(size))
+    values = sorted(v for v in alpha.getdata() if 0 < v < 255)
+    typical = values[len(values) // 2] if values else 0
+    pix, inside = im.load(), closed.load()
+    cw, ch = im.size
+    seen = set()
+    for i in range(cw):
+        for j in range(ch):
+            if not inside[i, j] or (i, j) in seen:
+                continue
+            if pix[i, j][3] == 0:
+                pix[i, j] = (0, 0, 0, typical)
+            elif pix[i, j][3] == 255:              # an opaque group wholly inside the shadow
+                group, stack, edge = [], [(i, j)], False
+                seen.add((i, j))
+                while stack:
+                    a, b = stack.pop()
+                    group.append((a, b))
+                    for n in ((a + 1, b), (a - 1, b), (a, b + 1), (a, b - 1)):
+                        if not (0 <= n[0] < cw and 0 <= n[1] < ch):
+                            continue
+                        if pix[n][3] == 255 and n not in seen:
+                            seen.add(n)
+                            stack.append(n)
+                        elif pix[n][3] == 255 or not inside[n]:
+                            edge = edge or not inside[n]
+                if not edge and len(group) < 40 and all(sum(pix[g][:3]) > 300 for g in group):
+                    for g in group:
+                        pix[g] = (0, 0, 0, typical)
 
 
 def despeckle(im, smallest=12):
@@ -481,3 +538,53 @@ def cap(img, x0, x1, y0, y1):
     draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=color('post_dark'))
     draw.rectangle((x0 + 1, y0 + 1, x1 - 2, y1 - 2), fill=color('post_fill'))
     draw.line((x0 + 1, y0 + 1, x1 - 2, y0 + 1), fill=color('post_light'))
+
+
+# ---------------------------------------------------------------------------
+# Stairs.
+
+def stairs(img, x1, y1, x2, y2, going='down'):
+    """A staircase seen from above on the tile rectangle (inclusive), in the
+    wood of the training stage: one step per tile row, each a run of planks
+    with a light top highlight and a darker front edge, between two dark rails
+    with a post at each end. The steps darken towards the bottom (going='down')
+    or towards the top ('up'), so the far end reads as the lower one."""
+    draw = ImageDraw.Draw(img)
+    x0, y0, xe, ye = x1 * T, y1 * T, (x2 + 1) * T, (y2 + 1) * T
+    rail = 4
+    sx0, sx1 = x0 + rail, xe - rail                  # steps between the rails
+    count = y2 - y1 + 1
+    rng = random.Random(x1 * 100 + y1)
+    for n in range(count):
+        k = n if going == 'down' else count - 1 - n
+        f = 1.0 - 0.3 * k / max(1, count - 1)
+        top, bottom = y0 + n * T, y0 + (n + 1) * T     # bottom exclusive
+        tread0, tread1 = top, bottom - 5
+        # The tread: one board across, with a faint grain line and seam.
+        draw.rectangle((sx0, tread0, sx1 - 1, tread1 - 1), fill=shade(color('wood'), f * rng.uniform(0.98, 1.02)))
+        mid = (tread0 + tread1) // 2
+        draw.line((sx0, mid, sx1 - 1, mid), fill=shade(color('wood'), f * 0.93))
+        for _ in range(3):
+            gx, gy = rng.randint(sx0 + 4, sx1 - 30), rng.choice((tread0 + 5, mid + 5))
+            draw.line((gx, gy, gx + rng.randint(12, 26), gy), fill=shade(color('wood'), f * 0.95))
+        # Front of the step: a lit nosing over a darker riser.
+        draw.rectangle((sx0, bottom - 5, sx1 - 1, bottom - 4), fill=shade(color('wood_light'), f * 1.06))
+        draw.rectangle((sx0, bottom - 3, sx1 - 1, bottom - 2), fill=shade(color('wood'), f * 0.6))
+        draw.line((sx0, bottom - 1, sx1 - 1, bottom - 1), fill=shade(color('wood_dark'), f * 0.75))
+        if n > 0:                                    # shadow of the step above
+            for i, a in enumerate((90, 55, 25)):
+                img.alpha_composite(Image.new('RGBA', (sx1 - sx0, 1), (0, 0, 0, a)), (sx0, top + i))
+    # The rails shade the edges of the steps.
+    for i, a in enumerate((60, 30)):
+        side = Image.new('RGBA', (1, ye - y0), (0, 0, 0, a))
+        img.alpha_composite(side, (sx0 + i, y0))
+        img.alpha_composite(side, (sx1 - 1 - i, y0))
+    # Rails along both sides and a post at each end of each rail.
+    for rx in (x0, xe - rail):
+        draw.rectangle((rx, y0, rx + rail - 1, ye - 1), fill=color('post_dark'))
+        draw.line((rx + 1, y0, rx + 1, ye - 1), fill=color('post_fill'))
+        draw.line((rx + 2, y0, rx + 2, ye - 1), fill=color('post_light'))
+    pw, ph = POST_IMG.size
+    end = y0 + ph // 2 if going == 'down' else ye - (ph + 1) // 2      # at the top of the flight
+    for cx in (x0 + pw // 2, xe - (pw + 1) // 2):
+        post(img, cx, end)
