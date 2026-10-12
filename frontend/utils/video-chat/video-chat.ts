@@ -2,7 +2,12 @@ import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack, IA
 import signal from '../signal'
 import { createHash } from 'crypto'
 import { generateToken } from './generateToken'
+import { TokenCache } from './token-cache'
 import { clampRemoteVolume, createWithDeviceFallback, defaultDeviceId, mediaErrorMessage, readMediaPreferences, resolveDevicePreference, saveMediaPreferences, type MediaPreferences } from './AudioPreference'
+
+// The server pushes the token right after the step that groups people; a join
+// triggered by the local tile change waits this long for it before asking the server action.
+const PUSHED_TOKEN_WAIT_MS = 300
 
 export class VideoChat {
     private client: IAgoraRTCClient = AgoraRTC.createClient({ codec: "vp8", mode: "rtc" })
@@ -24,6 +29,7 @@ export class VideoChat {
     private channelOperation = Promise.resolve()
     private screenRequest = 0
     private screenStarting = false
+    private readonly tokens = new TokenCache()
 
     private remoteUsers: { [uid: string]: IAgoraRTCRemoteUser } = {}
 
@@ -309,6 +315,10 @@ export class VideoChat {
 
     public get isConnected() { return this.client.connectionState === 'CONNECTED' }
 
+    public rememberToken(channel: string, token: string) {
+        this.tokens.remember(channel, token)
+    }
+
     private async renewConversationToken(screen: boolean) {
         const channel = this.currentAgoraChannel
         const uid = screen ? `${this.currentUid}-screen` : this.currentUid
@@ -406,6 +416,7 @@ export class VideoChat {
     public async joinChannel(channel: string, uid: string, realmId: string, roomIndex: number) {
         const key = `${roomIndex}:${channel}`
         const request = ++this.channelRequest
+        this.tokens.cancelWaits()
         if (this.channelTimeout) {
             clearTimeout(this.channelTimeout)
         }
@@ -413,7 +424,9 @@ export class VideoChat {
             this.channelOperation = this.channelOperation.then(async () => {
                 if (request !== this.channelRequest || (key === this.currentChannel && this.isConnected)) return
                 const uniqueChannelId = this.createUniqueChannelId(realmId, roomIndex, channel)
-                const token = await generateToken(uniqueChannelId, uid)
+                const pushed = await this.tokens.wait(uniqueChannelId, PUSHED_TOKEN_WAIT_MS)
+                if (request !== this.channelRequest) return
+                const token = pushed ?? await generateToken(uniqueChannelId, uid)
                 if (request !== this.channelRequest) return
                 if (!token) {
                     await this.stopScreenShare()
@@ -432,7 +445,17 @@ export class VideoChat {
                 if (this.client.connectionState !== 'DISCONNECTED') await this.client.leave()
                 if (request !== this.channelRequest) return
                 this.resetRemoteUsers()
-                await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, token, uid)
+                try {
+                    await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, token, uid)
+                } catch (error) {
+                    // A pushed token Agora rejects (the server's credentials differ): ask the server action once.
+                    if (!pushed || request !== this.channelRequest) throw error
+                    this.tokens.forget(uniqueChannelId)
+                    const fallback = await generateToken(uniqueChannelId, uid)
+                    if (request !== this.channelRequest) return
+                    if (!fallback) throw error
+                    await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, fallback, uid)
+                }
                 if (request !== this.channelRequest) { await this.client.leave().catch(() => {}); return }
                 this.currentChannel = key
                 this.currentAgoraChannel = uniqueChannelId
@@ -468,11 +491,12 @@ export class VideoChat {
                 console.error('Failed to join video conversation', error)
                 signal.emit('officeFeedback', { message: 'Não foi possível entrar na chamada de vídeo.' })
             })
-        }, 150)
+        }, 0)
     }
 
     public async leaveChannel() {
         const request = ++this.channelRequest
+        this.tokens.cancelWaits()
         if (this.channelTimeout) {
             clearTimeout(this.channelTimeout)
         }
@@ -498,6 +522,8 @@ export class VideoChat {
         this.screenRequest++
         this.stopDeviceMonitoring?.()
         if (this.channelTimeout) clearTimeout(this.channelTimeout)
+        this.tokens.cancelWaits()
+        this.tokens.clear()
         if (this.screenTrack) {
             this.screenTrack.close()
             this.screenTrack = null

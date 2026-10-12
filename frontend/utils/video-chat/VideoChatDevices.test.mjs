@@ -6,6 +6,8 @@ import ts from 'typescript'
 import { createHash } from 'node:crypto'
 import * as preferences from './AudioPreference.ts'
 
+const tick = () => new Promise(resolve => setImmediate(resolve))
+
 function harness({ token = async () => 'token', screenCapture, manualTimers = false } = {}) {
     let devices = []
     const events = new Map()
@@ -38,18 +40,26 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
         async createMicrophoneAudioTrack(config) { captures.push({ kind: 'audio', config }); return track('audio', config?.microphoneId ?? devices.find(device => device.kind === 'audioinput')?.deviceId) },
         createCustomVideoTrack() { return track('screen') },
     }
-    const source = ts.transpileModule(readFileSync(new URL('./video-chat.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText
+    const transpile = file => ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText
+    const source = transpile('./video-chat.ts')
     const exports = {}
-    vm.runInNewContext(source, {
-        exports, process: { env: {} }, console,
+    const timerApi = {
         setTimeout: manualTimers ? callback => { timers.set(++timerId, callback); return timerId } : setTimeout,
         clearTimeout: manualTimers ? id => timers.delete(id) : clearTimeout,
+    }
+    // The pushed-token wait runs on the same (possibly manual) timers as the join.
+    const tokenCache = {}
+    vm.runInNewContext(transpile('./token-cache.ts'), { exports: tokenCache, Date, ...timerApi })
+    vm.runInNewContext(source, {
+        exports, process: { env: {} }, console,
+        ...timerApi,
         navigator: { mediaDevices: { getDisplayMedia: screenCapture, enumerateDevices: async () => devices, addEventListener: (name, fn) => events.set(name, fn), removeEventListener: (name, fn) => { if (events.get(name) === fn) events.delete(name) } } },
         window: { localStorage: storage }, HTMLMediaElement: class {},
         require: name => {
             if (name === 'agora-rtc-sdk-ng') return agora
             if (name === '../signal') return { emit: (name, data) => signals.push({ name, data }) }
             if (name === './generateToken') return { generateToken: token }
+            if (name === './token-cache') return tokenCache
             if (name === './AudioPreference') return { ...preferences, readMediaPreferences: () => JSON.parse(storage.getItem('prefs') ?? '{"cameraId":"usb-camera","microphoneId":"usb-mic","outputId":""}'), saveMediaPreferences: next => storage.setItem('prefs', JSON.stringify(next)) }
             if (name === 'crypto') return { createHash }
             throw new Error(`Unexpected import: ${name}`)
@@ -128,6 +138,8 @@ test('equal private ids in different rooms join different Agora channels and ren
     for (const room of [0, 1]) {
         await env.chat.joinChannel('meeting', 'uid', 'realm', room)
         env.flushTimers()
+        await tick()
+        env.flushTimers()
         await env.chat.channelOperation
     }
     assert.equal(env.clients[0].joined.length, 2)
@@ -144,11 +156,50 @@ test('late token resolution after leaving the application cannot reopen a call',
     env.clients[0].connectionState = 'DISCONNECTED'
     await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
     env.flushTimers()
+    await tick()
+    env.flushTimers()
     while (!requested) await Promise.resolve()
     env.chat.destroy()
     resolveToken('token')
     await env.chat.channelOperation
     assert.deepEqual(env.clients[0].joined, [])
+})
+
+test('a token pushed by the server joins at once without asking the server action', async () => {
+    let requested = 0
+    const env = harness({ manualTimers: true, token: async () => { requested++; return 'action-token' } })
+    env.clients[0].connectionState = 'DISCONNECTED'
+    const channel = createHash('md5').update('realm-0-meeting').digest('hex').slice(0, 16)
+    const tokens = []
+    env.clients[0].join = async function (_app, joined, value) { tokens.push(value); this.joined.push(joined); this.connectionState = 'CONNECTED' }
+    env.chat.rememberToken(channel, 'pushed-token')
+    await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
+    env.flushTimers()
+    await env.chat.channelOperation
+    assert.deepEqual(tokens, ['pushed-token'])
+    assert.deepEqual(env.clients[0].joined, [channel])
+    assert.equal(requested, 0)
+})
+
+test('a join waits briefly for the pushed token, and falls back when Agora rejects it', async () => {
+    let requested = 0
+    const env = harness({ manualTimers: true, token: async () => { requested++; return 'action-token' } })
+    env.clients[0].connectionState = 'DISCONNECTED'
+    const channel = createHash('md5').update('realm-0-meeting').digest('hex').slice(0, 16)
+    const tokens = []
+    env.clients[0].join = async function (_app, joined, value) {
+        tokens.push(value)
+        if (value === 'rejected-token') throw new Error('CAN_NOT_GET_GATEWAY_SERVER: invalid token')
+        this.joined.push(joined); this.connectionState = 'CONNECTED'
+    }
+    await env.chat.joinChannel('meeting', 'uid', 'realm', 0)
+    env.flushTimers()
+    await tick()
+    env.chat.rememberToken(channel, 'rejected-token')
+    await env.chat.channelOperation
+    assert.deepEqual(tokens, ['rejected-token', 'action-token'])
+    assert.deepEqual(env.clients[0].joined, [channel])
+    assert.equal(requested, 1)
 })
 
 test('accepting a screen picker after leaving stops capture without publishing', async () => {

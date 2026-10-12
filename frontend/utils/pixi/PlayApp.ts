@@ -1014,6 +1014,11 @@ export class PlayApp extends App {
         this.player.checkIfShouldJoinChannel(this.player.verifiedPosition)
     }
 
+    // Pushed by the server as soon as this visitor's conversation changes, ahead of the join.
+    private onConversationToken = (data: { channel?: unknown, token?: unknown }) => {
+        if (typeof data?.channel === 'string' && typeof data.token === 'string') videoChat.rememberToken(data.channel, data.token)
+    }
+
     private onAvatarState = (snapshot: AvatarSnapshot) => {
         if (this.roomTransitioning) return
         if (!snapshot || typeof snapshot !== 'object') return
@@ -1055,6 +1060,7 @@ export class PlayApp extends App {
         server.socket.io.on('reconnect_failed', this.onRejoinFailed)
         server.socket.on('kicked', this.onKicked)
         server.socket.on('proximityUpdate', this.onProximityUpdate)
+        server.socket.on('conversationToken', this.onConversationToken)
     }
 
     private removeSocketEvents = () => {
@@ -1075,6 +1081,7 @@ export class PlayApp extends App {
         server.socket.io?.off('reconnect_failed', this.onRejoinFailed)
         server.socket.off('kicked', this.onKicked)
         server.socket.off('proximityUpdate', this.onProximityUpdate)
+        server.socket.off('conversationToken', this.onConversationToken)
     }
 
     private removeEvents = () => {

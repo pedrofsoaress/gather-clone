@@ -61,7 +61,7 @@ function harness() {
             } }
             if (name === './Player/skins') return { defaultSkin: '009' }
             if (name === '../signal') return { __esModule: true, default: { emit: (event, value) => signals.push({ event, value }), on() {}, off() {} } }
-            if (name === '../video-chat/video-chat') return { videoChat: { leaveChannel: async () => { env.videoLeaves++ } } }
+            if (name === '../video-chat/video-chat') return { videoChat: { leaveChannel: async () => { env.videoLeaves++ }, rememberToken() {} } }
             if (name === '../video-chat/meeting') return { setLocalMeetingUid() {}, setMeeting() {} }
             if (name === './office/geometry') return { nearestObject: () => null }
             if (name === './office/focus') return { focusedUids: () => new Set(), nearestFocused: () => null }
