@@ -61,8 +61,8 @@ for x1, y1, x2, y2 in L['doors']:                                           # do
         brick(canvas, (x1 * T, y1 * T, x1 * T + HALF, (y2 + 1) * T))
     else:
         brick(canvas, (x1 * T, y1 * T, (x2 + 1) * T, y1 * T + HALF))
-gs = L['groundStairs']                                                      # stairs to the 2nd floor
-stairs(canvas, gs['x1'], gs['y1'], gs['x2'], gs['y2'], 'down')
+gs = L['groundStairs']                                      # stairs up to the 2nd floor
+stairs(canvas, gs['x1'], gs['y1'], gs['x2'], gs['y2'], 'up')
 
 # 2. Passage through the office east wall: carpet over the corner plant, brick
 # in the opening, the cut ends of the wall closed with end blocks.

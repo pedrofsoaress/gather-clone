@@ -232,6 +232,7 @@ block(floor2, 0, 0, FLOOR2_WIDTH - 1, 0)
 block(floor2, 0, FLOOR2_HEIGHT - 1, FLOOR2_WIDTH - 1, FLOOR2_HEIGHT - 1)
 block(floor2, 0, 0, 0, FLOOR2_HEIGHT - 1)
 block(floor2, FLOOR2_WIDTH - 1, 0, FLOOR2_WIDTH - 1, FLOOR2_HEIGHT - 1)
+block(floor2, 1, 1, FLOOR2_WIDTH - 2, 1) // row 1 is the back wall's face in the art
 for (let x = floor2Stairs.x1; x <= floor2Stairs.x2; x++) {
   tile(floor2, x, floor2Stairs.triggerY).teleporter = { roomIndex: 0, x: groundStairs.arrival[0], y: groundStairs.arrival[1] }
 }

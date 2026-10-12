@@ -77,14 +77,14 @@ for k, island in enumerate(F['islands']):
 outer = PROFILE['outer']
 for i, c in enumerate(outer):
     draw.line((0, i, W - 1, i), fill=c)                                    # top
-face_top, face_bottom = len(outer), 72
+face_top, face_bottom = len(outer), 2 * T - 1            # the face covers rows 0..1, both impassable
 draw.rectangle((0, face_top, W - 1, face_bottom), fill=color('back_wall'))
 draw.rectangle((0, face_top, W - 1, face_top + 3), fill=color('back_wall_top'))
 draw.rectangle((0, face_bottom - 2, W - 1, face_bottom), fill=shade(color('back_wall'), 0.6))
 window = office.crop((682, 22, 805, 60))
 centres = [px(x + 2.2) for x in columns] + [px(i['ox'] + 3) for i in F['islands'][:2]]
 for cx in centres:
-    canvas.alpha_composite(window, (cx - window.width // 2, face_top + 1))
+    canvas.alpha_composite(window, (cx - window.width // 2, face_top))
 for i, c in enumerate(outer):
     draw.line((i, i, i, H - 1), fill=c)                                    # left
     draw.line((W - 1 - i, i, W - 1 - i, H - 1), fill=c)                    # right

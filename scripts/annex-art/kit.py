@@ -545,46 +545,54 @@ def cap(img, x0, x1, y0, y1):
 
 def stairs(img, x1, y1, x2, y2, going='down'):
     """A staircase seen from above on the tile rectangle (inclusive), in the
-    wood of the training stage: one step per tile row, each a run of planks
-    with a light top highlight and a darker front edge, between two dark rails
-    with a post at each end. The steps darken towards the bottom (going='down')
-    or towards the top ('up'), so the far end reads as the lower one."""
+    wood of the training stage: two treads per tile row between two dark
+    rails, with a newel post at the top-of-rectangle end of each rail, where
+    people step on. The camera looks from the bottom of the map, so:
+    going='down' (the flight descends towards the bottom) shows each tread's
+    lit nosing over a dark riser, and the treads darken towards the bottom;
+    going='up' (the flight climbs towards the bottom) hides the risers, so each
+    tread starts with a dark joint and a lit nosing, and the treads darken
+    towards the top, the lower end."""
     draw = ImageDraw.Draw(img)
     x0, y0, xe, ye = x1 * T, y1 * T, (x2 + 1) * T, (y2 + 1) * T
     rail = 4
-    sx0, sx1 = x0 + rail, xe - rail                  # steps between the rails
-    count = y2 - y1 + 1
+    sx0, sx1 = x0 + rail, xe - rail                  # treads between the rails
+    step = T // 2
+    count = (ye - y0) // step
     rng = random.Random(x1 * 100 + y1)
+    wood, light, dark = color('wood'), color('wood_light'), color('wood_dark')
+
+    def band(a, b, c):
+        draw.rectangle((sx0, a, sx1 - 1, b - 1), fill=c)
+
     for n in range(count):
         k = n if going == 'down' else count - 1 - n
         f = 1.0 - 0.3 * k / max(1, count - 1)
-        top, bottom = y0 + n * T, y0 + (n + 1) * T     # bottom exclusive
-        tread0, tread1 = top, bottom - 5
-        # The tread: one board across, with a faint grain line and seam.
-        draw.rectangle((sx0, tread0, sx1 - 1, tread1 - 1), fill=shade(color('wood'), f * rng.uniform(0.98, 1.02)))
-        mid = (tread0 + tread1) // 2
-        draw.line((sx0, mid, sx1 - 1, mid), fill=shade(color('wood'), f * 0.93))
-        for _ in range(3):
-            gx, gy = rng.randint(sx0 + 4, sx1 - 30), rng.choice((tread0 + 5, mid + 5))
-            draw.line((gx, gy, gx + rng.randint(12, 26), gy), fill=shade(color('wood'), f * 0.95))
-        # Front of the step: a lit nosing over a darker riser.
-        draw.rectangle((sx0, bottom - 5, sx1 - 1, bottom - 4), fill=shade(color('wood_light'), f * 1.06))
-        draw.rectangle((sx0, bottom - 3, sx1 - 1, bottom - 2), fill=shade(color('wood'), f * 0.6))
-        draw.line((sx0, bottom - 1, sx1 - 1, bottom - 1), fill=shade(color('wood_dark'), f * 0.75))
-        if n > 0:                                    # shadow of the step above
-            for i, a in enumerate((90, 55, 25)):
-                img.alpha_composite(Image.new('RGBA', (sx1 - sx0, 1), (0, 0, 0, a)), (sx0, top + i))
-    # The rails shade the edges of the steps.
+        top, bottom = y0 + n * step, y0 + (n + 1) * step     # bottom exclusive
+        band(top, bottom, shade(wood, f * rng.uniform(0.98, 1.02)))
+        gx, gy = rng.randint(sx0 + 6, sx1 - 30), top + rng.randint(5, 8)       # a grain line
+        draw.line((gx, gy, gx + rng.randint(12, 24), gy), fill=shade(wood, f * 0.94))
+        if going == 'down':
+            band(bottom - 6, bottom - 4, shade(light, f * 1.06))     # nosing
+            band(bottom - 4, bottom - 1, shade(wood, f * 0.5))       # riser
+            band(bottom - 1, bottom, shade(dark, f * 0.6))
+            if n > 0:                                                # shadow of the tread above
+                for i, a in enumerate((70, 35)):
+                    img.alpha_composite(Image.new('RGBA', (sx1 - sx0, 1), (0, 0, 0, a)), (sx0, top + i))
+        else:
+            band(top, top + 2, shade(dark, f * 0.6))                 # joint with the tread below
+            band(top + 2, top + 4, shade(light, f * 1.06))           # nosing
+            band(bottom - 2, bottom, shade(wood, f * 0.82))          # tread's back edge
+    # The rails shade the edges of the treads.
     for i, a in enumerate((60, 30)):
         side = Image.new('RGBA', (1, ye - y0), (0, 0, 0, a))
         img.alpha_composite(side, (sx0 + i, y0))
         img.alpha_composite(side, (sx1 - 1 - i, y0))
-    # Rails along both sides and a post at each end of each rail.
+    # Rails along both sides, a newel post at the top end of each.
     for rx in (x0, xe - rail):
         draw.rectangle((rx, y0, rx + rail - 1, ye - 1), fill=color('post_dark'))
         draw.line((rx + 1, y0, rx + 1, ye - 1), fill=color('post_fill'))
         draw.line((rx + 2, y0, rx + 2, ye - 1), fill=color('post_light'))
     pw, ph = POST_IMG.size
-    end = y0 + ph // 2 if going == 'down' else ye - (ph + 1) // 2      # at the top of the flight
     for cx in (x0 + pw // 2, xe - (pw + 1) // 2):
-        post(img, cx, end)
+        post(img, cx, y0 + ph // 2)
