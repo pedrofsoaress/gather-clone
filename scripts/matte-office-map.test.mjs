@@ -87,9 +87,7 @@ test('the office walls block where the art draws them', () => {
   for (const x of [17, 32]) {        // the side walls of the workshop and games room
     blocked(ground, x, 17, x, 18)
     walkable(ground, x, 19, x, 20)
-    blocked(ground, x, 21, x, 22)
-    walkable(ground, x, 23, x, 24)
-    blocked(ground, x, 25, x, 27)
+    blocked(ground, x, 21, x, 27)    // the lower band leads only into a sideboard
   }
   walkable(ground, 16, 16, 16, 18)
   walkable(ground, 33, 16, 33, 18)

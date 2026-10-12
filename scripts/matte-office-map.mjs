@@ -79,9 +79,9 @@ const officeOpenings = {
   leftWorkBand: [6, 17, 13, 17],        // wood x 6.16..13.62
   rightWorkBand: [36, 17, 43, 17],      // wood x 36.38..43.81
   workshopUpperBand: [17, 19, 17, 20],  // wood y 18.72..20.5
-  workshopLowerBand: [17, 23, 17, 24],  // wood y 23.31..24.53, the sideboard (16, 22..24) stands behind it
   gamesUpperBand: [32, 19, 32, 20],
-  gamesLowerBand: [32, 23, 32, 24],     // the sideboard (33, 22..24) stands behind it
+  // The lower bands of those walls (y 23.31..24.53) stay closed: the sideboards
+  // drawn at (16, 22..24) and (33, 22..24) stand right behind them.
 }
 
 for (const [x1, y1, x2, y2] of Object.values(officeWalls)) block(tilemap, x1, y1, x2, y2)
