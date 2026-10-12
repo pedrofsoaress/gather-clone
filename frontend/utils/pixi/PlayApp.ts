@@ -814,6 +814,7 @@ export class PlayApp extends App {
             this.players[uid].destroy()
             this.layers.object.removeChild(this.players[uid].parent)
             delete this.players[uid]
+            this.updateFocus()
         }
     }
 

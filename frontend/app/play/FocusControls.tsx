@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import signal from '@/utils/signal'
 import { server } from '@/utils/backend/server'
 
@@ -14,6 +14,13 @@ const KNOCK_LIFETIME_MS = 30_000
 export default function FocusControls() {
     const [nearby, setNearby] = useState<{ uid: string, name: string } | null>(null)
     const [knocks, setKnocks] = useState<Knock[]>([])
+    const [pendingUid, setPendingUid] = useState<string | null>(null)
+    const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const clearPending = () => {
+        if (pendingTimer.current) clearTimeout(pendingTimer.current)
+        pendingTimer.current = null
+        setPendingUid(null)
+    }
 
     useEffect(() => {
         const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -28,42 +35,63 @@ export default function FocusControls() {
             timers.set(knock.knockId, setTimeout(() => remove(knock.knockId), KNOCK_LIFETIME_MS))
         }
         const onClosed = ({ knockId }: { knockId: string }) => remove(knockId)
-        const onAnswered = ({ accepted, name }: { accepted: boolean, name: string }) => signal.emit('officeFeedback', {
-            message: accepted ? `${name} aceitou. Vocês estão conversando.` : `${name} está em foco agora.`,
-        })
+        const onAnswered = ({ accepted, name }: { accepted: boolean, name: string }) => {
+            clearPending()
+            signal.emit('officeFeedback', {
+                message: accepted ? `${name} aceitou. Vocês estão conversando.` : `${name} está em foco agora.`,
+            })
+        }
         const onNearby = (value: { uid: string, name: string } | null) => setNearby(value)
 
+        const attach = () => {
+            const socket = server.socket
+            socket.on('focusKnocked', onKnocked)
+            socket.on('focusKnockClosed', onClosed)
+            socket.on('focusAnswered', onAnswered)
+            return () => {
+                socket.off('focusKnocked', onKnocked)
+                socket.off('focusKnockClosed', onClosed)
+                socket.off('focusAnswered', onAnswered)
+            }
+        }
+        let detach: (() => void) | undefined
+        const onReady = () => { detach?.(); detach = attach() }
         signal.on('focusNearby', onNearby)
-        server.socket.on('focusKnocked', onKnocked)
-        server.socket.on('focusKnockClosed', onClosed)
-        server.socket.on('focusAnswered', onAnswered)
+        signal.on('officeReady', onReady)
+        if (server.socket.connected) onReady()
         return () => {
             signal.off('focusNearby', onNearby)
-            server.socket.off('focusKnocked', onKnocked)
-            server.socket.off('focusKnockClosed', onClosed)
-            server.socket.off('focusAnswered', onAnswered)
+            signal.off('officeReady', onReady)
+            detach?.()
             timers.forEach(timer => clearTimeout(timer))
             timers.clear()
+            if (pendingTimer.current) clearTimeout(pendingTimer.current)
         }
     }, [])
 
     const knock = () => {
-        if (!nearby) return
+        if (!nearby || pendingUid || typeof server.socket.emit !== 'function' || !server.socket.connected) return
         const target = nearby
         server.socket.emit('focusKnock', { targetUid: target.uid }, (result: Ack) => {
+            if (result?.ok) {
+                setPendingUid(target.uid)
+                if (pendingTimer.current) clearTimeout(pendingTimer.current)
+                pendingTimer.current = setTimeout(clearPending, KNOCK_LIFETIME_MS)
+            }
             signal.emit('officeFeedback', { message: result?.ok ? `Chamando ${target.name}...` : result?.error ?? 'Não foi possível chamar.' })
         })
     }
 
     const answer = (knockId: string, accept: boolean) => {
         setKnocks(list => list.filter(item => item.knockId !== knockId))
+        if (typeof server.socket.emit !== 'function') return
         server.socket.emit('focusAnswer', { knockId, accept }, (result: Ack) => {
             if (!result?.ok) signal.emit('officeFeedback', { message: result?.error ?? 'Não foi possível responder.' })
         })
     }
 
     return <>
-        {nearby && <div className='pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2'>
+        {nearby && nearby.uid !== pendingUid && <div className='pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2'>
             <button type='button' onClick={knock} className='pointer-events-auto rounded-xl bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-xl hover:bg-teal-400'>Chamar {nearby.name}</button>
         </div>}
         {knocks.length > 0 && <div className='pointer-events-none absolute left-1/2 top-16 z-30 flex -translate-x-1/2 flex-col gap-2'>
