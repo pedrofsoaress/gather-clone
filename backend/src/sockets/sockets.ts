@@ -4,10 +4,11 @@ import { z } from 'zod'
 import { supabase } from '../supabase'
 import { users } from '../Users'
 import { sessionManager, Session, MAX_PLAYERS_PER_SPACE } from '../session'
-import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand, FocusKnock, FocusAnswer } from './socket-types'
+import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand, FocusKnock, FocusAnswer, FollowTarget } from './socket-types'
 import { removeExtraSpaces } from '../utils'
 import { kickPlayer, sendMeeting, leaveMeeting, sendProximity, sendConversationToken } from './helpers'
 import { KNOCK_ANSWER_MS, withinReach } from '../office/FocusState'
+import { FollowRelay, type FollowNotice } from '../office/FollowRelay'
 import { formatEmailToName } from '../utils'
 import { OfficeNotes, validNoteObject, noteStorageKey } from '../office/OfficeNotes'
 import { canReceiveNearbyChat } from '../office/chat'
@@ -201,9 +202,26 @@ export function sockets(io: Server) {
             })
         })
 
+        // Following someone: the followed person is told when it starts and stops.
+        const followRelay = new FollowRelay(socket.handshake.query.uid as string, socket.id)
+        const sendFollowNotices = (notices: FollowNotice[]) => {
+            for (const { socketId, notice } of notices) io.to(socketId).emit('followNotice', notice)
+        }
+        socket.on('followStart', (raw: unknown) => {
+            const parsed = FollowTarget.safeParse(raw)
+            if (!parsed.success) return
+            sendFollowNotices(followRelay.start(sessionManager.getPlayerSession(socket.handshake.query.uid as string), parsed.data.targetUid))
+        })
+        socket.on('followStop', (raw: unknown) => {
+            const parsed = FollowTarget.safeParse(raw)
+            if (!parsed.success) return
+            sendFollowNotices(followRelay.stop(sessionManager.getPlayerSession(socket.handshake.query.uid as string), parsed.data.targetUid))
+        })
+
         // Handle a disconnection
         on('disconnect', Disconnect, ({ session, data }) => {
             const uid = socket.handshake.query.uid as string
+            sendFollowNotices(followRelay.disconnect(session))
             const room = session.getPlayerRoom(uid)
             const socketIds = sessionManager.getSocketIdsInRoom(session.id, room)
             const leavingMeeting = session.meetingOf(uid)

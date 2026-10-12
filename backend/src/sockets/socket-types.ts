@@ -46,5 +46,6 @@ export const MeetingModerate = z.object({ action: z.enum(['mute', 'cameraOff', '
 export const MeetingRaiseHand = z.object({ raised: z.boolean() })
 export const FocusKnock = z.object({ targetUid: z.string().uuid() })
 export const FocusAnswer = z.object({ knockId: z.string().min(1).max(64), accept: z.boolean() })
+export const FollowTarget = z.object({ targetUid: z.string().uuid() })
 
 export type OnEventCallback = (args: { session: Session, data?: any }) => void
