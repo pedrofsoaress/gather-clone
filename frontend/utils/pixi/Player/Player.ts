@@ -185,6 +185,7 @@ export class Player {
         this.decorations = new AvatarDecorations(this.username, this.isLocal)
         this.parent.addChildAt(this.decorations.shadow, 0)
         this.parent.addChild(this.decorations.nameplate)
+        this.parent.addChild(this.decorations.focusBadge)
     }
 
     public setMessage(message: string) {
@@ -669,6 +670,8 @@ export class Player {
     public setFrozen = (frozen: boolean) => {
         this.frozen = frozen
     }
+
+    public setFocusBadge(on: boolean) { this.decorations?.setFocus(on) }
 
     public destroy() {
         this.destroyed = true

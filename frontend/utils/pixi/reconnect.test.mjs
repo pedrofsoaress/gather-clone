@@ -29,6 +29,7 @@ function harness() {
         setPosition(x, y) { this.currentTilePosition = { x, y } }
         setFrozen(frozen) { this.frozen = frozen }
         setSeatedVisual() {}
+        setFocusBadge() {}
         applyAvatarState() {}
         moveToTile(x, y) { this.currentTilePosition = { x, y } }
         requestRunning() {}
@@ -63,6 +64,7 @@ function harness() {
             if (name === '../video-chat/video-chat') return { videoChat: { leaveChannel: async () => { env.videoLeaves++ } } }
             if (name === '../video-chat/meeting') return { setLocalMeetingUid() {}, setMeeting() {} }
             if (name === './office/geometry') return { nearestObject: () => null }
+            if (name === './office/focus') return { focusedUids: () => new Set(), nearestFocused: () => null }
             if (['../supabase/client', 'gsap', './office/InteractionLayer', './office/LightingLayer', './office/AnnexLayer', './office/annex-reveal', './office/GamepadController', './office/camera-zoom.mjs'].includes(name)) return {}
             throw new Error(`Unexpected import: ${name}`)
         },

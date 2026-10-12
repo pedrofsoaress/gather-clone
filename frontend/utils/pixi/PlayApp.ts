@@ -12,6 +12,7 @@ import { InteractionLayer } from './office/InteractionLayer'
 import type { OfficeSnapshot } from './office/types'
 import { LightingLayer } from './office/LightingLayer'
 import { AnnexLayer } from './office/AnnexLayer'
+import { focusedUids, nearestFocused } from './office/focus'
 import { isAnnexTrigger, shouldReveal } from './office/annex-reveal'
 import { GamepadController, type GamepadInput } from './office/GamepadController'
 import type { AvatarSnapshot } from './Player/avatar-actions'
@@ -46,6 +47,8 @@ export class PlayApp extends App {
     private interactionLayer: InteractionLayer | null = null
     private pendingOfficeObjectId: string | null = null
     private officeSnapshot: OfficeSnapshot = { occupancy: {}, games: {} }
+    private focusSelf = false
+    private focusNearbyUid: string | null = null
     private cameraDrag: { pointerId: number, startX: number, startY: number, pivotX: number, pivotY: number } | null = null
     private cameraManuallyPanned = false
     private lightingLayer: LightingLayer | null = null
@@ -107,6 +110,7 @@ export class PlayApp extends App {
         if (!this.roomTransitioning) await this.syncOtherPlayers()
         signal.emit('officeRoomChanged', { roomIndex: index, objects: this.realmData.rooms[index].interactions ?? [] })
         this.displayInitialChatMessage()
+        this.updateFocus()
     }
 
     private setUpLighting = () => {
@@ -185,6 +189,7 @@ export class PlayApp extends App {
         const nearby = nearestObject(objects, position.x, position.y, 2)
         signal.emit('officeNearby', { objectId: nearby?.id ?? null })
         signal.emit('officePosition', { ...position, roomIndex: this.currentRoomIndex })
+        this.updateFocus()
     }
 
     private onOfficeStateChanged = (snapshot: OfficeSnapshot) => {
@@ -200,6 +205,35 @@ export class PlayApp extends App {
             player.setSeatedVisual(object?.seatVisual ?? null)
         }
         signal.emit('officeSnapshot', snapshot)
+        this.updateFocus()
+    }
+
+    // Focus badges, the local focus state, and who the local visitor could knock on.
+    private updateFocus() {
+        const objects = this.realmData.rooms[this.currentRoomIndex]?.interactions ?? []
+        const occupancy = this.officeSnapshot.occupancy
+        const focused = focusedUids(objects, occupancy)
+        this.player.setFocusBadge(focused.has(this.uid))
+        for (const [uid, player] of Object.entries(this.players)) player.setFocusBadge(focused.has(uid))
+
+        const selfFocused = focused.has(this.uid)
+        if (selfFocused !== this.focusSelf) {
+            this.focusSelf = selfFocused
+            signal.emit('focusSelf', selfFocused)
+            if (selfFocused) signal.emit('officeNotice', { message: 'Modo foco: ninguém te escuta. Quem quiser falar vai te chamar.', key: 'focus-on' })
+        }
+
+        // Only someone standing can knock: seated visitors (any seat or desk) get no offer.
+        const seated = Object.values(occupancy).some(seat => seat.uid === this.uid)
+        const nearby = seated ? null : nearestFocused(
+            this.player.currentTilePosition,
+            Object.entries(this.players).map(([uid, p]) => ({ uid, name: p.username, x: p.currentTilePosition.x, y: p.currentTilePosition.y })),
+            focused,
+        )
+        if ((nearby?.uid ?? null) !== this.focusNearbyUid) {
+            this.focusNearbyUid = nearby?.uid ?? null
+            signal.emit('focusNearby', nearby)
+        }
     }
 
     public onLocalPlayerStopped = () => {
@@ -796,6 +830,7 @@ export class PlayApp extends App {
         const player = this.players[data.uid]
         if (player) {
             player.moveToTile(data.x, data.y)
+            this.updateFocus()
         } else if (!this.isSpawning(data.uid)) {
             this.scheduleResync()
         }
