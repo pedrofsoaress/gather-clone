@@ -91,6 +91,7 @@ export class Player {
     private movementMode: 'keyboard' | 'mouse' = 'mouse'
     public frozen: boolean = false
     private initialized: boolean = false
+    private clickable = false
     private destroyed = false
     private strikes: number = 0
 
@@ -255,14 +256,34 @@ export class Player {
 
     // Other people's avatars can be clicked; the click never reaches the floor (no walking).
     public setClickable(onClick: () => void) {
+        this.clickable = true
         this.parent.eventMode = 'static'
         this.parent.cursor = 'pointer'
-        this.parent.hitArea = new PIXI.Rectangle(-18, -58, 36, 62)
+        this.updateHitArea()
         this.parent.on('pointerdown', (event: PIXI.FederatedPointerEvent) => {
             if (event.button !== 0) return
             event.stopPropagation()
             onClick()
         })
+    }
+
+    // Only the drawn body (seated: on the chair), so the floor tile just north stays walkable.
+    private updateHitArea() {
+        if (!this.clickable) return
+        const { x, y } = this.activeSeatVisual ? this.seatOffset : { x: 0, y: 0 }
+        this.parent.hitArea = this.activeSeatVisual ? new PIXI.Rectangle(x - 12, y - 36, 24, 38) : new PIXI.Rectangle(-12, -40, 24, 42)
+    }
+
+    // Whether a click at this point (stage-global) lands on the avatar, for objects drawn above it.
+    public hitsGlobal(point: PIXI.PointData): boolean {
+        if (!this.clickable || !(this.parent.hitArea instanceof PIXI.Rectangle)) return false
+        const local = this.parent.toLocal(point)
+        return this.parent.hitArea.contains(local.x, local.y)
+    }
+
+    // Where the "Seguir" button attaches: beside the drawn body, seated or standing.
+    public get menuAnchor(): Point {
+        return { x: this.seatOffset.x + 14, y: this.seatOffset.y - 22 }
     }
 
     public isAtTile(x: number, y: number): boolean {
@@ -461,6 +482,7 @@ export class Player {
             this.pendingSeatVisual = null
             this.setSeatedVisual(visual)
         }
+        if (!this.isLocal) this.playApp.onRemotePlayerStopped(this)
     }
 
     private teleportIfOnTeleporter = (movementMode: 'keyboard' | 'mouse') => {
@@ -579,6 +601,7 @@ export class Player {
             sprite.anchor.set(0.5, 1)
             sprite.scale.set(AVATAR_SCALE)
             this.seatOffset = { x: 0, y: 0 }
+            this.updateHitArea()
             this.decorations?.position(0, 0, false)
             this.textMessage.position.set(0, -this.textMessage.height - 84)
             if (this.directionBeforeSeat) {
@@ -593,6 +616,7 @@ export class Player {
         const x = seatPosition.x - this.parent.x
         const y = seatPosition.y - this.parent.y
         this.seatOffset = { x, y }
+        this.updateHitArea()
         if (!this.directionBeforeSeat) this.directionBeforeSeat = this.direction
         this.direction = visual.facing ?? this.direction
         this.changeAnimationState(`idle_${this.direction}` as AnimationState, true)

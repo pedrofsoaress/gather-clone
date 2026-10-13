@@ -255,8 +255,45 @@ test('arriving upstairs without the person stops with a notice', async (t) => {
     env.roomPlayers = []
     await env.app.syncOtherPlayers()
     env.app.resumeFollowAfterStairs()
-    assert.deepEqual(env.notices(), ['Bia saiu do escritório.'])
-    assert.deepEqual(env.stops(), [])
+    assert.deepEqual(env.notices(), ['Você perdeu Bia de vista.'])
+    assert.deepEqual(env.stops(), [['followStop', { targetUid: 'bia' }]])
+})
+
+test('following someone who already follows you is refused', async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 100_000 })
+    const env = harness()
+    env.app.player.setPosition(2, 5)
+    env.roomPlayers = [{ uid: 'bia', skin: '017', username: 'Bia', x: 10, y: 5 }]
+    await env.app.syncOtherPlayers()
+    env.handlers.get('followNotice')({ uid: 'bia', name: 'Bia', following: true })
+    env.signalHandlers.get('followStart')({ uid: 'bia' })
+    assert.equal(env.app.follow, null)
+    assert.deepEqual(env.app.player.walks, [])
+    assert.ok(!env.emitted.some(([name]) => name === 'followStart'))
+    assert.ok(env.signals.some(signal => signal.event === 'officeNotice' && signal.value.message === 'Bia já está te seguindo.'))
+})
+
+test('once the person follows back, the follower stands still instead of circling', async (t) => {
+    const env = await following(t)
+    env.handlers.get('followNotice')({ uid: 'bia', name: 'Bia', following: true })
+    const walks = env.app.player.walks.length
+    env.handlers.get('playerMoved')({ uid: 'bia', x: 4, y: 5 })
+    env.advance(4000)
+    assert.equal(env.app.player.walks.length, walks)
+    assert.deepEqual(env.notices(), [], 'standing still is not being stuck')
+    // She stops following: walking resumes.
+    env.handlers.get('followNotice')({ uid: 'bia', name: 'Bia', following: false })
+    env.advance(300)
+    assert.ok(env.app.player.walks.length > walks)
+    env.signalHandlers.get('followStop')()
+})
+
+test('a passage inside the same room moves the target too', async (t) => {
+    const env = await following(t)
+    env.handlers.get('playerTeleported')({ uid: 'bia', x: 30, y: 20 })
+    const at = plain(env.app.player.currentTilePosition)
+    assert.ok(Math.abs(at.x - 30) <= 1 && Math.abs(at.y - 20) <= 1, JSON.stringify(at))
+    env.signalHandlers.get('followStop')()
 })
 
 test('a person leaving the office ends following without telling them', async (t) => {

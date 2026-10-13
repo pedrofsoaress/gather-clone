@@ -5,7 +5,7 @@ import signal from '@/utils/signal'
 import { server } from '@/utils/backend/server'
 import { placeFollowBanner } from '@/utils/pixi/office/follow'
 
-type AvatarMenu = { uid: string, name: string, screenX: number, screenY: number }
+type AvatarMenu = { id: number, uid: string, name: string, screenX: number, screenY: number }
 
 // "Seguir uma pessoa": the button next to a clicked avatar, the "Seguindo" banner, and the
 // notices for the person being followed.
@@ -20,11 +20,11 @@ export default function FollowControls() {
     useEffect(() => {
         const onMenu = (value: AvatarMenu | null) => { openMenu.current = value; setMenu(value) }
         const onFollowState = ({ name }: { name: string | null }) => setFollowing(name)
-        const onFollowNotice = ({ name, following }: { name: string, following: boolean }) => {
+        const onFollowNotice = ({ uid, name, following }: { uid: string, name: string, following: boolean }) => {
             if (typeof name !== 'string' || !name) return
             signal.emit('officeNotice', {
                 message: following ? `${name} está te seguindo.` : `${name} parou de te seguir.`,
-                key: `follow-notice:${name}:${following}`,
+                key: `follow-notice:${uid}:${following}`,
             })
         }
         const attach = () => {
@@ -48,12 +48,13 @@ export default function FollowControls() {
 
     // Any click outside the button closes it. The office handles clicks on the map first
     // (closing it, or opening it for another avatar); a click it ignored still closes it.
+    const menuId = menu?.id ?? null
     useEffect(() => {
-        if (!menu) return
+        if (menuId === null) return
         const onPointerDown = (event: PointerEvent) => {
             if (event.target instanceof Node && menuButton.current?.contains(event.target)) return
-            const shown = openMenu.current
-            window.setTimeout(() => { if (shown && openMenu.current === shown) signal.emit('avatarMenuDismiss') })
+            const shown = openMenu.current?.id
+            window.setTimeout(() => { if (shown !== undefined && openMenu.current?.id === shown) signal.emit('avatarMenuDismiss') })
         }
         const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') signal.emit('avatarMenuDismiss') }
         // Capture: note the menu before the office reacts to the same click.
@@ -63,7 +64,7 @@ export default function FollowControls() {
             window.removeEventListener('pointerdown', onPointerDown, true)
             window.removeEventListener('keydown', onKey)
         }
-    }, [menu])
+    }, [menuId])
 
     // Keep the banner clear of the call strip, the hints and anything else marked at the top.
     useLayoutEffect(() => {

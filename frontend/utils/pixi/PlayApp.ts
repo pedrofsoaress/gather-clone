@@ -81,7 +81,9 @@ export class PlayApp extends App {
     private resyncInterval: ReturnType<typeof setInterval> | null = null
     private follow: Follow | null = null
     private followTimer: ReturnType<typeof setInterval> | null = null
-    private avatarMenu: { uid: string, tile: Point, pivotX: number, pivotY: number, scale: number } | null = null
+    private avatarMenu: { id: number, uid: string, x: number, y: number } | null = null
+    private avatarMenuCount = 0
+    private followers = new Set<string>()
 
     constructor(uid: string, realmId: string, realmData: RealmData, username: string, skin: string = defaultSkin) {
         super(realmData)
@@ -145,7 +147,7 @@ export class PlayApp extends App {
         const objects = this.realmData.rooms[this.currentRoomIndex].interactions ?? []
         this.interactionLayer = new InteractionLayer(
             objects,
-            (id) => this.onObjectClicked(id),
+            (id, event) => this.onObjectClicked(id, event),
             (object) => signal.emit('officeHover', { objectId: object?.id ?? null }),
         )
         this.interactionLayer.setOccupancy(this.officeSnapshot.occupancy)
@@ -173,7 +175,12 @@ export class PlayApp extends App {
         this.app.stage.setChildIndex(layer.signs, this.app.stage.getChildIndex(this.layers.object))
     }
 
-    private onObjectClicked = (id: string) => {
+    private onObjectClicked = (id: string, event: PIXI.FederatedPointerEvent) => {
+        // Objects are drawn above the avatars: someone seated at a desk is still a click on them.
+        const avatar = Object.entries(this.players)
+            .filter(([, player]) => player.hitsGlobal(event.global))
+            .sort(([, a], [, b]) => b.parent.y - a.parent.y)[0]
+        if (avatar) { this.onAvatarClicked(avatar[0]); return }
         // The click that closes the "Seguir" button does nothing else.
         if (this.avatarMenu) { this.closeAvatarMenu(); return }
         this.requestOfficeObject(id)
@@ -265,6 +272,15 @@ export class PlayApp extends App {
         if (object && this.player.isAtTile(object.approach.x, object.approach.y)) {
             this.activateOfficeObject(id)
         }
+    }
+
+    // Someone else's seat is taken one step before its approach tile (sitRange), and that
+    // last step clears the seated pose: sit them down again once they stop on the approach.
+    public onRemotePlayerStopped = (player: Player) => {
+        const uid = Object.keys(this.players).find(id => this.players[id] === player)
+        const occupiedId = uid ? Object.keys(this.officeSnapshot.occupancy).find(id => this.officeSnapshot.occupancy[id].uid === uid) : undefined
+        const object = this.realmData.rooms[this.currentRoomIndex].interactions?.find(item => item.id === occupiedId)
+        if (object?.seatVisual && player.isAtTile(object.approach.x, object.approach.y)) player.setSeatedVisual(object.seatVisual)
     }
 
     private activateOfficeObject(id: string) {
@@ -613,6 +629,7 @@ export class PlayApp extends App {
         // Listen only on the canvas: wheel events on chat, menus and video never
         // reach this handler. Pixi's screen units can differ from CSS pixels.
         event.preventDefault()
+        this.closeAvatarMenu()
         const cursor = {
             x: (event.clientX - bounds.left) * this.app.screen.width / bounds.width,
             y: (event.clientY - bounds.top) * this.app.screen.height / bounds.height,
@@ -635,6 +652,7 @@ export class PlayApp extends App {
     private startCameraDrag = (event: PointerEvent) => {
         if (event.button !== 2 || this.disableInput) return
         event.preventDefault()
+        this.closeAvatarMenu()
         this.cameraDrag = {
             pointerId: event.pointerId,
             startX: event.clientX,
@@ -838,24 +856,26 @@ export class PlayApp extends App {
         if (!player || this.disableInput || this.player.frozen || this.roomTransitioning) return
         this.closeAvatarMenu()
         if (this.follow?.uid === uid) return
-        const bounds = this.app.canvas.getBoundingClientRect()
-        const point = player.parent.toGlobal({ x: 18, y: -30 })
-        this.avatarMenu = { uid, tile: { ...player.currentTilePosition }, pivotX: this.app.stage.pivot.x, pivotY: this.app.stage.pivot.y, scale: this.scale }
+        this.avatarMenu = { id: ++this.avatarMenuCount, uid, x: NaN, y: NaN }
         PIXI.Ticker.shared.add(this.watchAvatarMenu)
-        signal.emit('avatarMenu', {
-            uid, name: player.username,
-            screenX: bounds.left + point.x * bounds.width / this.app.screen.width,
-            screenY: bounds.top + point.y * bounds.height / this.app.screen.height,
-        })
+        this.watchAvatarMenu()
     }
 
-    // The button stays next to the avatar: it closes when the camera or the person moves.
+    // The button moves with the avatar (walking, the camera following the visitor). It closes
+    // when the person leaves, the room changes, the camera is dragged or zoomed, or on a click elsewhere.
     private watchAvatarMenu = () => {
         const menu = this.avatarMenu
         if (!menu) return
         const player = this.players[menu.uid]
-        const pivot = this.app.stage.pivot
-        if (!player || !sameTile(player.currentTilePosition, menu.tile) || pivot.x !== menu.pivotX || pivot.y !== menu.pivotY || this.scale !== menu.scale) this.closeAvatarMenu()
+        if (!player) { this.closeAvatarMenu(); return }
+        const bounds = this.app.canvas.getBoundingClientRect()
+        const point = player.parent.toGlobal(player.menuAnchor)
+        const x = bounds.left + point.x * bounds.width / this.app.screen.width
+        const y = bounds.top + point.y * bounds.height / this.app.screen.height
+        if (Math.abs(x - menu.x) < 0.5 && Math.abs(y - menu.y) < 0.5) return
+        menu.x = x
+        menu.y = y
+        signal.emit('avatarMenu', { id: menu.id, uid: menu.uid, name: player.username, screenX: x, screenY: y })
     }
 
     private closeAvatarMenu = () => {
@@ -865,10 +885,21 @@ export class PlayApp extends App {
         signal.emit('avatarMenu', null)
     }
 
+    // Who follows this visitor: following them back would make both walk around each other.
+    private onFollowNotice = (notice: { uid?: unknown, following?: unknown }) => {
+        if (typeof notice?.uid !== 'string') return
+        if (notice.following) this.followers.add(notice.uid)
+        else this.followers.delete(notice.uid)
+    }
+
     private onFollowStart = ({ uid }: { uid: string }) => {
         this.closeAvatarMenu()
         const target = this.players[uid]
         if (!target || uid === this.uid || this.follow?.uid === uid || this.eventsRemoved || this.reconnecting) return
+        if (this.followers.has(uid)) {
+            signal.emit('officeNotice', { message: `${target.username} já está te seguindo.`, key: `follow-mutual:${uid}` })
+            return
+        }
         this.stopFollowing('switched')
         this.follow = {
             uid, name: target.username, phase: 'follow', stairs: null,
@@ -901,7 +932,8 @@ export class PlayApp extends App {
     // normal movement, so the server sees ordinary steps. Plans only when needed.
     private planFollow = () => {
         const follow = this.follow
-        if (!follow || this.followPaused()) return
+        // Never walk towards someone who is following this visitor.
+        if (!follow || this.followPaused() || this.followers.has(follow.uid)) return
         const at = this.player.movingTo ?? this.player.currentTilePosition
         const moving = Boolean(this.player.movingTo)
         const candidates = follow.phase === 'stairs' ? (follow.stairs ? [follow.stairs] : []) : follow.targetTile ? rankFollowTiles({
@@ -923,7 +955,7 @@ export class PlayApp extends App {
             return
         }
         this.planFollow()
-        const settled = follow.phase === 'follow' && !this.player.movingTo && Boolean(follow.targetTile && isNextTo(this.player.currentTilePosition, follow.targetTile))
+        const settled = this.followers.has(follow.uid) || (follow.phase === 'follow' && !this.player.movingTo && Boolean(follow.targetTile && isNextTo(this.player.currentTilePosition, follow.targetTile)))
         const { stuck, ...progress } = trackFollowProgress(follow.progress, { now: Date.now(), position: this.player.verifiedPosition, settled })
         follow.progress = progress
         if (stuck) this.stopFollowing('unreachable')
@@ -951,8 +983,9 @@ export class PlayApp extends App {
     private resumeFollowAfterStairs = () => {
         const follow = this.follow
         if (!follow || follow.phase !== 'stairs') return
+        // Not in the new room's list (or the list could not be fetched).
         const target = this.players[follow.uid]
-        if (!target) { this.stopFollowing('left'); return }
+        if (!target) { this.stopFollowing('lost'); return }
         Object.assign(follow, {
             phase: 'follow', stairs: null, targetTile: { ...target.currentTilePosition }, previousTile: null, goal: null,
             progress: { since: Date.now(), position: { ...this.player.verifiedPosition } },
@@ -1004,6 +1037,7 @@ export class PlayApp extends App {
     }
 
     private onPlayerTeleported = (data: any) => {
+        if (this.follow?.uid === data.uid) this.onFollowedMoved({ x: data.x, y: data.y })
         const player = this.players[data.uid]
         if (player) {
             player.setPosition(data.x, data.y)
@@ -1236,6 +1270,7 @@ export class PlayApp extends App {
         server.socket.on('kicked', this.onKicked)
         server.socket.on('proximityUpdate', this.onProximityUpdate)
         server.socket.on('conversationToken', this.onConversationToken)
+        server.socket.on('followNotice', this.onFollowNotice)
     }
 
     private removeSocketEvents = () => {
@@ -1257,6 +1292,7 @@ export class PlayApp extends App {
         server.socket.off('kicked', this.onKicked)
         server.socket.off('proximityUpdate', this.onProximityUpdate)
         server.socket.off('conversationToken', this.onConversationToken)
+        server.socket.off('followNotice', this.onFollowNotice)
     }
 
     private removeEvents = () => {

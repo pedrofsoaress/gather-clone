@@ -18,7 +18,7 @@ export class InteractionLayer {
 
     constructor(
         private readonly objects: OfficeObject[],
-        onActivate: (id: string) => void,
+        onActivate: (id: string, event: PIXI.FederatedPointerEvent) => void,
         onHover: (object: OfficeObject | null) => void,
     ) {
         this.container.eventMode = 'passive'
@@ -34,7 +34,7 @@ export class InteractionLayer {
             hitArea.on('pointerdown', (event) => {
                 if (event.button !== 0) return
                 event.stopPropagation()
-                onActivate(object.id)
+                onActivate(object.id, event)
             })
             hitArea.on('pointerover', () => {
                 this.showObject(object)

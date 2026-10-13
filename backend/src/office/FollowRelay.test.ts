@@ -9,8 +9,8 @@ const people = { ana: { username: 'Ana', socketId: 's-ana' }, bia: { username: '
 test('the followed person hears when someone starts and stops following', () => {
   const c = clock(); const relay = new FollowRelay('ana', 's-ana', c.now)
   const session = office(people)
-  assert.deepEqual(relay.start(session, 'bia'), [{ socketId: 's-bia', notice: { name: 'Ana', following: true } }])
-  assert.deepEqual(relay.stop(session, 'bia'), [{ socketId: 's-bia', notice: { name: 'Ana', following: false } }])
+  assert.deepEqual(relay.start(session, 'bia'), [{ socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: true } }])
+  assert.deepEqual(relay.stop(session, 'bia'), [{ socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: false } }])
   assert.deepEqual(relay.stop(session, 'bia'), [])
 })
 
@@ -30,15 +30,29 @@ test('only the follower socket, within the same office and never oneself, can st
   assert.deepEqual(new FollowRelay('ana', 's-ana', c.now).start(undefined, 'bia'), [])
 })
 
-test('more than one start per second is ignored', () => {
+test('a repeated start to the same person within a second is not announced again', () => {
   const c = clock(); const relay = new FollowRelay('ana', 's-ana', c.now)
   const session = office(people)
   relay.start(session, 'bia')
   relay.stop(session, 'bia')
   c.advance(500)
-  assert.deepEqual(relay.start(session, 'caio'), [])
+  assert.deepEqual(relay.start(session, 'bia'), [])
+  // Still recorded: the stop reaches her.
+  assert.deepEqual(relay.stop(session, 'bia'), [{ socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: false } }])
   c.advance(500)
-  assert.deepEqual(relay.start(session, 'caio'), [{ socketId: 's-caio', notice: { name: 'Ana', following: true } }])
+  assert.deepEqual(relay.start(session, 'bia'), [{ socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: true } }])
+})
+
+test('a quick switch still tells the new person, and invalid requests do not count', () => {
+  const c = clock(); const relay = new FollowRelay('ana', 's-ana', c.now)
+  const session = office(people)
+  assert.deepEqual(relay.start(session, 'ana'), [])
+  assert.deepEqual(relay.start(session, 'bia'), [{ socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: true } }])
+  c.advance(100)
+  assert.deepEqual(relay.start(session, 'caio'), [
+    { socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: false } },
+    { socketId: 's-caio', notice: { uid: 'ana', name: 'Ana', following: true } },
+  ])
 })
 
 test('switching to another person tells the previous one first', () => {
@@ -47,8 +61,8 @@ test('switching to another person tells the previous one first', () => {
   relay.start(session, 'bia')
   c.advance(1000)
   assert.deepEqual(relay.start(session, 'caio'), [
-    { socketId: 's-bia', notice: { name: 'Ana', following: false } },
-    { socketId: 's-caio', notice: { name: 'Ana', following: true } },
+    { socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: false } },
+    { socketId: 's-caio', notice: { uid: 'ana', name: 'Ana', following: true } },
   ])
 })
 
@@ -57,6 +71,6 @@ test('a follower who disconnects is reported as no longer following', () => {
   const session = office(people)
   assert.deepEqual(relay.disconnect(session), [])
   relay.start(session, 'bia')
-  assert.deepEqual(relay.disconnect(session), [{ socketId: 's-bia', notice: { name: 'Ana', following: false } }])
+  assert.deepEqual(relay.disconnect(session), [{ socketId: 's-bia', notice: { uid: 'ana', name: 'Ana', following: false } }])
   assert.deepEqual(relay.disconnect(session), [])
 })

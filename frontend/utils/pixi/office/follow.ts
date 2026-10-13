@@ -2,7 +2,7 @@ import type { Room, TilePoint } from '../types'
 
 // "Seguir uma pessoa": the follower walks with the normal movement and stays one tile away.
 export type Tile = { x: number, y: number }
-export type FollowStopReason = 'manual' | 'stopped' | 'left' | 'unreachable' | 'switched' | 'silent'
+export type FollowStopReason = 'manual' | 'stopped' | 'left' | 'lost' | 'unreachable' | 'switched' | 'silent'
 
 export const FOLLOW_TICK_MS = 300
 export const FOLLOW_STUCK_MS = 3000
@@ -61,6 +61,7 @@ export function departureStairs(tilemap: Room['tilemap'], lastTile: Tile | null)
 export function followStopNotice(reason: FollowStopReason, name: string): string | null {
     if (reason === 'manual' || reason === 'stopped') return `Você parou de seguir ${name}.`
     if (reason === 'left') return `${name} saiu do escritório.`
+    if (reason === 'lost') return `Você perdeu ${name} de vista.`
     if (reason === 'unreachable') return `Não foi possível seguir ${name}.`
     return null
 }

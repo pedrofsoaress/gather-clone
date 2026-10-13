@@ -74,9 +74,10 @@ test('each stop reason has its notice and only some tell the followed person', (
   assert.equal(followStopNotice('stopped', 'Ana'), 'Você parou de seguir Ana.')
   assert.equal(followStopNotice('left', 'Ana'), 'Ana saiu do escritório.')
   assert.equal(followStopNotice('unreachable', 'Ana'), 'Não foi possível seguir Ana.')
+  assert.equal(followStopNotice('lost', 'Ana'), 'Você perdeu Ana de vista.')
   assert.equal(followStopNotice('silent', 'Ana'), null)
   assert.equal(followStopNotice('switched', 'Ana'), null)
-  assert.deepEqual(['manual', 'stopped', 'left', 'unreachable', 'switched', 'silent'].filter(followStopTellsTarget), ['manual', 'stopped', 'unreachable', 'switched'])
+  assert.deepEqual(['manual', 'stopped', 'left', 'lost', 'unreachable', 'switched', 'silent'].filter(followStopTellsTarget), ['manual', 'stopped', 'lost', 'unreachable', 'switched'])
 })
 
 test('the banner avoids the call strip and hints at the top', () => {
