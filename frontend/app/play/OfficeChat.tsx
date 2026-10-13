@@ -66,7 +66,7 @@ export default function OfficeChat({ uid, meetingMode = false, open, onOpenChang
     }
     const visible = messages.filter(message => message.channel === channel)
 
-    return <div className={meetingMode && open ? 'absolute bottom-14 right-0 top-0 z-40 w-full font-sans text-white sm:w-[340px]' : meetingMode ? 'absolute bottom-16 right-3 z-40 font-sans text-white' : 'absolute bottom-16 left-3 z-20 font-sans text-white'}>
+    return <div className={meetingMode && open ? 'absolute bottom-14 right-0 top-0 z-40 w-full font-sans text-white sm:w-[340px]' : meetingMode ? 'absolute bottom-[63px] right-3 z-40 font-sans text-white' : 'absolute bottom-16 left-3 z-20 font-sans text-white'}>
         {!open && <button type="button" onClick={() => onOpenChange(true)} aria-label="Abrir chat" className="flex items-center gap-2 rounded-xl border border-teal-300/40 bg-slate-950/90 px-4 py-3 shadow-xl hover:bg-slate-800">
             <ChatCircleDots size={22} /> Chat {unread > 0 && <span className="rounded-full bg-teal-400 px-2 text-xs font-bold text-slate-950">{unread}</span>}
         </button>}

@@ -83,7 +83,8 @@ export default function OfficeNotifications({ meetingMode = false }: { meetingMo
         } else if (audio.current) await audio.current.suspend()
     }
 
-    return <div className={`pointer-events-none absolute bottom-32 left-3 w-[calc(100vw_-_1.5rem)] max-w-sm space-y-2 ${meetingMode ? 'z-40' : 'z-20'}`}>
+    // In the expanded call the chip sits centred in the empty strip under the videos (MeetingLayout).
+    return <div className={`pointer-events-none absolute left-3 w-[calc(100vw_-_1.5rem)] max-w-sm space-y-2 ${meetingMode ? 'bottom-[75px] z-40' : 'bottom-32 z-20'}`}>
         <div aria-live="polite" aria-relevant="additions" className="space-y-2">
             {notices.map(notice => <div key={notice.id} className="pointer-events-auto flex items-start gap-3 rounded-xl border border-slate-600/70 bg-slate-950/95 px-3 py-2 text-sm text-white shadow-lg">
                 <p className="flex-1 break-words">{notice.message}</p>

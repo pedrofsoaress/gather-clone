@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import signal from '@/utils/signal'
-import { ArrowsOut, ArrowsIn, MicrophoneSlash, MapTrifold, SpeakerHigh, SpeakerSlash } from '@phosphor-icons/react'
+import { ArrowsOut, ArrowsIn, MicrophoneSlash, SpeakerHigh, SpeakerSlash } from '@phosphor-icons/react'
 import AnimatedCharacter from '@/app/play/SkinMenu/AnimatedCharacter'
 import { useVideoChat } from '@/app/hooks/useVideoChat'
 import { videoChat } from '@/utils/video-chat/video-chat'
 import { isModerator } from '@/utils/video-chat/meeting'
 import MeetingControls, { useMeeting, moderate } from './MeetingControls'
+import { MeetingGrid, MeetingShell, MeetingStage } from './MeetingLayout'
 import { RemoteUser, useFloatingOpen, usePeerProfile, useRemoteUsers } from './useRemoteUsers'
 
 type VideoBarProps = {
@@ -47,32 +48,26 @@ const VideoBar: React.FC<VideoBarProps> = ({ meetingMode, onMeetingModeChange, c
         </div>
     </div>
 
-    const tileProps = { meetingMode: true, localUid, localName, localSkin }
-    return <div className="absolute inset-x-0 bottom-14 top-0 z-30 flex flex-col bg-[#181c2d] text-white">
-        <button type="button" onClick={() => onMeetingModeChange(false)} className={`absolute top-3 z-40 flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm shadow-lg hover:bg-slate-700 ${chatOpen ? 'right-3 sm:right-[352px]' : 'right-3'}`} aria-label="Visualização de mapa">
-            <MapTrifold size={18} />
-            Visualização de mapa
-        </button>
-        <header className="flex h-14 shrink-0 items-center border-b border-slate-700 px-5 pr-48 text-sm font-semibold">Conversa por proximidade · {personCount} {personCount === 1 ? 'pessoa' : 'pessoas'}</header>
-        <div className={`pointer-events-none flex shrink-0 justify-end px-3 pt-3 empty:hidden ${chatOpen ? 'sm:pr-[352px]' : ''}`}><MeetingControls localUid={localUid} /></div>
-        <section id="video-container" className={`min-h-0 flex-1 overflow-y-auto p-3 ${chatOpen ? 'w-full sm:w-[calc(100%-340px)]' : 'w-full'}`}>
-            {screens.length > 0 || presentation ? <div className="grid h-full min-h-[420px] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(220px,25%)] lg:grid-rows-1">
-                {screens.length > 0 ? <RemoteUser key={screens[0].uid} user={screens[0]} {...tileProps} className="relative aspect-video min-h-0 w-full lg:aspect-auto lg:h-full" /> : <div className="min-h-0">{presentation}</div>}
-                <div className="flex min-h-0 gap-2 overflow-x-auto lg:flex-col lg:overflow-y-auto">
-                    <LocalUser name={localName} skin={localSkin} className="relative aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full" />
-                    {cameras.map(user => <RemoteUser key={user.uid} user={user} {...tileProps} className="relative aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full" />)}
-                    {screens.length > 0 && presentation && <div className="aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full">{presentation}</div>}
-                    {screens.slice(1).map(user => <RemoteUser key={user.uid} user={user} {...tileProps} className="relative aspect-video min-w-[160px] flex-1 lg:aspect-auto lg:min-h-[150px] lg:w-full" />)}
-                </div>
-            </div> : <div className="grid auto-rows-min grid-cols-1 gap-3 md:grid-cols-2">
-                <LocalUser name={localName} skin={localSkin} className="relative aspect-video min-h-[180px]" />
-                {cameras.map(user => <RemoteUser key={user.uid} user={user} {...tileProps} className="relative aspect-video min-h-[180px] w-full" />)}
-            </div>}
-        </section>
-    </div>
+    const tileProps = { meetingMode: true, localUid, localName, localSkin, className: 'absolute inset-0' }
+    const local = <LocalUser key="local" name={localName} skin={localSkin} className="absolute inset-0" />
+    return <MeetingShell personCount={personCount} chatOpen={chatOpen} onExit={() => onMeetingModeChange(false)} controls={<MeetingControls localUid={localUid} />}>
+        {screens.length > 0 || presentation ? <MeetingStage main={screens.length > 0 ? <RemoteUser key={screens[0].uid} user={screens[0]} {...tileProps} /> : <div className="absolute inset-0">{presentation}</div>}>
+            {local}
+            {cameras.map(user => <RemoteUser key={user.uid} user={user} {...tileProps} />)}
+            {screens.length > 0 && presentation && <div key="presentation" className="absolute inset-0">{presentation}</div>}
+            {screens.slice(1).map(user => <RemoteUser key={user.uid} user={user} {...tileProps} />)}
+        </MeetingStage> : <MeetingGrid>
+            {local}
+            {cameras.map(user => <RemoteUser key={user.uid} user={user} {...tileProps} />)}
+        </MeetingGrid>}
+    </MeetingShell>
 }
 
 export default VideoBar
+
+// Meeting tiles can get small with many people, so the avatar shrinks with the tile.
+const MEETING_AVATAR = 'grid aspect-square h-[min(5rem,40%)] place-items-center overflow-hidden rounded-full bg-slate-700'
+const MEETING_AVATAR_CHARACTER = '!h-4/5 !w-4/5'
 
 function LocalUser({ name, skin, className }: { name: string, skin: string, className: string }) {
     const { isCameraMuted, isMicMuted } = useVideoChat()
@@ -86,7 +81,7 @@ function LocalUser({ name, skin, className }: { name: string, skin: string, clas
     }, [isCameraMuted, floating])
 
     return <div className={`${className} overflow-hidden rounded-xl bg-[#252b42]`}>
-        <div className="absolute inset-0 grid place-items-center"><div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full bg-slate-700"><AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className="h-16 w-16" /></div></div>
+        <div className="absolute inset-0 flex items-center justify-center"><div className={MEETING_AVATAR}><AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className={MEETING_AVATAR_CHARACTER} /></div></div>
         <div id="local-meeting-video" className={isCameraMuted ? 'hidden' : 'absolute inset-0'} />
         <p className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-xs">{isMicMuted && <MicrophoneSlash size={13} className="text-red-400" />}{name} (você)</p>
     </div>
@@ -152,7 +147,9 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     }, [isScreen, user.uid])
 
     return <div className={`${expanded ? 'fixed left-1/2 top-1/2 z-50 h-[min(70vh,700px)] w-[min(90vw,1200px)] -translate-x-1/2 -translate-y-1/2 shadow-2xl' : className} rounded-xl bg-[#252b42] ${audioState.speaking && !isScreen ? 'ring-2 ring-teal-400' : ''}`}>
-        <div className="absolute inset-0 grid place-items-center"><div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full bg-slate-700">{skin && <AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className="h-16 w-16" />}</div></div>
+        <div className="absolute inset-0 flex items-center justify-center">{meetingMode
+            ? <div className={MEETING_AVATAR}>{skin && <AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className={MEETING_AVATAR_CHARACTER} />}</div>
+            : <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full bg-slate-700">{skin && <AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className="h-16 w-16" />}</div>}</div>
         <div ref={containerRef} id={`remote-user-${user.uid}`} className="absolute inset-0 overflow-hidden rounded-xl" />
         <p className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-xs">{isScreen ? `Tela de ${name}` : <>{!user.micEnabled && <MicrophoneSlash size={13} className="text-red-400" />}{name}</>}</p>
         {meetingMode && user.cameraEnabled && <button type="button" aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo ou tela compartilhada'} onClick={() => setExpanded(value => !value)} className="absolute right-2 top-2 z-10 rounded-lg bg-black/70 p-2 text-white hover:bg-black">{expanded ? <ArrowsIn size={18} /> : <ArrowsOut size={18} />}</button>}
