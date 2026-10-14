@@ -1,5 +1,5 @@
 'use client'
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { RealmData } from '@/utils/pixi/types'
 import PlayNavbar from './PlayNavbar'
@@ -19,6 +19,7 @@ import SpeakerRuntime from './SpeakerRuntime'
 import OfficeNotifications from './OfficeNotifications'
 import { createClient } from '@/utils/supabase/client'
 import { skins } from '@/utils/pixi/Player/skins'
+import { OnlinePeoplePanel, usePresence } from './OnlinePeople'
 
 const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 
@@ -40,6 +41,20 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, realmId, uid,
     const [displayName, setDisplayName] = useState(username)
     const [meetingMode, setMeetingMode] = useState(false)
     const [chatOpen, setChatOpen] = useState(false)
+    const [peopleOpen, setPeopleOpen] = useState(false)
+    const presence = usePresence()
+    // On a phone, and in the expanded call, the chat and the people list share the same space: one at a time.
+    const sharesSpace = () => meetingMode || window.innerWidth < 640
+    const changeChatOpen = (open: boolean) => {
+        if (open && sharesSpace()) setPeopleOpen(false)
+        setChatOpen(open)
+    }
+    const togglePeople = () => {
+        if (!peopleOpen && sharesSpace()) setChatOpen(false)
+        setPeopleOpen(!peopleOpen)
+    }
+    const closePeople = useCallback(() => setPeopleOpen(false), [])
+    useEffect(() => { if (meetingMode && chatOpen) setPeopleOpen(false) }, [meetingMode, chatOpen])
     const [roomIndex, setRoomIndex] = useState(mapData.spawnpoint.roomIndex)
     const [presentations, setPresentations] = useState<PresentationSnapshot>({})
     const [selectedPresentationId, setSelectedPresentationId] = useState<string | null>(null)
@@ -143,15 +158,16 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, realmId, uid,
                     shareId={shareId}
                     initialSkin={skin}
                 />
-                <PlayNavbar username={displayName} skin={skin}/>
+                <PlayNavbar username={displayName} skin={skin} onlineCount={presence?.length ?? null} peopleOpen={peopleOpen} onPeopleToggle={togglePeople}/>
                 <SpeakerRuntime uid={uid} />
                 <OfficeNotifications meetingMode={meetingMode} />
                 <OfficeHud key={roomIndex} objects={mapData.rooms[roomIndex].interactions ?? []} uid={uid} presentations={presentations} onPresentationFocus={setSelectedPresentationId} />
                 <FocusControls />
                 <FollowControls />
-                <OfficeChat uid={uid} meetingMode={meetingMode} open={chatOpen} onOpenChange={setChatOpen} />
+                <OfficeChat uid={uid} meetingMode={meetingMode} open={chatOpen} onOpenChange={changeChatOpen} />
+                {peopleOpen && <OnlinePeoplePanel presence={presence} uid={uid} rooms={mapData.rooms} meetingMode={meetingMode} onClose={closePeople} />}
             </div>}
-            {showIntroScreen && <IntroScreen realmName={name} skin={skin} username={displayName} onJoin={async (chosenName, chosenSkin) => {
+            {showIntroScreen && <IntroScreen realmId={realmId} realmName={name} skin={skin} username={displayName} onJoin={async (chosenName, chosenSkin) => {
                 if (!skins.includes(chosenSkin)) throw new Error('Invalid avatar')
                 // The server reads the profile when joining. Save first so everyone sees the chosen avatar.
                 const { data, error } = await createClient().from('profiles')

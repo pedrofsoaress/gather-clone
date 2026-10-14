@@ -9,17 +9,21 @@ import MatteLogo from '@/components/Brand/MatteLogo'
 import { card, kicker, primaryButton } from '@/components/Brand/styles'
 import { suggestedName } from './introName'
 import signal from '@/utils/signal'
+import { request } from '@/utils/backend/requests'
+import { createClient } from '@/utils/supabase/client'
+import { entranceCountLabel } from './presence'
 
 const brandThemeColor = '#0B0B0F'
 
 type IntroScreenProps = {
+    realmId: string
     realmName: string
     skin: string
     username: string
     onJoin: (displayName: string, skin: string) => Promise<void>
 }
 
-const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, onJoin }) => {
+const IntroScreen:React.FC<IntroScreenProps> = ({ realmId, realmName, skin, username, onJoin }) => {
 
     const [name, setName] = useState(suggestedName(username))
     const [selectedSkin, setSelectedSkin] = useState(skins.includes(skin) ? skin : defaultSkin)
@@ -54,6 +58,7 @@ const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, onJ
         signal.on('officeFeedback', onFeedback)
         return () => signal.off('officeFeedback', onFeedback)
     }, [])
+    const peopleInside = useOfficeCount(realmId)
     const normalizedName = name.trim()
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -82,6 +87,9 @@ const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, onJ
                 <p className={kicker}>Antes de entrar</p>
                 <h1 className='mt-4 text-3xl font-extrabold tracking-tight sm:text-4xl'>Prepare sua entrada</h1>
                 <p className='mt-2 text-white/60'>Escolha seu boneco e seu nome, e confira câmera e microfone.</p>
+                {peopleInside && <p role='status' className='mt-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-white/80'>
+                    <span aria-hidden='true' className='h-2 w-2 rounded-full bg-emerald-400' />{peopleInside}
+                </p>}
                 <section className='mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]'>
                     <div className={`${card} flex flex-col p-4 sm:p-5`}>
                         <div className='relative aspect-video w-full overflow-hidden rounded-xl bg-black lg:aspect-auto lg:min-h-[16rem] lg:flex-1'>
@@ -115,6 +123,28 @@ const IntroScreen:React.FC<IntroScreenProps> = ({ realmName, skin, username, onJ
 }
 
 export default IntroScreen
+
+const COUNT_REFRESH_MS = 15_000
+
+// "3 pessoas no escritório agora", refreshed every 15 s while choosing. Nothing when empty or unknown.
+function useOfficeCount(realmId: string): string | null {
+    const [label, setLabel] = useState<string | null>(null)
+    useEffect(() => {
+        let cancelled = false
+        const refresh = async () => {
+            try {
+                const { data: { session } } = await createClient().auth.getSession()
+                if (!session || cancelled) return
+                const { data } = await request('/getPlayerCounts', { realmIds: realmId }, session.access_token)
+                if (!cancelled) setLabel(entranceCountLabel(data?.playerCounts?.[0]))
+            } catch { /* The count is a nicety: the page works without it. */ }
+        }
+        void refresh()
+        const timer = window.setInterval(refresh, COUNT_REFRESH_MS)
+        return () => { cancelled = true; window.clearInterval(timer) }
+    }, [realmId])
+    return label
+}
 
 function LocalVideo() {
     const { isCameraMuted, isMicMuted } = useVideoChat()

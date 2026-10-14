@@ -11,14 +11,18 @@ import { useEffect, useState } from 'react'
 import { videoChat } from '@/utils/video-chat/video-chat'
 import DeviceSettings from '@/components/VideoChat/DeviceSettings'
 import FloatingCall from '@/components/VideoChat/FloatingCall'
+import { OnlineCounter } from './OnlinePeople'
 
 type PlayNavbarProps = {
     username: string
     skin: string
+    onlineCount: number | null
+    peopleOpen: boolean
+    onPeopleToggle: () => void
 }
 
 
-const PlayNavbar:React.FC<PlayNavbarProps> = ({ username, skin }) => {
+const PlayNavbar:React.FC<PlayNavbarProps> = ({ username, skin, onlineCount, peopleOpen, onPeopleToggle }) => {
 
     const { setModal } = useModal()
     const { isCameraMuted, isScreenSharing, toggleScreenShare } = useVideoChat()
@@ -53,7 +57,8 @@ const PlayNavbar:React.FC<PlayNavbarProps> = ({ username, skin }) => {
             <button type="button" onClick={() => { void toggleScreenShare().catch(error => signal.emit('officeFeedback', { message: error instanceof Error && error.message.startsWith('Aproxime-se') ? error.message : 'Não foi possível iniciar a captura. Mantenha esta aba ativa e permita o compartilhamento no navegador.' })) }} aria-label={isScreenSharing ? 'Parar compartilhamento de tela' : 'Compartilhar tela'} title={isScreenSharing ? 'Parar compartilhamento' : 'Compartilhar tela na chamada'} className={`flex h-10 shrink-0 items-center gap-2 rounded-lg px-2 text-sm text-white outline-none hover:bg-light-secondary ${isScreenSharing ? 'bg-teal-700' : 'bg-secondary'}`}><MonitorArrowUp size={24}/><span className="hidden md:inline">{isScreenSharing ? 'Parar tela' : 'Compartilhar tela'}</span></button>
             <FloatingCall localName={username} localSkin={skin} />
             <button type="button" aria-label="Configurar microfone, câmera e áudio" title="Dispositivos" onClick={() => setDeviceSettingsOpen(true)} className="h-10 w-10 shrink-0 aspect-square grid place-items-center rounded-lg bg-secondary p-2 text-white hover:bg-light-secondary"><GearSix size={27} /></button>
-            <button type='button' aria-label='Alterar avatar' title='Alterar avatar' className='h-10 w-10 shrink-0 aspect-square grid place-items-center rounded-lg p-1 outline-none bg-secondary hover:bg-light-secondary ml-auto animate-colors' onClick={onClickSkinButton}>
+            <div className='ml-auto shrink-0'><OnlineCounter count={onlineCount} open={peopleOpen} onToggle={onPeopleToggle} /></div>
+            <button type='button' aria-label='Alterar avatar' title='Alterar avatar' className='h-10 w-10 shrink-0 aspect-square grid place-items-center rounded-lg p-1 outline-none bg-secondary hover:bg-light-secondary animate-colors' onClick={onClickSkinButton}>
                 <TShirt className='h-8 w-8'/>
             </button>
             {deviceSettingsOpen && <DeviceSettings onClose={() => setDeviceSettingsOpen(false)} />}

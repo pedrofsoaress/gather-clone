@@ -529,6 +529,14 @@ export class PlayApp extends App {
         server.socket.emit('meetingGetState', (response: { ok: boolean, snapshot?: MeetingSnapshot | null }) => {
             if (response?.ok) setMeeting(response.snapshot ?? null)
         })
+        server.socket.emit('presenceGetSnapshot', (response: { ok: boolean, snapshot?: unknown }) => {
+            if (response?.ok && Array.isArray(response.snapshot)) this.onPresence(response.snapshot)
+        })
+    }
+
+    // Who is online on every floor, for the counter and the "Quem está online" list.
+    private onPresence = (snapshot: unknown) => {
+        if (Array.isArray(snapshot)) signal.emit('officePresence', snapshot)
     }
 
     private spawnLocalPlayer = async () => {
@@ -1271,6 +1279,7 @@ export class PlayApp extends App {
         server.socket.on('proximityUpdate', this.onProximityUpdate)
         server.socket.on('conversationToken', this.onConversationToken)
         server.socket.on('followNotice', this.onFollowNotice)
+        server.socket.on('presence', this.onPresence)
     }
 
     private removeSocketEvents = () => {
@@ -1293,6 +1302,7 @@ export class PlayApp extends App {
         server.socket.off('proximityUpdate', this.onProximityUpdate)
         server.socket.off('conversationToken', this.onConversationToken)
         server.socket.off('followNotice', this.onFollowNotice)
+        server.socket.off('presence', this.onPresence)
     }
 
     private removeEvents = () => {

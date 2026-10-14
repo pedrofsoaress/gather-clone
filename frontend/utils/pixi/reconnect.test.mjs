@@ -321,3 +321,13 @@ test('a dropped connection stops following silently', async (t) => {
     assert.ok(!env.notices().some(message => message.includes('Bia')))
     assert.deepEqual(env.stops(), [])
 })
+
+test('the list of who is online is relayed from the server and asked again after reconnecting', async () => {
+    const env = harness()
+    const snapshot = [{ uid: 'pedro', name: 'Pedro', room: 0, areaId: null }, { uid: 'bia', name: 'Bia', room: 1, areaId: 'cabin-5' }]
+    env.handlers.get('presence')(snapshot)
+    assert.deepEqual(env.signals.filter(signal => signal.event === 'officePresence').map(signal => signal.value), [snapshot])
+    env.handlers.get('disconnect')('transport close')
+    await env.handlers.get('joinedRealm')({ roomIndex: 0, x: 40, y: 12 })
+    assert.ok(env.emitted.some(([name]) => name === 'presenceGetSnapshot'))
+})
