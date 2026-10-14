@@ -419,3 +419,26 @@ test('a camera turned off and on again is received again only when allowed', asy
     assert.equal(env.chat.isVideoSubscribed(HOST), true)
     assert.deepEqual(env.clients[0].subscriptions.map(([action]) => action), ['subscribe', 'subscribe'])
 })
+
+test('your own shared screen is never received back; its tile plays the local track', async () => {
+    const env = harness({ manualTimers: true })
+    await joinAs(env, ME)
+    const own = remote(`${ME}-screen`), other = remote(`${BIA}-screen`)
+    await env.chat.onUserPublished(own, 'video')
+    await env.chat.onUserPublished(other, 'video')
+    assert.equal(own.videoTrack, undefined)
+    assert.equal(env.chat.isVideoSubscribed(`${ME}-screen`), false)
+    assert.ok(other.videoTrack)
+    env.setMeeting(snapshot([ME]))
+    await env.chat.applyVideoPolicy()
+    assert.equal(own.videoTrack, undefined, 'not even on the stage')
+    assert.equal(env.signals.some(event => event.name === 'officeFeedback'), false)
+
+    assert.doesNotThrow(() => env.chat.showScreenPreview('remote-user-x')(), 'no share, no preview')
+    const screenTrack = { played: [], stopped: 0, play(element, config) { this.played.push([element, config.fit]) }, stop() { this.stopped++ } }
+    env.chat.screenTrack = screenTrack
+    const stop = env.chat.showScreenPreview(`remote-user-${ME}-screen`)
+    assert.deepEqual(screenTrack.played, [[`remote-user-${ME}-screen`, 'contain']])
+    stop()
+    assert.equal(screenTrack.stopped, 1)
+})

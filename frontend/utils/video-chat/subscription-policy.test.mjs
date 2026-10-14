@@ -33,3 +33,10 @@ test('a local uid not known yet counts as audience inside a meeting', () => {
     assert.equal(shouldSubscribeVideo({ remoteUid: bia, localUid: '', meeting }), false)
     assert.equal(shouldSubscribeVideo({ remoteUid: host, localUid: '', meeting }), true)
 })
+
+test('your own shared screen is never received back, in or out of a meeting', () => {
+    assert.equal(shouldSubscribeVideo({ remoteUid: `${ana}-screen`, localUid: ana, meeting: null }), false)
+    assert.equal(shouldSubscribeVideo({ remoteUid: `${ana}-screen`, localUid: ana, meeting }), false)
+    assert.equal(shouldSubscribeVideo({ remoteUid: `${host}-screen`, localUid: host, meeting }), false)
+    assert.equal(shouldSubscribeVideo({ remoteUid: `${host}-screen`, localUid: ana, meeting: null }), true)
+})

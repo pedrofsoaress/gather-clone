@@ -462,6 +462,15 @@ export class VideoChat {
         } finally { this.screenStarting = false }
     }
 
+    // The sharer's own screen tile plays the local track: receiving it back from Agora would be billed.
+    // Returns a function that stops only this preview; publishing goes on.
+    public showScreenPreview(element: string | HTMLElement): () => void {
+        const track = this.screenTrack
+        if (!track) return () => {}
+        track.play(element, { fit: 'contain' })
+        return () => { if (this.screenTrack === track) track.stop() }
+    }
+
     public async stopScreenShare() {
         this.screenRequest++
         const track = this.screenTrack

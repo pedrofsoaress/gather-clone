@@ -97,7 +97,9 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     const floating = useFloatingOpen()
     const meeting = useMeeting()
     const officeUid = user.user.uid.toString().slice(0, 36)
-    const showVideo = user.cameraEnabled && user.videoSubscribed
+    const { isScreenSharing } = useVideoChat()
+    // Your own shared screen is not received back; its tile plays the local track.
+    const showVideo = user.cameraEnabled && (isLocalScreen ? isScreenSharing : user.videoSubscribed)
     const meetingActive = Boolean(meeting && isModerator(localUid))
     const [expanded, setExpanded] = useState(false)
     // The collapse button only exists while the video shows; without it the tile goes back to its place.
@@ -136,9 +138,10 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     useEffect(() => {
         // The floating window shows people's cameras; screen shares stay here.
         if (floating && !isScreen) return
-        if (showVideo) user.user.videoTrack?.play(`remote-user-${user.uid}`, { fit: isScreen ? 'contain' : 'cover' })
-        else containerRef.current?.replaceChildren()
-    }, [user, showVideo, meetingMode, isScreen, floating])
+        if (!showVideo) { containerRef.current?.replaceChildren(); return }
+        if (isLocalScreen) return videoChat.showScreenPreview(`remote-user-${user.uid}`)
+        user.user.videoTrack?.play(`remote-user-${user.uid}`, { fit: isScreen ? 'contain' : 'cover' })
+    }, [user, showVideo, meetingMode, isScreen, isLocalScreen, floating])
 
     useEffect(() => {
         if (isScreen) return
