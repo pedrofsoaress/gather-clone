@@ -10,6 +10,7 @@ import { AvatarActions } from './office/AvatarActions'
 import { MeetingState } from './office/MeetingState'
 import { FocusState, withinReach } from './office/FocusState'
 import { ConversationTokens } from './office/ConversationToken'
+import { PresenceTracker } from './office/Presence'
 
 export type RealmData = {
     spawnpoint: {
@@ -176,6 +177,8 @@ export class Session {
 
     public focus = new FocusState()
     public readonly conversationTokens = new ConversationTokens()
+    // Everyone in the office with their floor and area (see sendPresence).
+    public readonly presence = new PresenceTracker()
 
     constructor(id: string, mapData: RealmData) {
         validateOfficeMap(mapData)
@@ -226,6 +229,15 @@ export class Session {
         this.playerPositions[spawnIndex][coordKey].add(uid)
         this.players[uid] = player
         this.roomFeatures[spawnIndex].office.addPlayer(uid, { x: spawnX, y: spawnY }, username)
+        this.trackPresence(uid)
+    }
+
+    // The floor and area of the person's verified tile. Cheap: one tile lookup per step.
+    private trackPresence(uid: string) {
+        const player = this.players[uid]
+        if (!player) return
+        const room = this.map_data.rooms[player.room]
+        this.presence.set({ uid, name: player.username, room: player.room, areaId: room ? areaAt(room, player.x, player.y) : null })
     }
 
     public removePlayer(uid: string): void {
@@ -244,6 +256,7 @@ export class Session {
         delete this.playerPositions[player.room][coordKey]
 
         delete this.players[uid]
+        this.presence.remove(uid)
     }
 
     public changeRoom(uid: string, roomIndex: number, x: number, y: number): string[] {
@@ -339,6 +352,7 @@ export class Session {
         }
 
         this.playerPositions[this.players[uid].room][coordKey].add(uid)
+        this.trackPresence(uid)
 
         return this.setProximityIdsWithPlayer(uid)
     }

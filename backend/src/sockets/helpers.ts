@@ -35,6 +35,14 @@ export function leaveMeeting(session: Session, uid: string, meeting: ReturnType<
     if (remaining) sendMeeting(session, remaining)
 }
 
+// Everyone in the session (every floor) gets the full list of who is online and where,
+// only when it changed: someone arrived, left, or moved to another floor or area.
+export function sendPresence(session: Session) {
+    if (!session.presence.takeChange()) return
+    const snapshot = session.presence.snapshot()
+    for (const player of Object.values(session.players)) io.to(player.socketId).emit('presence', snapshot)
+}
+
 export function kickPlayer(uid: string, reason: string) {
     const session = sessionManager.getPlayerSession(uid)
     const room = session.getPlayerRoom(uid)
@@ -53,6 +61,7 @@ export function kickPlayer(uid: string, reason: string) {
     io.sockets.sockets.get(player.socketId)?.leave(session.id)
     // player is already in session, kick them
     sessionManager.logOutPlayer(uid)
+    sendPresence(session)
     leaveMeeting(session, uid, meeting)
     sendProximity(session, session.setProximityIdsWithPlayer(uid))
     const features = session.roomFeatures[room]

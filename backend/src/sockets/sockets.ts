@@ -6,7 +6,7 @@ import { users } from '../Users'
 import { sessionManager, Session, MAX_PLAYERS_PER_SPACE } from '../session'
 import { SpeakerTarget, AvatarAction, AvatarRun, MeetingModerate, MeetingRaiseHand, FocusKnock, FocusAnswer, FollowTarget } from './socket-types'
 import { removeExtraSpaces } from '../utils'
-import { kickPlayer, sendMeeting, leaveMeeting, sendProximity, sendConversationToken } from './helpers'
+import { kickPlayer, sendMeeting, leaveMeeting, sendProximity, sendConversationToken, sendPresence } from './helpers'
 import { KNOCK_ANSWER_MS, withinReach } from '../office/FocusState'
 import { FollowRelay, type FollowNotice } from '../office/FollowRelay'
 import { formatEmailToName } from '../utils'
@@ -174,6 +174,7 @@ export function sockets(io: Server) {
                 sendConversationToken(newSession, uid)
                 socket.emit('joinedRealm', { roomIndex: player.room, x: player.x, y: player.y })
                 emit('playerJoinedRoom', player)
+                sendPresence(newSession)
                 sendMeeting(newSession, uid)
                 joiningInProgress.delete(uid)
             }
@@ -229,6 +230,7 @@ export function sockets(io: Server) {
             if (success) {
                 leaveMeeting(session, uid, leavingMeeting)
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
+                sendPresence(session)
                 users.removeUser(uid)
                 broadcastRoomFeatures(io, session, room)
                 sendProximity(session, session.setProximityIdsWithPlayer(uid))
@@ -243,6 +245,15 @@ export function sockets(io: Server) {
             const changed = new Set([uid, ...session.setProximityIdsWithPlayer(uid)])
             sendProximity(session, changed)
             ack({ ok: true, snapshot: session.featuresFor(uid).office.snapshot() })
+        })
+
+        // The list of who is online, asked on load and after reconnecting.
+        socket.on('presenceGetSnapshot', (ack: unknown) => {
+            if (typeof ack !== 'function') return
+            const uid = socket.handshake.query.uid as string
+            const session = sessionManager.getPlayerSession(uid)
+            if (!session || session.getPlayer(uid)?.socketId !== socket.id) return ack({ ok: false, error: 'Fora do escritório.' })
+            ack({ ok: true, snapshot: session.presence.snapshot() })
         })
 
         let officeStepQueue = Promise.resolve()
@@ -284,6 +295,7 @@ export function sockets(io: Server) {
                         sendMeeting(session, uid)
                     }
                     emit('playerMoved', { uid, ...parsed.data })
+                    sendPresence(session)
                     sendProximity(session, changed)
                     broadcastRoom(io, session, session.getPlayerRoom(uid), 'avatarState', features.avatars.snapshot())
                 }
@@ -616,6 +628,7 @@ export function sockets(io: Server) {
             ack({ ok: true, proximityId: player.proximityId, roomIndex: player.room, verifiedPosition: session.featuresFor(uid).office.verifiedPosition(uid) })
             if (oldRoom !== data.roomIndex) emit('playerJoinedRoom', player)
             else emit('playerTeleported', { uid, x: player.x, y: player.y })
+            sendPresence(session)
             broadcastRoomFeatures(io, session, oldRoom)
             if (oldRoom !== data.roomIndex) broadcastRoomFeatures(io, session, data.roomIndex)
             sendProximity(session, changedPlayers)
