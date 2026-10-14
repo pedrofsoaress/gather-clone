@@ -3,8 +3,8 @@ import signal from '../signal'
 import { createHash } from 'crypto'
 import { generateToken } from './generateToken'
 import { TokenCache } from './token-cache'
-import { getMeeting } from './meeting'
-import { shouldSubscribeVideo } from './subscription-policy'
+import { getMeeting, type MeetingSnapshot } from './meeting'
+import { channelMeeting, shouldSubscribeVideo, type ChannelArea } from './subscription-policy'
 import { clampRemoteVolume, createWithDeviceFallback, defaultDeviceId, mediaErrorMessage, readMediaPreferences, resolveDevicePreference, saveMediaPreferences, type MediaPreferences } from './AudioPreference'
 
 // The server pushes the token right after the step that groups people; once this page has
@@ -37,7 +37,12 @@ export class VideoChat {
     // Remote videos this page receives, and the queue that keeps each person's subscribe/unsubscribe in order.
     private readonly subscribedVideo = new Set<string>()
     private videoSync = new Map<string, Promise<void>>()
+    // Bumped on every video publish/unpublish, so a subscribe that settles late cannot mark a newer publication as received.
+    private videoPublications = new Map<string, number>()
     private localUid = ''
+    // The area behind the joined channel and the last stage the server sent for it.
+    private channelArea: ChannelArea | null = null
+    private lastAreaMeeting: Pick<MeetingSnapshot, 'moderators'> | null = null
 
     private channelTimeout: NodeJS.Timeout | null = null
 
@@ -72,6 +77,7 @@ export class VideoChat {
             this.remoteUsers[user.uid] = user
             if (mediaType === 'video') {
                 // A new publication: any earlier subscription to this person's video is gone.
+                this.bumpVideoPublication(String(user.uid))
                 this.subscribedVideo.delete(String(user.uid))
                 await this.syncRemoteVideo(user)
                 return
@@ -90,8 +96,15 @@ export class VideoChat {
 
     public isVideoSubscribed(uid: string): boolean { return this.subscribedVideo.has(uid) }
 
+    private bumpVideoPublication(uid: string) {
+        this.videoPublications.set(uid, (this.videoPublications.get(uid) ?? 0) + 1)
+    }
+
     private wantsVideo(uid: string): boolean {
-        return shouldSubscribeVideo({ remoteUid: uid, localUid: this.localUid, meeting: getMeeting() })
+        const area = this.channelArea
+        const snapshot = getMeeting()
+        if (area?.isMeetingArea && snapshot?.areaId === area.areaId) this.lastAreaMeeting = snapshot
+        return shouldSubscribeVideo({ remoteUid: uid, localUid: this.localUid, meeting: channelMeeting(area, snapshot, this.lastAreaMeeting) })
     }
 
     // Brings every remote video in line with the policy without leaving the channel or touching audio.
@@ -103,9 +116,13 @@ export class VideoChat {
     private syncRemoteVideo(user: IAgoraRTCRemoteUser): Promise<void> {
         const uid = String(user.uid)
         const queue = this.videoSync
+        const lifecycle = this.lifecycle
         const run = (queue.get(uid) ?? Promise.resolve())
             .then(() => this.reconcileRemoteVideo(user))
-            .catch(() => { signal.emit('officeFeedback', { message: 'Não foi possível receber a mídia de um participante.' }) })
+            .catch(() => {
+                // Nobody to tell once the call ended or the person left.
+                if (lifecycle === this.lifecycle && this.remoteUsers[uid] === user) signal.emit('officeFeedback', { message: 'Não foi possível receber a mídia de um participante.' })
+            })
         queue.set(uid, run)
         void run.then(() => { if (queue.get(uid) === run) queue.delete(uid) })
         return run
@@ -118,8 +135,11 @@ export class VideoChat {
         const wanted = this.wantsVideo(uid)
         if (wanted === this.subscribedVideo.has(uid)) return
         if (wanted) {
+            const publication = this.videoPublications.get(uid)
             await this.client.subscribe(user, 'video')
             if (lifecycle !== this.lifecycle || this.remoteUsers[uid] !== user) return
+            // The camera went off (and maybe on again) meanwhile: that publication's own sync decides.
+            if (publication !== this.videoPublications.get(uid)) return
             this.subscribedVideo.add(uid)
             signal.emit('user-info-updated', user)
             return
@@ -140,13 +160,17 @@ export class VideoChat {
         if (mediaType === 'audio') {
             user.audioTrack?.stop()
         }
-        if (mediaType === 'video') this.subscribedVideo.delete(String(user.uid))
+        if (mediaType === 'video') {
+            this.bumpVideoPublication(String(user.uid))
+            this.subscribedVideo.delete(String(user.uid))
+        }
         if (mediaType === 'audio' || mediaType === 'video') signal.emit('user-info-updated', user)
     }
 
     public onUserLeft = (user: IAgoraRTCRemoteUser, reason: string) => {
         delete this.remoteUsers[user.uid]
         this.subscribedVideo.delete(String(user.uid))
+        this.videoPublications.delete(String(user.uid))
         signal.emit('user-left', user)
     }
 
@@ -485,10 +509,14 @@ export class VideoChat {
         this.remoteUsers = {}
         this.subscribedVideo.clear()
         this.videoSync = new Map()
+        this.videoPublications = new Map()
+        this.channelArea = null
+        this.lastAreaMeeting = null
         signal.emit('reset-users')
     }
 
-    public async joinChannel(channel: string, uid: string, realmId: string, roomIndex: number) {
+    // `area` is the private area behind the channel (omit it for a proximity conversation).
+    public async joinChannel(channel: string, uid: string, realmId: string, roomIndex: number, area: ChannelArea | null = null) {
         const key = `${roomIndex}:${channel}`
         const request = ++this.channelRequest
         this.localUid = uid
@@ -524,6 +552,8 @@ export class VideoChat {
                 if (this.client.connectionState !== 'DISCONNECTED') await this.client.leave()
                 if (request !== this.channelRequest) return
                 this.resetRemoteUsers()
+                // Set before joining so the people already in the channel are filtered from their first publish.
+                this.channelArea = area
                 try {
                     await this.client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, uniqueChannelId, token, uid)
                 } catch (error) {

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { shouldSubscribeVideo } from './subscription-policy.ts'
+import { channelMeeting, shouldSubscribeVideo } from './subscription-policy.ts'
 
 const host = '11111111-1111-4111-8111-111111111111'
 const ana = '22222222-2222-4222-8222-222222222222'
@@ -39,4 +39,16 @@ test('your own shared screen is never received back, in or out of a meeting', ()
     assert.equal(shouldSubscribeVideo({ remoteUid: `${ana}-screen`, localUid: ana, meeting }), false)
     assert.equal(shouldSubscribeVideo({ remoteUid: `${host}-screen`, localUid: host, meeting }), false)
     assert.equal(shouldSubscribeVideo({ remoteUid: `${host}-screen`, localUid: ana, meeting: null }), true)
+})
+
+const area = { areaId: 'matte-training', isMeetingArea: true }
+const training = { areaId: 'matte-training', locked: false, allowed: [], raised: [], moderators: [host] }
+
+test('the stage follows the channel, not a stale or missing snapshot', () => {
+    assert.equal(channelMeeting(null, training, null), null, 'proximity conversation: a stale snapshot is ignored')
+    assert.equal(channelMeeting({ areaId: 'sala-1', isMeetingArea: false }, training, null), null)
+    assert.equal(channelMeeting(area, training, null), training)
+    assert.deepEqual(channelMeeting(area, null, null), { moderators: [] }, 'entering before the snapshot: audience')
+    assert.deepEqual(channelMeeting(area, { ...training, areaId: 'other' }, null), { moderators: [] })
+    assert.deepEqual(channelMeeting(area, null, { moderators: [host] }), { moderators: [host] }, 'leaving: keep the last stage')
 })

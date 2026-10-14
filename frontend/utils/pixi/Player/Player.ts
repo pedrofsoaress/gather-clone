@@ -438,7 +438,9 @@ export class Player {
         if (tile && tile.privateAreaId) {
             if (tile.privateAreaId !== this.currentChannel) {
                 this.currentChannel = tile.privateAreaId
-                videoChat.joinChannel(tile.privateAreaId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId, this.playApp.currentRoomIndex)
+                const room = this.playApp.realmData.rooms[this.playApp.currentRoomIndex]
+                const area = { areaId: tile.privateAreaId, isMeetingArea: Boolean(room.areas?.[tile.privateAreaId]?.meeting) }
+                videoChat.joinChannel(tile.privateAreaId, agoraUidForProfile(this.playApp.uid, this.username), this.playApp.realmId, this.playApp.currentRoomIndex, area)
                 this.playApp.fadeInTiles(tile.privateAreaId)
             }
         } else {

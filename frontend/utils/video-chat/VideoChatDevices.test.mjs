@@ -307,12 +307,16 @@ test('forced mute helpers are idempotent and never turn anything on', async () =
 const HOST = '11111111-1111-4111-8111-111111111111'
 const ME = '22222222-2222-4222-8222-222222222222'
 const BIA = '33333333-3333-4333-8333-333333333333'
+const CAIO = '44444444-4444-4444-8444-444444444444'
 const remote = uid => ({ uid, hasAudio: true, hasVideo: true })
 const snapshot = moderators => ({ areaId: 'matte-training', locked: false, allowed: [], raised: [], moderators })
 
-async function joinAs(env, uid) {
+const TRAINING = { areaId: 'matte-training', isMeetingArea: true }
+
+// Joins the training room's channel by default; pass `area: null` for a proximity conversation.
+async function joinAs(env, uid, { channel = 'matte-training', area = TRAINING } = {}) {
     env.clients[0].connectionState = 'DISCONNECTED'
-    await env.chat.joinChannel('matte-training', uid, 'realm', 0)
+    await env.chat.joinChannel(channel, uid, 'realm', 0, area)
     env.flushTimers()
     await env.chat.channelOperation
 }
@@ -360,7 +364,7 @@ test('in a meeting the audience receives the stage video and everyone\'s audio; 
     assert.equal(env.signals.some(event => event.name === 'officeFeedback'), false)
 })
 
-test('stepping onto the stage receives the whole audience, and leaving the meeting room receives everyone', async () => {
+test('stepping onto the stage receives the whole audience', async () => {
     const env = harness({ manualTimers: true })
     env.setMeeting(snapshot([HOST]))
     await joinAs(env, ME)
@@ -373,9 +377,96 @@ test('stepping onto the stage receives the whole audience, and leaving the meeti
     env.setMeeting(snapshot([HOST]))
     await env.chat.applyVideoPolicy()
     assert.equal(bia.videoTrack, undefined)
-    env.setMeeting(null)
+})
+
+test('leaving the training room: a null snapshot before the channel switch receives no new video', async () => {
+    const env = harness({ manualTimers: true })
+    env.setMeeting(snapshot([HOST]))
+    await joinAs(env, ME)
+    const client = env.clients[0]
+    const host = remote(HOST), bia = remote(BIA)
+    await env.chat.onUserPublished(host, 'video')
+    await env.chat.onUserPublished(bia, 'video')
+    client.subscriptions.length = 0
+    env.setMeeting(null) // the server sends this before the step ack; the channel switch comes later
     await env.chat.applyVideoPolicy()
-    assert.ok(bia.videoTrack, 'outside a meeting room nothing is filtered')
+    await env.chat.onUserPublished(remote(CAIO), 'video')
+    assert.deepEqual(client.subscriptions, [], 'no audience camera is received, the stage is kept')
+    assert.equal(bia.videoTrack, undefined)
+    assert.ok(host.videoTrack)
+
+    // In the next (proximity) conversation everyone is received.
+    await joinAs(env, ME, { channel: 'proximity-1', area: null })
+    const again = remote(BIA)
+    await env.chat.onUserPublished(again, 'video')
+    assert.ok(again.videoTrack)
+})
+
+test('a stale training snapshot is ignored in a normal conversation', async () => {
+    const env = harness({ manualTimers: true })
+    env.setMeeting(snapshot([HOST])) // e.g. after a teleport the server sends no new snapshot
+    await joinAs(env, ME, { channel: 'proximity-1', area: null })
+    const bia = remote(BIA)
+    await env.chat.onUserPublished(bia, 'video')
+    assert.ok(bia.videoTrack)
+    await joinAs(env, ME, { channel: 'sala-1', area: { areaId: 'sala-1', isMeetingArea: false } })
+    const caio = remote(CAIO)
+    await env.chat.onUserPublished(caio, 'video')
+    assert.ok(caio.videoTrack)
+})
+
+test('entering a meeting room before its snapshot arrives receives only shared screens', async () => {
+    const env = harness({ manualTimers: true })
+    await joinAs(env, ME)
+    const host = remote(HOST), bia = remote(BIA), screen = remote(`${BIA}-screen`)
+    for (const user of [host, bia, screen]) await env.chat.onUserPublished(user, 'video')
+    assert.equal(host.videoTrack, undefined)
+    assert.equal(bia.videoTrack, undefined)
+    assert.ok(screen.videoTrack)
+    env.setMeeting(snapshot([HOST]))
+    await env.chat.applyVideoPolicy()
+    assert.ok(host.videoTrack, 'the stage shows up with the snapshot')
+    assert.equal(bia.videoTrack, undefined)
+})
+
+test('a subscribe that settles after the camera went off and on again does not hide the new publication', async () => {
+    const env = harness({ manualTimers: true })
+    await joinAs(env, ME, { channel: 'proximity-1', area: null })
+    const client = env.clients[0]
+    const subscribe = client.subscribe
+    const pending = []
+    client.subscribe = function (user, kind) { return new Promise(resolve => { pending.push(() => resolve(subscribe.call(this, user, kind))) }) }
+    const bia = remote(BIA)
+    const first = env.chat.onUserPublished(bia, 'video')
+    while (pending.length === 0) await tick()
+    bia.hasVideo = false
+    env.chat.onUserUnpublished(bia, 'video')
+    bia.hasVideo = true
+    const second = env.chat.onUserPublished(bia, 'video')
+    pending.shift()()
+    await first
+    await tick()
+    assert.equal(env.chat.isVideoSubscribed(BIA), false, 'the stale success is not counted')
+    assert.equal(pending.length, 1, 'the new publication is subscribed')
+    pending.shift()()
+    await second
+    assert.equal(env.chat.isVideoSubscribed(BIA), true)
+    assert.deepEqual(client.subscriptions.map(([action]) => action), ['subscribe', 'subscribe'])
+    assert.equal(env.signals.some(event => event.name === 'officeFeedback'), false)
+})
+
+test('a failed subscribe after the person left shows no error', async () => {
+    const env = harness({ manualTimers: true })
+    await joinAs(env, ME, { channel: 'proximity-1', area: null })
+    let fail
+    env.clients[0].subscribe = () => new Promise((_, reject) => { fail = reject })
+    const bia = remote(BIA)
+    const published = env.chat.onUserPublished(bia, 'video')
+    while (!fail) await tick()
+    env.chat.onUserLeft(bia, 'Quit')
+    fail(new Error('gone'))
+    await published
+    assert.equal(env.signals.some(event => event.name === 'officeFeedback'), false)
 })
 
 test('stepping off the stage while the video is still being subscribed ends unsubscribed', async () => {
@@ -422,7 +513,7 @@ test('a camera turned off and on again is received again only when allowed', asy
 
 test('your own shared screen is never received back; its tile plays the local track', async () => {
     const env = harness({ manualTimers: true })
-    await joinAs(env, ME)
+    await joinAs(env, ME, { channel: 'proximity-1', area: null })
     const own = remote(`${ME}-screen`), other = remote(`${BIA}-screen`)
     await env.chat.onUserPublished(own, 'video')
     await env.chat.onUserPublished(other, 'video')
@@ -430,8 +521,10 @@ test('your own shared screen is never received back; its tile plays the local tr
     assert.equal(env.chat.isVideoSubscribed(`${ME}-screen`), false)
     assert.ok(other.videoTrack)
     env.setMeeting(snapshot([ME]))
-    await env.chat.applyVideoPolicy()
-    assert.equal(own.videoTrack, undefined, 'not even on the stage')
+    await joinAs(env, ME)
+    const ownOnStage = remote(`${ME}-screen`)
+    await env.chat.onUserPublished(ownOnStage, 'video')
+    assert.equal(ownOnStage.videoTrack, undefined, 'not even on the stage')
     assert.equal(env.signals.some(event => event.name === 'officeFeedback'), false)
 
     assert.doesNotThrow(() => env.chat.showScreenPreview('remote-user-x')(), 'no share, no preview')
