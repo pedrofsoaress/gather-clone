@@ -97,8 +97,11 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     const floating = useFloatingOpen()
     const meeting = useMeeting()
     const officeUid = user.user.uid.toString().slice(0, 36)
+    const showVideo = user.cameraEnabled && user.videoSubscribed
     const meetingActive = Boolean(meeting && isModerator(localUid))
     const [expanded, setExpanded] = useState(false)
+    // The collapse button only exists while the video shows; without it the tile goes back to its place.
+    useEffect(() => { if (!showVideo) setExpanded(false) }, [showVideo])
     const [audioMenuOpen, setAudioMenuOpen] = useState(false)
     const [audioState, setAudioState] = useState(() => videoChat.getRemoteAudio(user.uid))
     const audioButton = useRef<HTMLButtonElement>(null)
@@ -133,9 +136,9 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
     useEffect(() => {
         // The floating window shows people's cameras; screen shares stay here.
         if (floating && !isScreen) return
-        if (user.cameraEnabled) user.user.videoTrack?.play(`remote-user-${user.uid}`, { fit: isScreen ? 'contain' : 'cover' })
+        if (showVideo) user.user.videoTrack?.play(`remote-user-${user.uid}`, { fit: isScreen ? 'contain' : 'cover' })
         else containerRef.current?.replaceChildren()
-    }, [user, meetingMode, isScreen, floating])
+    }, [user, showVideo, meetingMode, isScreen, floating])
 
     useEffect(() => {
         if (isScreen) return
@@ -152,8 +155,8 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
             : <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full bg-slate-700">{skin && <AnimatedCharacter src={`/sprites/characters/Character_${skin}.png`} noAnimation className="h-16 w-16" />}</div>}</div>
         <div ref={containerRef} id={`remote-user-${user.uid}`} className="absolute inset-0 overflow-hidden rounded-xl" />
         <p className="absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-xs">{isScreen ? `Tela de ${name}` : <>{!user.micEnabled && <MicrophoneSlash size={13} className="text-red-400" />}{name}</>}</p>
-        {meetingMode && user.cameraEnabled && <button type="button" aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo ou tela compartilhada'} onClick={() => setExpanded(value => !value)} className="absolute right-2 top-2 z-10 rounded-lg bg-black/70 p-2 text-white hover:bg-black">{expanded ? <ArrowsIn size={18} /> : <ArrowsOut size={18} />}</button>}
-        {!isScreen && <div className={`absolute ${meetingMode && user.cameraEnabled ? 'right-12' : 'right-2'} top-2 z-20`}>
+        {meetingMode && showVideo && <button type="button" aria-label={expanded ? 'Reduzir vídeo' : 'Ampliar vídeo ou tela compartilhada'} onClick={() => setExpanded(value => !value)} className="absolute right-2 top-2 z-10 rounded-lg bg-black/70 p-2 text-white hover:bg-black">{expanded ? <ArrowsIn size={18} /> : <ArrowsOut size={18} />}</button>}
+        {!isScreen && <div className={`absolute ${meetingMode && showVideo ? 'right-12' : 'right-2'} top-2 z-20`}>
             <button ref={audioButton} type="button" aria-label={`Áudio de ${name}`} aria-expanded={audioMenuOpen} onClick={() => {
                 const bounds = audioButton.current?.getBoundingClientRect()
                 if (bounds) setMenuPosition({ top: Math.max(8, Math.min(bounds.bottom + 6, window.innerHeight - (audioMenu.current?.offsetHeight ?? (meetingActive ? 240 : 150)) - 8)), left: Math.max(8, Math.min(bounds.right - 192, window.innerWidth - 200)) })

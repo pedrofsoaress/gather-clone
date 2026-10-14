@@ -148,7 +148,7 @@ function FloatingPerson({ user, win, compact = false }: { user: RemoteUser, win:
     const [speaking, setSpeaking] = useState(false)
 
     useEffect(() => {
-        if (user.cameraEnabled && video.current) user.user.videoTrack?.play(video.current, { fit: 'cover' })
+        if (user.cameraEnabled && user.videoSubscribed && video.current) user.user.videoTrack?.play(video.current, { fit: 'cover' })
         else video.current?.replaceChildren()
     }, [user, compact])
 

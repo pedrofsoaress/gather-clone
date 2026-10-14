@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
 import signal from '@/utils/signal'
+import { videoChat } from '@/utils/video-chat/video-chat'
 
 export interface RemoteUser {
     uid: string
     micEnabled: boolean
     cameraEnabled: boolean
+    // False when this page does not receive the camera (the audience in a meeting room only
+    // receives the stage): the tile then shows the avatar, as if the camera were off.
+    videoSubscribed: boolean
     user: IAgoraRTCRemoteUser
 }
 
@@ -17,7 +21,7 @@ export function useRemoteUsers() {
         const onUserInfoUpdated = (user: IAgoraRTCRemoteUser) => {
             setRemoteUsers(previous => ({ ...previous, [user.uid]: {
                 uid: user.uid.toString(), micEnabled: user.hasAudio,
-                cameraEnabled: user.hasVideo, user,
+                cameraEnabled: user.hasVideo, videoSubscribed: videoChat.isVideoSubscribed(user.uid.toString()), user,
             } }))
         }
         const onResetUsers = () => setRemoteUsers({})

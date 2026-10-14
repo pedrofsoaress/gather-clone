@@ -16,6 +16,8 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
     const captures = []
     const stored = new Map()
     const timers = new Map()
+    const listeners = new Map()
+    let meeting = null
     const delays = []
     const warnings = []
     let timerId = 0
@@ -31,7 +33,10 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
     const agora = {
         setLogLevel() {},
         createClient() {
-            const client = { connectionState: 'CONNECTED', published: [], joined: [], renewed: [], handlers: new Map(),
+            const client = { connectionState: 'CONNECTED', published: [], joined: [], renewed: [], handlers: new Map(), subscriptions: [],
+                // Like Agora: subscribing sets the remote user's track, unsubscribing removes it.
+                async subscribe(user, kind) { this.subscriptions.push(['subscribe', String(user.uid), kind]); user[`${kind}Track`] = { kind, stopped: false, play() {}, stop() { this.stopped = true }, setVolume() {}, async setPlaybackDevice() {}, getVolumeLevel: () => 0 } },
+                async unsubscribe(user, kind) { this.subscriptions.push(['unsubscribe', String(user.uid), kind]); user[`${kind}Track`] = undefined },
                 async publish(tracks) { this.published.push(...(Array.isArray(tracks) ? tracks : [tracks])) }, async unpublish() {},
                 async leave() { this.connectionState = 'DISCONNECTED' }, async join(_app, channel) { this.joined.push(channel); this.connectionState = 'CONNECTED' },
                 async renewToken(value) { this.renewed.push(value) }, on(name, callback) { this.handlers.set(name, callback) } }
@@ -52,6 +57,8 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
     // The pushed-token wait runs on the same (possibly manual) timers as the join.
     const tokenCache = {}
     vm.runInNewContext(transpile('./token-cache.ts'), { exports: tokenCache, Date, ...timerApi })
+    const policy = {}
+    vm.runInNewContext(transpile('./subscription-policy.ts'), { exports: policy })
     vm.runInNewContext(source, {
         exports, process: { env: {} }, console: { ...console, warn: (...args) => warnings.push(args) },
         ...timerApi,
@@ -59,7 +66,12 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
         window: { localStorage: storage }, HTMLMediaElement: class {},
         require: name => {
             if (name === 'agora-rtc-sdk-ng') return agora
-            if (name === '../signal') return { emit: (name, data) => signals.push({ name, data }) }
+            if (name === '../signal') return {
+                emit: (name, data) => { signals.push({ name, data }); (listeners.get(name) ?? []).forEach(fn => fn(data)) },
+                on: (name, fn) => listeners.set(name, [...(listeners.get(name) ?? []), fn]),
+            }
+            if (name === './meeting') return { getMeeting: () => meeting }
+            if (name === './subscription-policy') return policy
             if (name === './generateToken') return { generateToken: token }
             if (name === './token-cache') return tokenCache
             if (name === './AudioPreference') return { ...preferences, readMediaPreferences: () => JSON.parse(storage.getItem('prefs') ?? '{"cameraId":"usb-camera","microphoneId":"usb-mic","outputId":""}'), saveMediaPreferences: next => storage.setItem('prefs', JSON.stringify(next)) }
@@ -67,7 +79,9 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
             throw new Error(`Unexpected import: ${name}`)
         },
     })
-    return { chat: exports.videoChat, clients, captures, events, signals, delays, warnings, setDevices: next => { devices = next }, flushTimers: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()) } }
+    // Like meeting.ts: store the snapshot, then broadcast it.
+    const setMeeting = snapshot => { meeting = snapshot; (listeners.get('meetingState') ?? []).forEach(fn => fn(snapshot)) }
+    return { chat: exports.videoChat, clients, captures, events, signals, delays, warnings, setMeeting, setDevices: next => { devices = next }, flushTimers: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()) } }
 }
 
 test('first enable clears disconnected saved devices and keeps screen client independent', async () => {
@@ -288,4 +302,120 @@ test('forced mute helpers are idempotent and never turn anything on', async () =
   await env.chat.toggleCamera()
   assert.equal(await env.chat.turnOffCamera(), true)
   assert.equal(await env.chat.turnOffCamera(), false)
+})
+
+const HOST = '11111111-1111-4111-8111-111111111111'
+const ME = '22222222-2222-4222-8222-222222222222'
+const BIA = '33333333-3333-4333-8333-333333333333'
+const remote = uid => ({ uid, hasAudio: true, hasVideo: true })
+const snapshot = moderators => ({ areaId: 'matte-training', locked: false, allowed: [], raised: [], moderators })
+
+async function joinAs(env, uid) {
+    env.clients[0].connectionState = 'DISCONNECTED'
+    await env.chat.joinChannel('matte-training', uid, 'realm', 0)
+    env.flushTimers()
+    await env.chat.channelOperation
+}
+
+test('in a meeting the audience receives the stage video and everyone\'s audio; others follow the stage', async () => {
+    const env = harness({ manualTimers: true })
+    env.setMeeting(snapshot([HOST]))
+    await joinAs(env, ME)
+    const client = env.clients[0]
+    const host = remote(HOST), bia = remote(BIA), screen = remote(`${BIA}-screen`)
+    for (const user of [host, bia]) {
+        await env.chat.onUserPublished(user, 'audio')
+        await env.chat.onUserPublished(user, 'video')
+    }
+    await env.chat.onUserPublished(screen, 'video')
+    assert.ok(host.videoTrack && host.audioTrack)
+    assert.ok(screen.videoTrack, 'shared screens are always received')
+    assert.ok(bia.audioTrack, 'the audience is still heard')
+    assert.equal(bia.videoTrack, undefined, 'audience video is not received')
+    assert.equal(env.chat.isVideoSubscribed(BIA), false)
+    assert.equal(env.chat.isVideoSubscribed(HOST), true)
+    assert.deepEqual(client.subscriptions.filter(([, uid]) => uid === BIA), [['subscribe', BIA, 'audio']])
+
+    // Bia steps onto the stage: her video is received, nothing else changes.
+    env.signals.length = 0
+    env.setMeeting(snapshot([HOST, BIA]))
+    await env.chat.applyVideoPolicy()
+    assert.ok(bia.videoTrack)
+    assert.equal(env.chat.isVideoSubscribed(BIA), true)
+    assert.ok(env.signals.some(event => event.name === 'user-info-updated' && event.data === bia))
+
+    // She steps off: only her video is dropped; her audio and the call stay.
+    const audio = bia.audioTrack
+    const video = bia.videoTrack
+    env.setMeeting(snapshot([HOST]))
+    await env.chat.applyVideoPolicy()
+    assert.equal(bia.videoTrack, undefined)
+    assert.equal(video.stopped, true)
+    assert.equal(bia.audioTrack, audio)
+    assert.equal(env.chat.isVideoSubscribed(BIA), false)
+    assert.deepEqual(client.subscriptions.filter(([, uid]) => uid === BIA), [['subscribe', BIA, 'audio'], ['subscribe', BIA, 'video'], ['unsubscribe', BIA, 'video']])
+    assert.equal(client.subscriptions.some(([action, , kind]) => action === 'unsubscribe' && kind === 'audio'), false)
+    assert.equal(client.joined.length, 1, 'the channel is never left')
+    assert.ok(host.videoTrack && screen.videoTrack)
+    assert.equal(env.signals.some(event => event.name === 'officeFeedback'), false)
+})
+
+test('stepping onto the stage receives the whole audience, and leaving the meeting room receives everyone', async () => {
+    const env = harness({ manualTimers: true })
+    env.setMeeting(snapshot([HOST]))
+    await joinAs(env, ME)
+    const bia = remote(BIA)
+    await env.chat.onUserPublished(bia, 'video')
+    assert.equal(bia.videoTrack, undefined)
+    env.setMeeting(snapshot([HOST, ME]))
+    await tick() // the meetingState signal alone re-applies the policy
+    assert.ok(bia.videoTrack, 'the presenter sees the audience')
+    env.setMeeting(snapshot([HOST]))
+    await env.chat.applyVideoPolicy()
+    assert.equal(bia.videoTrack, undefined)
+    env.setMeeting(null)
+    await env.chat.applyVideoPolicy()
+    assert.ok(bia.videoTrack, 'outside a meeting room nothing is filtered')
+})
+
+test('stepping off the stage while the video is still being subscribed ends unsubscribed', async () => {
+    const env = harness({ manualTimers: true })
+    env.setMeeting(snapshot([HOST]))
+    await joinAs(env, ME)
+    const client = env.clients[0]
+    const bia = remote(BIA)
+    await env.chat.onUserPublished(bia, 'video')
+    const subscribe = client.subscribe
+    let finish
+    client.subscribe = function (user, kind) { return new Promise(resolve => { finish = () => resolve(subscribe.call(this, user, kind)) }) }
+    env.setMeeting(snapshot([HOST, BIA]))
+    while (!finish) await tick()
+    env.setMeeting(snapshot([HOST]))
+    finish()
+    await env.chat.applyVideoPolicy()
+    assert.equal(bia.videoTrack, undefined)
+    assert.equal(env.chat.isVideoSubscribed(BIA), false)
+    assert.deepEqual(client.subscriptions.map(([action]) => action), ['subscribe', 'unsubscribe'])
+
+    // A change undone before its turn comes costs nothing.
+    client.subscriptions.length = 0
+    env.setMeeting(snapshot([HOST, BIA]))
+    env.setMeeting(snapshot([HOST]))
+    await env.chat.applyVideoPolicy()
+    assert.deepEqual(client.subscriptions, [])
+})
+
+test('a camera turned off and on again is received again only when allowed', async () => {
+    const env = harness({ manualTimers: true })
+    env.setMeeting(snapshot([HOST]))
+    await joinAs(env, ME)
+    const host = remote(HOST)
+    await env.chat.onUserPublished(host, 'video')
+    host.hasVideo = false
+    env.chat.onUserUnpublished(host, 'video')
+    assert.equal(env.chat.isVideoSubscribed(HOST), false)
+    host.hasVideo = true
+    await env.chat.onUserPublished(host, 'video')
+    assert.equal(env.chat.isVideoSubscribed(HOST), true)
+    assert.deepEqual(env.clients[0].subscriptions.map(([action]) => action), ['subscribe', 'subscribe'])
 })

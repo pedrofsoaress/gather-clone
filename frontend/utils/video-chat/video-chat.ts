@@ -3,6 +3,8 @@ import signal from '../signal'
 import { createHash } from 'crypto'
 import { generateToken } from './generateToken'
 import { TokenCache } from './token-cache'
+import { getMeeting } from './meeting'
+import { shouldSubscribeVideo } from './subscription-policy'
 import { clampRemoteVolume, createWithDeviceFallback, defaultDeviceId, mediaErrorMessage, readMediaPreferences, resolveDevicePreference, saveMediaPreferences, type MediaPreferences } from './AudioPreference'
 
 // The server pushes the token right after the step that groups people; once this page has
@@ -32,6 +34,10 @@ export class VideoChat {
     private readonly tokens = new TokenCache()
 
     private remoteUsers: { [uid: string]: IAgoraRTCRemoteUser } = {}
+    // Remote videos this page receives, and the queue that keeps each person's subscribe/unsubscribe in order.
+    private readonly subscribedVideo = new Set<string>()
+    private videoSync = new Map<string, Promise<void>>()
+    private localUid = ''
 
     private channelTimeout: NodeJS.Timeout | null = null
 
@@ -46,6 +52,8 @@ export class VideoChat {
         this.client.on('token-privilege-did-expire', () => { void this.renewConversationToken(false) })
         this.screenClient.on('token-privilege-will-expire', () => { void this.renewConversationToken(true) })
         this.screenClient.on('token-privilege-did-expire', () => { void this.renewConversationToken(true) })
+        // Someone stepped onto or off the stage, or this person entered or left a meeting room.
+        signal.on('meetingState', () => { void this.applyVideoPolicy() })
     }
 
     private onUserInfoUpdated = (uid: string) => {
@@ -62,6 +70,12 @@ export class VideoChat {
         const lifecycle = this.lifecycle
         try {
             this.remoteUsers[user.uid] = user
+            if (mediaType === 'video') {
+                // A new publication: any earlier subscription to this person's video is gone.
+                this.subscribedVideo.delete(String(user.uid))
+                await this.syncRemoteVideo(user)
+                return
+            }
             await this.client.subscribe(user, mediaType)
             if (lifecycle !== this.lifecycle) return
 
@@ -70,19 +84,69 @@ export class VideoChat {
                 user.audioTrack?.play()
             }
 
-            if (mediaType === 'audio' || mediaType === 'video') signal.emit('user-info-updated', user)
+            if (mediaType === 'audio') signal.emit('user-info-updated', user)
         } catch { signal.emit('officeFeedback', { message: 'Não foi possível receber a mídia de um participante.' }) }
+    }
+
+    public isVideoSubscribed(uid: string): boolean { return this.subscribedVideo.has(uid) }
+
+    private wantsVideo(uid: string): boolean {
+        return shouldSubscribeVideo({ remoteUid: uid, localUid: this.localUid, meeting: getMeeting() })
+    }
+
+    // Brings every remote video in line with the policy without leaving the channel or touching audio.
+    public async applyVideoPolicy(): Promise<void> {
+        await Promise.all(Object.values(this.remoteUsers).map(user => this.syncRemoteVideo(user)))
+    }
+
+    // Runs after this person's earlier subscribe/unsubscribe settles, so each check sees the latest meeting.
+    private syncRemoteVideo(user: IAgoraRTCRemoteUser): Promise<void> {
+        const uid = String(user.uid)
+        const queue = this.videoSync
+        const run = (queue.get(uid) ?? Promise.resolve())
+            .then(() => this.reconcileRemoteVideo(user))
+            .catch(() => { signal.emit('officeFeedback', { message: 'Não foi possível receber a mídia de um participante.' }) })
+        queue.set(uid, run)
+        void run.then(() => { if (queue.get(uid) === run) queue.delete(uid) })
+        return run
+    }
+
+    private async reconcileRemoteVideo(user: IAgoraRTCRemoteUser): Promise<void> {
+        const uid = String(user.uid)
+        const lifecycle = this.lifecycle
+        if (this.remoteUsers[uid] !== user || !user.hasVideo) return
+        const wanted = this.wantsVideo(uid)
+        if (wanted === this.subscribedVideo.has(uid)) return
+        if (wanted) {
+            await this.client.subscribe(user, 'video')
+            if (lifecycle !== this.lifecycle || this.remoteUsers[uid] !== user) return
+            this.subscribedVideo.add(uid)
+            signal.emit('user-info-updated', user)
+            return
+        }
+        // The tile shows the avatar from now on, as if the camera were off.
+        this.subscribedVideo.delete(uid)
+        try {
+            user.videoTrack?.stop()
+            await this.client.unsubscribe(user, 'video')
+        } catch {
+            // Already gone on Agora's side (unpublished or left): nothing is being received.
+        } finally {
+            if (lifecycle === this.lifecycle) signal.emit('user-info-updated', user)
+        }
     }
 
     public onUserUnpublished = (user: IAgoraRTCRemoteUser, mediaType: "audio" | "video" | "datachannel") => {
         if (mediaType === 'audio') {
             user.audioTrack?.stop()
         }
+        if (mediaType === 'video') this.subscribedVideo.delete(String(user.uid))
         if (mediaType === 'audio' || mediaType === 'video') signal.emit('user-info-updated', user)
     }
 
     public onUserLeft = (user: IAgoraRTCRemoteUser, reason: string) => {
         delete this.remoteUsers[user.uid]
+        this.subscribedVideo.delete(String(user.uid))
         signal.emit('user-left', user)
     }
 
@@ -410,12 +474,15 @@ export class VideoChat {
 
     private resetRemoteUsers() {
         this.remoteUsers = {}
+        this.subscribedVideo.clear()
+        this.videoSync = new Map()
         signal.emit('reset-users')
     }
 
     public async joinChannel(channel: string, uid: string, realmId: string, roomIndex: number) {
         const key = `${roomIndex}:${channel}`
         const request = ++this.channelRequest
+        this.localUid = uid
         // Without pushed tokens each join calls the server action; the short delay lets a proximity
         // update that arrives just before the step's ack be replaced instead of minting a stale token.
         const delay = this.tokens.hasSeenPushes ? 0 : 150
