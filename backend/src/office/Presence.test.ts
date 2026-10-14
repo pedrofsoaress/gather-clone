@@ -92,3 +92,18 @@ test('the session tracks joins, area changes, floor changes and leaves, not ever
     assert.equal(session.presence.takeChange(), true)
     assert.deepEqual(session.presence.snapshot().map(entry => entry.uid), ['bruno'])
 })
+
+test('ending a session tells each kick that everyone is leaving', async () => {
+    const { SessionManager } = await import('../session')
+    const manager = new SessionManager()
+    manager.createSession('office', corridorMap())
+    manager.addPlayerToSession('socket-ana', 'office', 'ana', 'Ana', '009')
+    manager.addPlayerToSession('socket-bruno', 'office', 'bruno', 'Bruno', '009')
+    const kicks: { uid: string, sessionEnding: boolean }[] = []
+    manager.terminateSession('office', 'Mapa alterado.', (uid, _reason, { sessionEnding }) => {
+        kicks.push({ uid, sessionEnding })
+        manager.logOutPlayer(uid)
+    })
+    assert.deepEqual(kicks, [{ uid: 'ana', sessionEnding: true }, { uid: 'bruno', sessionEnding: true }])
+    assert.equal(manager.getSession('office'), undefined)
+})

@@ -145,13 +145,14 @@ export class SessionManager {
         return true
     }
 
-    public terminateSession(id: string, reason: string, kickPlayer: (uid: string, reason: string) => void) {
+    // `sessionEnding` lets the kick skip what only matters to people who stay (the online list).
+    public terminateSession(id: string, reason: string, kickPlayer: (uid: string, reason: string, options: { sessionEnding: boolean }) => void) {
         const session = this.sessions[id]
         if (!session) return
 
         const players = session.getPlayerIds()
         players.forEach(player => {
-            kickPlayer(player, reason)
+            kickPlayer(player, reason, { sessionEnding: true })
         })
 
         delete this.sessions[id]

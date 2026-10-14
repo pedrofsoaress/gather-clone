@@ -900,10 +900,15 @@ export class PlayApp extends App {
         else this.followers.delete(notice.uid)
     }
 
-    private onFollowStart = ({ uid }: { uid: string }) => {
+    // `name` comes from the online list, where the person may not be on screen yet.
+    private onFollowStart = ({ uid, name }: { uid: string, name?: string }) => {
         this.closeAvatarMenu()
+        if (uid === this.uid || this.eventsRemoved) return
         const target = this.players[uid]
-        if (!target || uid === this.uid || this.follow?.uid === uid || this.eventsRemoved || this.reconnecting) return
+        const notice = (message: string, reason: string) => signal.emit('officeNotice', { message, key: `follow-${reason}:${uid}` })
+        if (this.reconnecting) return notice('Aguarde a conexão voltar.', 'reconnecting')
+        if (!target) return notice(`Não encontrei ${name || 'essa pessoa'} por perto ainda.`, 'missing')
+        if (this.follow?.uid === uid) return notice(`Você já está seguindo ${target.username}.`, 'already')
         if (this.followers.has(uid)) {
             signal.emit('officeNotice', { message: `${target.username} já está te seguindo.`, key: `follow-mutual:${uid}` })
             return
@@ -915,7 +920,7 @@ export class PlayApp extends App {
             progress: { since: Date.now(), position: { ...this.player.verifiedPosition } },
         }
         server.socket.emit('followStart', { targetUid: uid })
-        signal.emit('followState', { name: target.username })
+        signal.emit('followState', { name: target.username, uid })
         this.followTimer = setInterval(this.followTick, FOLLOW_TICK_MS)
         this.planFollow()
     }
@@ -931,7 +936,7 @@ export class PlayApp extends App {
         if (followStopTellsTarget(reason)) server.socket.emit('followStop', { targetUid: follow.uid })
         const message = followStopNotice(reason, follow.name)
         if (message) signal.emit('officeNotice', { message, key: `follow-stop:${follow.uid}:${reason}` })
-        signal.emit('followState', { name: null })
+        signal.emit('followState', { name: null, uid: null })
     }
 
     private followPaused = () => this.player.frozen || this.roomTransitioning || this.reconnecting
@@ -1162,6 +1167,8 @@ export class PlayApp extends App {
         if (!server.socket.active) return this.endSession()
         if (this.reconnecting) return
         this.reconnecting = true
+        // The online list is stale until the server answers again after rejoining.
+        signal.emit('officePresence', null)
         // The server tells the followed person once this connection is gone.
         this.stopFollowing('silent')
         this.closeAvatarMenu()

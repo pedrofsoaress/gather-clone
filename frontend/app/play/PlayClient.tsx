@@ -19,7 +19,7 @@ import SpeakerRuntime from './SpeakerRuntime'
 import OfficeNotifications from './OfficeNotifications'
 import { createClient } from '@/utils/supabase/client'
 import { skins } from '@/utils/pixi/Player/skins'
-import { OnlinePeoplePanel, usePresence } from './OnlinePeople'
+import { OnlinePeoplePanel, useFollowingUid, usePresence } from './OnlinePeople'
 
 const PixiApp = dynamic(() => import('./PixiApp'), { ssr: false })
 
@@ -43,6 +43,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, realmId, uid,
     const [chatOpen, setChatOpen] = useState(false)
     const [peopleOpen, setPeopleOpen] = useState(false)
     const presence = usePresence()
+    const followingUid = useFollowingUid()
     // On a phone, and in the expanded call, the chat and the people list share the same space: one at a time.
     const sharesSpace = () => meetingMode || window.innerWidth < 640
     const changeChatOpen = (open: boolean) => {
@@ -165,7 +166,7 @@ const PlayClient:React.FC<PlayClientProps> = ({ mapData, username, realmId, uid,
                 <FocusControls />
                 <FollowControls />
                 <OfficeChat uid={uid} meetingMode={meetingMode} open={chatOpen} onOpenChange={changeChatOpen} />
-                {peopleOpen && <OnlinePeoplePanel presence={presence} uid={uid} rooms={mapData.rooms} meetingMode={meetingMode} onClose={closePeople} />}
+                {peopleOpen && <OnlinePeoplePanel presence={presence} uid={uid} rooms={mapData.rooms} meetingMode={meetingMode} followingUid={followingUid} onClose={closePeople} />}
             </div>}
             {showIntroScreen && <IntroScreen realmId={realmId} realmName={name} skin={skin} username={displayName} onJoin={async (chosenName, chosenSkin) => {
                 if (!skins.includes(chosenSkin)) throw new Error('Invalid avatar')

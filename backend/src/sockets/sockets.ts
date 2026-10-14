@@ -155,6 +155,12 @@ export function sockets(io: Server) {
             const realm = data
 
             const join = async () => {
+                // The visitor reloaded or left while the realm and profile were loading: joining now
+                // would leave a ghost in the office (and kick their other tab for nothing).
+                if (socket.disconnected) {
+                    joiningInProgress.delete(uid)
+                    return
+                }
                 if (!sessionManager.getSession(realmData.realmId)) {
                     sessionManager.createSession(realmData.realmId, data.map_data)
                 }

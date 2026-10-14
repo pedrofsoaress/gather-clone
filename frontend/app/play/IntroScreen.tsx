@@ -136,7 +136,8 @@ function useOfficeCount(realmId: string): string | null {
                 const { data: { session } } = await createClient().auth.getSession()
                 if (!session || cancelled) return
                 const { data } = await request('/getPlayerCounts', { realmIds: realmId }, session.access_token)
-                if (!cancelled) setLabel(entranceCountLabel(data?.playerCounts?.[0]))
+                // A failed poll keeps the last count; only an answer from the server changes it.
+                if (!cancelled && Array.isArray(data?.playerCounts)) setLabel(entranceCountLabel(data.playerCounts[0]))
             } catch { /* The count is a nicety: the page works without it. */ }
         }
         void refresh()

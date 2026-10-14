@@ -215,7 +215,7 @@ async function following(t) {
 test('following walks next to the person, keeps up as they move and tells them', async (t) => {
     const env = await following(t)
     assert.deepEqual(plain(env.emitted.find(([name]) => name === 'followStart')), ['followStart', { targetUid: 'bia' }])
-    assert.deepEqual(plain(env.signals.filter(signal => signal.event === 'followState').at(-1).value), { name: 'Bia' })
+    assert.deepEqual(plain(env.signals.filter(signal => signal.event === 'followState').at(-1).value), { name: 'Bia', uid: 'bia' })
     assert.deepEqual(plain(env.app.player.currentTilePosition), { x: 9, y: 5 })
     env.handlers.get('playerMoved')({ uid: 'bia', x: 11, y: 5 })
     assert.deepEqual(plain(env.app.player.currentTilePosition), { x: 10, y: 5 }, 'takes the tile she just left')
@@ -225,7 +225,7 @@ test('following walks next to the person, keeps up as they move and tells them',
     env.signalHandlers.get('followStop')()
     assert.deepEqual(env.notices(), ['Você parou de seguir Bia.'])
     assert.deepEqual(env.stops(), [['followStop', { targetUid: 'bia' }]])
-    assert.deepEqual(plain(env.signals.filter(signal => signal.event === 'followState').at(-1).value), { name: null })
+    assert.deepEqual(plain(env.signals.filter(signal => signal.event === 'followState').at(-1).value), { name: null, uid: null })
 })
 
 test('the person taking the stairs is followed through the same passage', async (t) => {
@@ -317,7 +317,7 @@ test('three seconds without a way to the person stops following', async (t) => {
 test('a dropped connection stops following silently', async (t) => {
     const env = await following(t)
     env.handlers.get('disconnect')('transport close')
-    assert.deepEqual(plain(env.signals.filter(signal => signal.event === 'followState').at(-1).value), { name: null })
+    assert.deepEqual(plain(env.signals.filter(signal => signal.event === 'followState').at(-1).value), { name: null, uid: null })
     assert.ok(!env.notices().some(message => message.includes('Bia')))
     assert.deepEqual(env.stops(), [])
 })
@@ -330,4 +330,27 @@ test('the list of who is online is relayed from the server and asked again after
     env.handlers.get('disconnect')('transport close')
     await env.handlers.get('joinedRealm')({ roomIndex: 0, x: 40, y: 12 })
     assert.ok(env.emitted.some(([name]) => name === 'presenceGetSnapshot'))
+})
+
+test('the online list is cleared while reconnecting', async () => {
+    const env = harness()
+    env.handlers.get('disconnect')('transport close')
+    assert.deepEqual(env.signals.filter(signal => signal.event === 'officePresence').map(signal => signal.value), [null])
+})
+
+test('following explains why it cannot start', async () => {
+    const env = harness()
+    const notices = () => env.signals.filter(signal => signal.event === 'officeNotice').map(signal => signal.value.message)
+    env.signalHandlers.get('followStart')({ uid: 'caio', name: 'Caio' })
+    assert.equal(notices().at(-1), 'Não encontrei Caio por perto ainda.')
+    env.roomPlayers = [{ uid: 'bia', skin: '017', username: 'Bia', x: 10, y: 5 }]
+    await env.app.syncOtherPlayers()
+    env.signalHandlers.get('followStart')({ uid: 'bia' })
+    env.signalHandlers.get('followStart')({ uid: 'bia' })
+    assert.equal(notices().at(-1), 'Você já está seguindo Bia.')
+    assert.equal(env.emitted.filter(([name]) => name === 'followStart').length, 1)
+    env.handlers.get('disconnect')('transport close')
+    env.signalHandlers.get('followStart')({ uid: 'bia' })
+    assert.equal(notices().at(-1), 'Aguarde a conexão voltar.')
+    env.app.stopFollowing('manual')
 })

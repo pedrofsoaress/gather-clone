@@ -12,7 +12,9 @@ type RoomInfo = { name: string, areas?: Record<string, { label: string }> }
 export function usePresence(): PresenceEntry[] | null {
     const [presence, setPresence] = useState<PresenceEntry[] | null>(null)
     useEffect(() => {
+        // Null while reconnecting: the counter shows "…" until the server answers again.
         const onPresence = (value: unknown) => {
+            if (value === null) return setPresence(null)
             const parsed = parsePresence(value)
             if (parsed) setPresence(parsed)
         }
@@ -20,6 +22,17 @@ export function usePresence(): PresenceEntry[] | null {
         return () => signal.off('officePresence', onPresence)
     }, [])
     return presence
+}
+
+// Who this visitor is following now, so the list does not offer "Seguir" for them.
+export function useFollowingUid(): string | null {
+    const [uid, setUid] = useState<string | null>(null)
+    useEffect(() => {
+        const onFollowState = (state: { uid?: string | null }) => setUid(typeof state?.uid === 'string' ? state.uid : null)
+        signal.on('followState', onFollowState)
+        return () => signal.off('followState', onFollowState)
+    }, [])
+    return uid
 }
 
 // The toolbar button: a green dot and how many people are in the office.
@@ -38,11 +51,13 @@ type PanelProps = {
     uid: string
     rooms: RoomInfo[]
     meetingMode: boolean
+    followingUid: string | null
     onClose: () => void
 }
 
 // "Quem está online": everyone in the office, where they are, and "Seguir" for people on the same floor.
-export function OnlinePeoplePanel({ presence, uid, rooms, meetingMode, onClose }: PanelProps) {
+export function OnlinePeoplePanel({ presence, uid, rooms, meetingMode, followingUid, onClose }: PanelProps) {
+    const panel = useRef<HTMLElement | null>(null)
     const people = sortPresence(presence ?? [], uid)
     const self = people.find(person => person.uid === uid)
     const [status, setStatus] = useState<string | null>(null)
@@ -50,7 +65,15 @@ export function OnlinePeoplePanel({ presence, uid, rooms, meetingMode, onClose }
     useEffect(() => () => window.clearTimeout(statusTimer.current), [])
 
     useEffect(() => {
-        const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+        // Escape belongs to whatever is being typed in, or to another open dialog.
+        const onKey = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return
+            const target = event.target
+            if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return
+            const active = document.activeElement
+            if (active instanceof HTMLElement && !panel.current?.contains(active) && active.closest('[role="dialog"], [aria-modal="true"]')) return
+            onClose()
+        }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
     }, [onClose])
@@ -64,14 +87,14 @@ export function OnlinePeoplePanel({ presence, uid, rooms, meetingMode, onClose }
             statusTimer.current = window.setTimeout(() => setStatus(null), 5000)
             return
         }
-        signal.emit('followStart', { uid: person.uid })
+        signal.emit('followStart', { uid: person.uid, name: person.name })
         onClose()
     }
 
     // Bottom right, above the toolbar: the chat and the notices live on the left, the call strip at the top
     // (the height stops below it). In the expanded call it sits above the chat button. On a phone it spans
     // the width above the chat button and the "Avisos" chip.
-    return <section id='online-people' aria-label='Quem está online'
+    return <section ref={panel} id='online-people' aria-label='Quem está online'
         className={`absolute inset-x-3 bottom-[168px] flex max-h-[min(420px,calc(100vh-380px))] flex-col overflow-hidden rounded-2xl border border-teal-300/40 bg-slate-950/95 font-sans text-white shadow-2xl sm:left-auto sm:w-80 ${meetingMode ? 'z-40 sm:bottom-[120px] sm:max-h-[min(420px,calc(100vh-200px))]' : 'z-30 sm:bottom-16 sm:max-h-[min(420px,calc(100vh-280px))]'}`}>
         <div className='flex items-center justify-between border-b border-slate-700 px-4 py-3'>
             <strong className='text-sm'>Quem está online{presence ? ` · ${presence.length}` : ''}</strong>
@@ -85,7 +108,7 @@ export function OnlinePeoplePanel({ presence, uid, rooms, meetingMode, onClose }
                     <p className='truncate text-sm font-semibold' title={person.name}>{person.name}{person.uid === uid && <span className='font-normal text-slate-400'> (você)</span>}</p>
                     <p className='truncate text-xs text-slate-400'>{placeLabel(rooms, person)}</p>
                 </div>
-                {person.uid !== uid && <button type='button' onClick={() => follow(person)} aria-label={`Seguir ${person.name}`}
+                {person.uid !== uid && person.uid !== followingUid && <button type='button' onClick={() => follow(person)} aria-label={`Seguir ${person.name}`}
                     className='shrink-0 rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300'>Seguir</button>}
             </li>)}
         </ul>}

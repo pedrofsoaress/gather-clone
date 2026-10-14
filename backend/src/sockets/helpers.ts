@@ -43,7 +43,9 @@ export function sendPresence(session: Session) {
     for (const player of Object.values(session.players)) io.to(player.socketId).emit('presence', snapshot)
 }
 
-export function kickPlayer(uid: string, reason: string) {
+// `sessionEnding`: everyone is being kicked (the realm changed or was deleted), so nobody
+// needs the shrinking online list, one snapshot per remaining person per kick.
+export function kickPlayer(uid: string, reason: string, { sessionEnding = false }: { sessionEnding?: boolean } = {}) {
     const session = sessionManager.getPlayerSession(uid)
     const room = session.getPlayerRoom(uid)
     const players = session.getPlayersInRoom(room)
@@ -61,7 +63,7 @@ export function kickPlayer(uid: string, reason: string) {
     io.sockets.sockets.get(player.socketId)?.leave(session.id)
     // player is already in session, kick them
     sessionManager.logOutPlayer(uid)
-    sendPresence(session)
+    if (!sessionEnding) sendPresence(session)
     leaveMeeting(session, uid, meeting)
     sendProximity(session, session.setProximityIdsWithPlayer(uid))
     const features = session.roomFeatures[room]
