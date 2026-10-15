@@ -10,12 +10,17 @@ export type MediaConfig = { provider: 'agora' } | CloudflareMediaConfig
 export type PeerState = { uid: string, mic: boolean, camera: boolean, screen: boolean }
 export type PeersSnapshot = { self: string, conversation: string | null, peers: PeerState[], ownScreen: boolean }
 export type RemoteEntry = { mid: string, fromUid: string, kind: MediaKind, objectId?: string }
+// A pulled track as the server sends it. `prefetch`: pulled ahead of a conversation (the sender is close but not in it),
+// at the lowest layer. Whether a received track is shown follows the roster (`mediaPeers`) alone: a sender listed there
+// is in the conversation and shown at once with what is already arriving; anyone else's tracks are held, with no tile,
+// no audio element and no speaking level. The server turns a prefetch active, or back, without renegotiating.
+export type PulledEntry = RemoteEntry & { prefetch?: boolean }
 // Every step carries the generation it belongs to; the page answers only steps of its current generation.
 // `close` with `force: true` (every close the server sends): the page stops those transceivers locally WITHOUT
 // creating an offer and acks `{ ok: true }`. No `answer` step follows. A page offer on this Cloudflare-offered
 // session would leave it "disconnected" for Cloudflare (later calls fail with 410).
 export type NegotiateStep = { generation: number } & (
-    | { type: 'pull', offer: string, tracks: RemoteEntry[] }
+    | { type: 'pull', offer: string, tracks: PulledEntry[] }
     | { type: 'close', mids: string[], force?: true }
     | { type: 'answer', answer: string }
     // Nothing is pulled and the receive connection has many dead m-lines: the page closes it (sending untouched) and

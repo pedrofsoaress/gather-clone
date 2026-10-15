@@ -1,5 +1,5 @@
 import { parseMediaConfig } from './config'
-import { SIMULCAST_ENCODINGS, type CloudflareMediaConfig, type MediaKind, type NegotiateReply, type NegotiateStep, type PeersSnapshot, type RemoteEntry, type SignalingSocket } from './protocol'
+import { SIMULCAST_ENCODINGS, type CloudflareMediaConfig, type MediaKind, type NegotiateReply, type NegotiateStep, type PeersSnapshot, type PulledEntry, type RemoteEntry, type SignalingSocket } from './protocol'
 
 // A paused mic or camera sends no packets; Cloudflare collects such a track after 30 s, so it is unpublished first.
 export const IDLE_UNPUBLISH_MS = 25_000
@@ -100,8 +100,8 @@ function validStep(raw: unknown): raw is NegotiateStep {
     const step = raw as Partial<Record<string, unknown>> | null
     if (!step || typeof step.generation !== 'number') return false
     if (step.type === 'pull') return typeof step.offer === 'string' && Array.isArray(step.tracks) && step.tracks.every(track => {
-        const entry = track as Partial<RemoteEntry> | null
-        return typeof entry?.mid === 'string' && typeof entry.fromUid === 'string' && KINDS.includes(entry.kind as string) && (entry.objectId === undefined || typeof entry.objectId === 'string')
+        const entry = track as Partial<PulledEntry> | null
+        return typeof entry?.mid === 'string' && typeof entry.fromUid === 'string' && KINDS.includes(entry.kind as string) && (entry.objectId === undefined || typeof entry.objectId === 'string') && (entry.prefetch === undefined || typeof entry.prefetch === 'boolean')
     })
     if (step.type === 'close') return Array.isArray(step.mids) && step.mids.every(mid => typeof mid === 'string')
     if (step.type === 'answer') return typeof step.answer === 'string'

@@ -238,6 +238,66 @@ test('tracks: video only when received, audio at the volume chosen for the perso
     assert.equal(chat.getRemoteAudio('ana').speaking, false)
 })
 
+test('prefetch: tracks of someone outside the roster are held silently, shown at once when the roster lists them', () => {
+    const env = load()
+    const audioMade = []
+    const createElement = env.page.createElement
+    env.page.createElement = tag => { const element = createElement(tag); if (tag === 'audio') audioMade.push(element); return element }
+    const chat = env.create()
+    env.engine.emit(peers({ conversation: null, peers: [], ownScreen: false }))
+    // Bia's camera and mic arrive (prefetched by the server) while she is not in this page's conversation.
+    const camera = { id: 'bia-camera' }, mic = { id: 'bia-mic' }
+    env.engine.tracks.set(key('bia', 'camera'), camera)
+    env.engine.tracks.set(key('bia', 'mic'), mic)
+    env.engine.receivers.set(key('bia', 'mic'), { getSynchronizationSources: () => [{ audioLevel: 0.9 }] })
+    env.clear()
+    env.engine.emit({ type: 'tracks' })
+    assert.deepEqual(env.signals, [], 'no tile, no user-info-updated')
+    assert.equal(audioMade.length, 0, 'no audio element: nothing reaches the speakers')
+    assert.equal(chat.isVideoSubscribed('bia'), false)
+    assert.deepEqual(plain(chat.getRemoteAudio('bia')), { muted: false, volume: 100, speaking: false })
+
+    // The roster lists her: shown at once with the video already arriving, her audio playing.
+    const roster = peers({ peers: [{ uid: 'bia', mic: true, camera: true, screen: false }], ownScreen: false })
+    env.engine.emit(roster)
+    const [[, bia]] = env.named('user-info-updated')
+    assert.equal(bia.uid, 'bia')
+    assert.equal(bia.videoTrack.track, camera)
+    assert.equal(chat.isVideoSubscribed('bia'), true)
+    assert.equal(audioMade.length, 1)
+    assert.deepEqual(tracksOf(audioMade[0]), [mic])
+    assert.equal(audioMade[0].played, 1)
+    assert.equal(audioMade[0].volume, 1)
+    assert.equal(chat.getRemoteAudio('bia').speaking, true)
+    const tile = env.page.add('remote-user-bia')
+    bia.videoTrack.play('remote-user-bia')
+    assert.deepEqual(tracksOf(tile.children[0]), [camera])
+
+    // Out of the conversation, still around (held again): hidden and silent, while the engine keeps the track.
+    env.clear()
+    env.engine.emit(peers({ conversation: null, peers: [], ownScreen: false }))
+    assert.deepEqual(env.named('user-left').map(([, user]) => user.uid), ['bia'])
+    assert.equal(audioMade[0].paused, true)
+    assert.equal(audioMade[0].srcObject, null)
+    assert.equal(tile.children.length, 0)
+    assert.equal(env.engine.remoteTrack('bia', 'camera'), camera)
+    assert.equal(chat.getRemoteAudio('bia').speaking, false)
+
+    // Back in: shown again from the same track, no new pull needed.
+    env.clear()
+    env.engine.emit(roster)
+    assert.equal(env.named('user-info-updated')[0][1].videoTrack.track, camera)
+    assert.equal(audioMade.length, 2)
+    assert.equal(audioMade[1].played, 1)
+
+    // Leaving drops everything, held or shown.
+    env.clear()
+    chat.destroy()
+    assert.deepEqual(env.named('reset-users').length, 1)
+    assert.equal(audioMade[1].srcObject, null)
+    assert.deepEqual(env.engine.calls.at(-1), ['stop'])
+})
+
 test('camera: on sends and previews, off pauses and turns the light off', async () => {
     const env = load()
     const chat = env.create()

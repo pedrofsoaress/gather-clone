@@ -200,6 +200,16 @@ test('pull: the answer, the mapping by mid, receivers and speakers', async () =>
     assert.equal(tracks[0].at.subAnswer, ack.answer)
 })
 
+test('pull: a prefetched track is received like any other; a malformed prefetch flag refuses the step', async () => {
+    const h = harness()
+    await h.engine.start(cfg())
+    const ack = await h.step({ type: 'pull', offer: 'mids=3,4', tracks: [{ mid: '3', fromUid: 'ana', kind: 'camera', prefetch: true }, { mid: '4', fromUid: 'ana', kind: 'mic', prefetch: true }] })
+    assert.equal(ack.ok, true)
+    assert.notEqual(h.engine.remoteTrack('ana', 'camera'), null)
+    assert.notEqual(h.engine.remoteTrack('ana', 'mic'), null)
+    assert.deepEqual(plain(await h.step({ type: 'pull', offer: 'mids=5', tracks: [{ mid: '5', fromUid: 'bia', kind: 'mic', prefetch: 'yes' }] })), { ok: false, error: 'Passo de vídeo inválido.' })
+})
+
 test('mid reuse: a mid closed and pulled again points to the new person', async () => {
     const h = harness()
     await h.engine.start(cfg())
