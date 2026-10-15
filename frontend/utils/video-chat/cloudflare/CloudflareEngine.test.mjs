@@ -26,7 +26,7 @@ function load() {
 }
 
 function fakePc(world) {
-    const pc = { role: null, transceivers: [], connectionState: 'new', listeners: {}, closed: false, configs: [], localDescription: null, rolledBack: 0, offers: 0, failEncodings: world.failEncodings, singleEncoding: world.singleEncoding,
+    const pc = { role: null, transceivers: [], transceiverReads: 0, connectionState: 'new', listeners: {}, closed: false, configs: [], localDescription: null, rolledBack: 0, offers: 0, failEncodings: world.failEncodings, singleEncoding: world.singleEncoding,
         addEventListener(name, fn) { pc.listeners[name] = fn },
         setState(state) { pc.connectionState = state; pc.listeners.connectionstatechange?.() },
         addTransceiver(track, init = {}) {
@@ -36,20 +36,26 @@ function fakePc(world) {
             const t = { mid: null, init, stopped: false, sender: { track, replaced: [], async replaceTrack(next) { this.replaced.push(next); this.track = next }, getParameters: () => ({ encodings }) }, receiver: { track: null }, stop() { t.stopped = true } }
             pc.transceivers.push(t); return t
         },
-        getTransceivers: () => pc.transceivers,
+        // `transceivers` keeps every transceiver ever made (for the asserts); like browsers, a stopped one leaves
+        // getTransceivers() only once a negotiation completes (an answer is applied).
+        getTransceivers: () => { pc.transceiverReads++; return pc.transceivers.filter(t => !t.removed) },
         async createOffer() { pc.offers++; return { type: 'offer', sdp: `offer-${++world.sdp}` } },
         async createAnswer() { return { type: 'answer', sdp: `answer-${++world.sdp}` } },
-        async setLocalDescription(d) { if (d.type === 'rollback') { pc.rolledBack++; return } pc.transceivers.forEach((t, i) => { t.mid ??= String(i) }); pc.localDescription = d },
-        // A pull offer "mids=3,4" adds a receiving transceiver for each mid it does not have yet.
+        async setLocalDescription(d) { if (d.type === 'rollback') { pc.rolledBack++; return } pc.transceivers.forEach((t, i) => { t.mid ??= String(i) }); pc.localDescription = d; if (d.type === 'answer') settle() },
+        // A pull offer "mids=3,4" adds a receiving transceiver for each mid it does not have yet. As in browsers
+        // (JSEP), a mid still held by a stopped transceiver, whose stop was never negotiated, matches that
+        // transceiver: the section is rejected and nothing new is received.
         async setRemoteDescription(d) {
             if (d.type === 'offer') pc.role ??= 'sub'
             world.order.push(`${pc.role}:${d.type}`)
             await world.remoteGate?.(pc, d)
-            for (const mid of (d.sdp.match(/mids=([\w,]+)/)?.[1] ?? '').split(',').filter(Boolean)) if (!pc.transceivers.some(t => t.mid === mid && !t.stopped)) pc.transceivers.push({ mid, stopped: false, receiver: { track: { id: `track-${mid}-${++world.sdp}` } }, stop() { this.stopped = true } })
+            for (const mid of (d.sdp.match(/mids=([\w,]+)/)?.[1] ?? '').split(',').filter(Boolean)) if (!pc.transceivers.some(t => t.mid === mid && !t.removed)) pc.transceivers.push({ mid, stopped: false, receiver: { track: { id: `track-${mid}-${++world.sdp}` } }, stop() { this.stopped = true } })
+            if (d.type === 'answer') settle()
         },
         setConfiguration(config) { pc.configs.push(config) },
         close() { pc.closed = true },
     }
+    const settle = () => pc.transceivers.forEach(t => { if (t.stopped) t.removed = true })
     return pc
 }
 
@@ -225,14 +231,42 @@ test('forced close: stops locally with no offer, and the next pull applies on fr
     assert.equal(h.engine.remoteTrack('ana', 'camera'), null)
     assert.deepEqual([...h.engine.remoteSpeakers()], [])
     assert.deepEqual(h.events.slice(before).map(event => event.type), ['tracks'])
-    // Cloudflare may hand out the same mid again: it is a new transceiver and a new person.
-    const next = await h.step({ type: 'pull', offer: 'mids=3,5', tracks: [{ mid: '3', fromUid: 'bia', kind: 'mic' }, { mid: '5', fromUid: 'caio', kind: 'camera' }] })
+    // The next pull with new mids applies on the same connection; its answer completes the stop of 3 and 4.
+    const next = await h.step({ type: 'pull', offer: 'mids=5', tracks: [{ mid: '5', fromUid: 'caio', kind: 'camera' }] })
     assert.equal(next.ok, true)
     assert.equal(h.sub(), sub)
     assert.equal(h.engine.remoteTrack('ana', 'camera'), null)
-    assert.equal(h.engine.remoteTrack('bia', 'mic'), sub.transceivers[2].receiver.track)
-    assert.equal(h.engine.remoteTrack('caio', 'camera'), sub.transceivers[3].receiver.track)
-    assert.equal(h.engine.mapping.size, 2)
+    assert.equal(h.engine.remoteTrack('caio', 'camera'), sub.transceivers[2].receiver.track)
+    assert.equal(h.engine.mapping.size, 1)
+    // A forced close, then a pull that offers the stopped mid again before any renegotiation: the browser rejects
+    // that section, so nothing would play. The step is refused (the server restarts this page) instead of acked.
+    assert.deepEqual(plain(await h.step({ type: 'close', mids: ['5'], force: true })), { ok: true })
+    const reused = await h.step({ type: 'pull', offer: 'mids=5,6', tracks: [{ mid: '5', fromUid: 'bia', kind: 'mic' }, { mid: '6', fromUid: 'dani', kind: 'camera' }] })
+    assert.deepEqual(plain(reused), { ok: false, error: `${h.mod.PULL_UNMATCHED_ERROR}: 5` })
+    assert.equal(h.mod.PULL_UNMATCHED_ERROR, 'pull sem transceptor de recepção')
+    assert.equal(h.engine.remoteTrack('bia', 'mic'), null)
+    assert.equal(h.engine.remoteTrack('caio', 'camera'), null)
+    assert.deepEqual([...h.engine.mapping.keys()], ['6'])
+    assert.equal(h.events.at(-1).type, 'tracks')
+})
+
+test('lookups: the newest entry wins, and they read an index built once per step', async () => {
+    const h = harness()
+    await h.engine.start(cfg())
+    await h.step({ type: 'pull', offer: 'mids=3', tracks: [{ mid: '3', fromUid: 'ana', kind: 'camera' }] })
+    // Ana republished: her new camera is pulled before the older one is closed.
+    await h.step({ type: 'pull', offer: 'mids=5', tracks: [{ mid: '5', fromUid: 'ana', kind: 'camera' }] })
+    const sub = h.sub()
+    const newest = sub.transceivers.find(t => t.mid === '5').receiver
+    assert.equal(h.engine.remoteTrack('ana', 'camera'), newest.track)
+    assert.equal(h.engine.receiver('ana', 'camera'), newest)
+    assert.equal(h.engine.remoteTrack(null, 'camera'), newest.track)
+    const reads = sub.transceiverReads
+    for (let i = 0; i < 100; i++) { h.engine.remoteTrack('ana', 'camera'); h.engine.receiver(null, 'camera'); h.engine.remoteSpeakers() }
+    assert.equal(sub.transceiverReads, reads)
+    await h.step({ type: 'close', mids: ['3'] })
+    await h.step({ type: 'answer', answer: 'a' })
+    assert.equal(h.engine.remoteTrack('ana', 'camera'), newest.track)
 })
 
 test('publish and pull overlap on separate connections; steps run one at a time', async () => {
@@ -591,6 +625,105 @@ test('stop: unsubscribes, refuses later steps, and forwarded the server events b
     await h.engine.start(cfg(2))
     assert.equal(h.engine.connected, false)
     assert.equal(h.pcs.length, 1)
+})
+
+test('a republish refused after a reconnect is reported, and the others still go out', async () => {
+    const h = harness()
+    await h.engine.start(cfg(1))
+    await h.engine.publish('mic', { id: 'mic' })
+    await h.engine.publish('screen', { id: 'screen' })
+    h.engine.suspend()
+    h.socket.replies.mediaPublish = payload => payload.kind === 'screen' ? { ok: false, error: 'Aproxime-se de alguém para compartilhar a tela.' } : { ok: true, answer: 'answer' }
+    await h.engine.start(cfg(2))
+    assert.deepEqual(h.sent('mediaPublish').slice(2).map(payload => payload.kind), ['mic', 'screen'])
+    const failed = h.events.filter(event => event.type === 'publish-failed').map(({ at, ...event }) => event)
+    assert.deepEqual(failed, [{ type: 'publish-failed', kind: 'screen', error: 'Aproxime-se de alguém para compartilhar a tela.' }])
+    assert.equal(h.names().at(-1), 'reconnected')
+    // Forgotten: unpublishing it asks nothing, and the mic is the last track out.
+    await h.engine.unpublish('screen')
+    assert.deepEqual(h.sent('mediaUnpublish'), [])
+    await h.engine.unpublish('mic')
+    assert.deepEqual(h.sent('mediaUnpublish'), [{ kind: 'mic', mid: '0' }])
+    // A speaker carries its object.
+    await h.engine.publish('speaker', { id: 'music' }, 'lounge')
+    h.engine.suspend()
+    h.socket.replies.mediaPublish = () => ({ ok: false, error: 'x' })
+    await h.engine.start(cfg(3))
+    assert.deepEqual(h.events.filter(event => event.type === 'publish-failed').map(({ at, ...event }) => event).at(-1), { type: 'publish-failed', kind: 'speaker', objectId: 'lounge', error: 'x' })
+})
+
+test('a publish queued before a reconnect is not published twice', async () => {
+    const h = harness()
+    await h.engine.start(cfg(1))
+    const slow = h.deferred()
+    h.socket.replies.mediaPublish = () => slow.promise
+    const camera = h.engine.publish('camera', { id: 'cam' })
+    await tick()
+    const mic = h.engine.publish('mic', { id: 'mic' })
+    h.engine.suspend()
+    h.socket.replies.mediaPublish = () => ({ ok: true, answer: 'answer' })
+    const starting = h.engine.start(cfg(2))
+    slow.resolve({ ok: true, answer: 'answer' })
+    await Promise.all([camera, mic, starting])
+    assert.deepEqual(h.sent('mediaPublish').map(payload => payload.kind), ['camera', 'mic', 'camera'])
+    assert.equal(h.pub().transceivers.length, 2)
+})
+
+test('a republish stops the older transceiver only once the server took the new one', async () => {
+    const h = harness()
+    await h.engine.start(cfg(1))
+    await h.engine.publish('screen', { id: 'screen-1' })
+    const pub = h.pub()
+    const [first] = pub.transceivers
+    h.socket.replies.mediaPublish = () => ({ ok: false, error: 'Aproxime-se de alguém para compartilhar a tela.' })
+    await assert.rejects(h.engine.publish('screen', { id: 'screen-2' }), /Aproxime-se/)
+    assert.equal(first.stopped, false)
+    assert.equal(pub.transceivers[1].stopped, true)
+    // Still out: unpublishing sends its mid, as the last track, with no offer.
+    await h.engine.unpublish('screen')
+    assert.deepEqual(h.sent('mediaUnpublish'), [{ kind: 'screen', mid: '0' }])
+    assert.equal(first.stopped, true)
+
+    h.socket.replies.mediaPublish = () => ({ ok: true, answer: 'answer' })
+    await h.engine.publish('screen', { id: 'screen-3' })
+    const older = pub.transceivers[2]
+    let olderStoppedAtRequest = null
+    h.socket.replies.mediaPublish = () => { olderStoppedAtRequest = older.stopped; return { ok: true, answer: 'answer' } }
+    await h.engine.publish('screen', { id: 'screen-4' })
+    assert.equal(olderStoppedAtRequest, false)
+    assert.equal(older.stopped, true)
+    // A refused republish of a paused camera keeps it paused, with its idle timer.
+    h.socket.replies.mediaPublish = () => ({ ok: true, answer: 'answer' })
+    await h.engine.publish('camera', { id: 'cam' })
+    await h.engine.pause('camera')
+    h.socket.replies.mediaPublish = () => ({ ok: false, error: 'x' })
+    await assert.rejects(h.engine.publish('camera', { id: 'cam-2' }), /x/)
+    h.socket.replies.mediaUnpublish = () => ({ ok: true, answer: 'answer' })
+    h.fire(25_000)
+    await tick()
+    assert.equal(h.sent('mediaUnpublish').at(-1).kind, 'camera')
+})
+
+test('a failed reset acks the parked steps stale at once', async () => {
+    const h = harness()
+    await h.engine.start(cfg(1))
+    const reset = h.deferred()
+    h.socket.replies.mediaReset = () => reset.promise
+    h.socket.handlers.get('mediaRestart')()
+    await tick()
+    let parked = null
+    h.step({ type: 'pull', offer: 'mids=8', tracks: [{ mid: '8', fromUid: 'bia', kind: 'mic' }] }, 5).then(reply => { parked = reply })
+    await tick()
+    assert.equal(parked, null)
+    reset.resolve({ ok: false, error: 'Fora do escritório.' })
+    await tick()
+    assert.deepEqual(plain(parked), { ok: false, error: 'stale' })
+    assert.deepEqual(plain(await h.step(pullAnaAndDj, 1)), { ok: false, error: 'stale' })
+    // The retry still runs.
+    h.socket.replies.mediaReset = () => ({ ok: true, config: cfg(6) })
+    h.fire(2_000)
+    await tick()
+    assert.equal((await h.step(pullAnaAndDj, 6)).ok, true)
 })
 
 test('exports the timing constants of the plan', () => {

@@ -15,6 +15,9 @@ export type EngineEvent =
     | { type: 'track-error', fromUid: string, kind: MediaKind }
     | { type: 'reconnect-notice' }
     | { type: 'reconnected' }
+    // A track the page believed out could not be published again after a reconnect (the server refused it, e.g. a
+    // screen outside a conversation). The publication is gone: the UI turns that toggle off and may tell the person.
+    | { type: 'publish-failed', kind: MediaKind, objectId?: string, error: string }
 
 export type EngineOptions = {
     socket: SignalingSocket
@@ -61,6 +64,9 @@ class StaleWork {}
 const KINDS: readonly string[] = ['mic', 'camera', 'screen', 'speaker']
 const CONNECT_ERROR = 'Não foi possível conectar o vídeo. Tente novamente.'
 const INVALID_STEP = 'Passo de vídeo inválido.'
+// The ack error of a pull with a mid that has no live receiving transceiver (followed by the mids). Like any
+// `ok: false` reply, it makes the server restart this page.
+export const PULL_UNMATCHED_ERROR = 'pull sem transceptor de recepção'
 const stale = (): NegotiateReply => ({ ok: false, error: 'stale' })
 const keyOf = (kind: MediaKind, objectId?: string) => kind === 'speaker' ? `speaker:${objectId}` : kind
 const messageOf = (error: unknown) => typeof (error as { message?: unknown })?.message === 'string' ? (error as { message: string }).message : String(error)
@@ -100,6 +106,7 @@ export class CloudflareEngine implements MediaEngine {
     private sendPc: RTCPeerConnection | null = null
     private receivePc: RTCPeerConnection | null = null
     private readonly entries = new Map<string, RemoteEntry>()
+    private readonly receiving = new Map<string, RTCRtpTransceiver>()
     private readonly publications = new Map<string, Publication>()
     private sendQueue: Promise<unknown> = Promise.resolve()
     private receiveQueue: Promise<unknown> = Promise.resolve()
@@ -156,8 +163,12 @@ export class CloudflareEngine implements MediaEngine {
         await this.enqueueSend(async () => {
             for (const [key, publication] of [...this.publications]) {
                 if (epoch !== this.epoch) return
-                if (this.publications.get(key) !== publication || !publication.live) continue
-                try { await this.doPublish(key, publication.kind, publication.track, publication.objectId) } catch { /* the server restarts this page if it is broken */ }
+                // Gone, paused, or already published on these connections by an operation queued before this one.
+                if (this.publications.get(key) !== publication || !publication.live || publication.transceiver) continue
+                const { kind, track, objectId } = publication
+                try { await this.doPublish(key, kind, track, objectId) } catch (error) {
+                    if (epoch === this.epoch) this.emit({ type: 'publish-failed', kind, ...(objectId ? { objectId } : {}), error: messageOf(error) })
+                }
             }
         })
         if (resumed && epoch === this.epoch) this.emit({ type: 'reconnected' })
@@ -261,7 +272,7 @@ export class CloudflareEngine implements MediaEngine {
 
     remoteSpeakers(): string[] {
         const speakers = new Set<string>()
-        for (const entry of this.entries.values()) if (entry.kind === 'speaker' && entry.objectId && this.receivingOn(entry.mid)) speakers.add(entry.objectId)
+        for (const entry of this.entries.values()) if (entry.kind === 'speaker' && entry.objectId && this.receiving.has(entry.mid)) speakers.add(entry.objectId)
         return [...speakers]
     }
 
@@ -310,6 +321,7 @@ export class CloudflareEngine implements MediaEngine {
         for (const pc of [this.sendPc, this.receivePc]) if (pc) try { pc.close() } catch { /* already closed */ }
         this.sendPc = null
         this.receivePc = null
+        this.receiving.clear()
         for (const timer of this.graceTimers.values()) this.options.clearTimeout(timer)
         this.graceTimers.clear()
         for (const publication of this.publications.values()) { publication.transceiver = null; publication.mid = null }
@@ -337,6 +349,8 @@ export class CloudflareEngine implements MediaEngine {
                 return
             } catch {
                 if (run !== this.restartRun) return
+                // Steps parked for the reset's generation are acked stale now, so the receive queue moves on.
+                this.releaseWaiters()
                 await this.sleep(RESTART_RETRY_MS)
             }
         }
@@ -419,17 +433,18 @@ export class CloudflareEngine implements MediaEngine {
         return pc.addTransceiver(track, { direction: 'sendonly' })
     }
 
-    // Always a new transceiver: a republish stops the older one, and the server closes its track first.
+    // Always a new transceiver. A republish keeps the older one until the server accepted the new track (the server
+    // closes the older track itself, and refuses some republishes before touching it), then stops it.
     private async doPublish(key: string, kind: MediaKind, track: MediaStreamTrack, objectId?: string): Promise<void> {
         if (this.stopped) return
         const older = this.publications.get(key)
-        if (older) {
-            this.clearIdle(older)
-            older.transceiver?.stop()
-        }
+        if (older) this.clearIdle(older)
         const publication: Publication = { kind, ...(objectId ? { objectId } : {}), track, transceiver: null, mid: null, live: true, pausedAt: 0, idleTimer: null }
         this.publications.set(key, publication)
-        if (!this.ready) return
+        if (!this.ready) {
+            older?.transceiver?.stop()
+            return
+        }
         const epoch = this.epoch
         const pc = this.connection('send')
         const transceiver = this.addSender(pc, kind, track)
@@ -450,11 +465,18 @@ export class CloudflareEngine implements MediaEngine {
             await pc.setRemoteDescription({ type: 'answer', sdp: reply.answer })
             this.check(epoch)
             publication.mid = mid
+            older?.transceiver?.stop()
         } catch (error) {
             if (error instanceof StaleWork || epoch !== this.epoch || !this.running) return
             if (offered) try { await pc.setLocalDescription({ type: 'rollback' }) } catch { /* nothing to undo */ }
             transceiver.stop()
-            if (this.publications.get(key) === publication) this.publications.delete(key)
+            if (this.publications.get(key) === publication) {
+                // A refused republish leaves the older track out, as the server still has it.
+                if (older?.transceiver && older.mid) {
+                    this.publications.set(key, older)
+                    if (!older.live) this.armIdle(key, older)
+                } else this.publications.delete(key)
+            }
             throw error
         }
     }
@@ -516,11 +538,26 @@ export class CloudflareEngine implements MediaEngine {
                 await pc.setRemoteDescription({ type: 'offer', sdp: step.offer })
                 this.check(epoch)
                 // Strictly by the mids of this step: a mid reused after a close belongs to whoever this step says.
-                for (const { mid, fromUid, kind, objectId } of step.tracks) this.entries.set(mid, { mid, fromUid, kind, ...(objectId ? { objectId } : {}) })
+                // Deleted first, so the newest entry is last and wins the lookups (a republish pulled before the
+                // older track is closed).
+                for (const { mid, fromUid, kind, objectId } of step.tracks) {
+                    this.entries.delete(mid)
+                    this.entries.set(mid, { mid, fromUid, kind, ...(objectId ? { objectId } : {}) })
+                }
                 const answer = await pc.createAnswer()
                 this.check(epoch)
                 await pc.setLocalDescription(answer)
                 this.check(epoch)
+                this.indexReceivers()
+                // A mid of a transceiver stopped by a forced close, offered again before any renegotiation, is
+                // matched to that stopped transceiver and rejected by the browser: nothing would play. Refusing the
+                // step makes the server restart this page, which rebuilds both connections.
+                const unmatched = step.tracks.filter(({ mid }) => !this.receiving.has(mid)).map(({ mid }) => mid)
+                if (unmatched.length) {
+                    for (const mid of unmatched) this.entries.delete(mid)
+                    this.emit({ type: 'tracks' })
+                    return { ok: false, error: `${PULL_UNMATCHED_ERROR}: ${unmatched.join(',')}` }
+                }
                 this.emit({ type: 'tracks' })
                 return { ok: true, answer: pc.localDescription?.sdp ?? answer.sdp! }
             }
@@ -529,6 +566,7 @@ export class CloudflareEngine implements MediaEngine {
                 for (const mid of mids) this.entries.delete(mid)
                 const pc = this.receivePc
                 for (const transceiver of pc?.getTransceivers() ?? []) if (transceiver.mid !== null && mids.has(transceiver.mid) && !isStopped(transceiver)) transceiver.stop()
+                this.indexReceivers()
                 this.emit({ type: 'tracks' })
                 // Forced: the last tracks of the connection; no offer, and no answer step follows.
                 if (step.force) return { ok: true }
@@ -543,6 +581,7 @@ export class CloudflareEngine implements MediaEngine {
             if (!pc) throw new Error(INVALID_STEP)
             await pc.setRemoteDescription({ type: 'answer', sdp: step.answer })
             this.check(epoch)
+            this.indexReceivers()
             return { ok: true }
         } catch (error) {
             if (error instanceof StaleWork) return stale()
@@ -550,19 +589,21 @@ export class CloudflareEngine implements MediaEngine {
         }
     }
 
-    private receivingOn(mid: string): RTCRtpTransceiver | null {
-        const transceivers = this.receivePc?.getTransceivers() ?? []
-        for (let i = transceivers.length - 1; i >= 0; i--) {
-            const transceiver = transceivers[i]
-            if (transceiver.mid === mid && !isStopped(transceiver) && transceiver.receiver?.track) return transceiver
+    // mid -> the live receiving transceiver with that mid (the newest one wins), rebuilt once per step.
+    private indexReceivers() {
+        this.receiving.clear()
+        for (const transceiver of this.receivePc?.getTransceivers() ?? []) {
+            if (transceiver.mid !== null && !isStopped(transceiver) && transceiver.receiver?.track) this.receiving.set(transceiver.mid, transceiver)
         }
-        return null
     }
 
+    // The newest matching entry first.
     private transceiverFor(fromUid: string | null, kind: MediaKind, objectId?: string): RTCRtpTransceiver | null {
-        for (const entry of this.entries.values()) {
+        const entries = [...this.entries.values()]
+        for (let i = entries.length - 1; i >= 0; i--) {
+            const entry = entries[i]
             if (entry.kind !== kind || (fromUid !== null && entry.fromUid !== fromUid) || (objectId !== undefined && entry.objectId !== objectId)) continue
-            const transceiver = this.receivingOn(entry.mid)
+            const transceiver = this.receiving.get(entry.mid)
             if (transceiver) return transceiver
         }
         return null
