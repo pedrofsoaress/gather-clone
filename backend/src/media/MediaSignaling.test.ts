@@ -967,3 +967,20 @@ test('grace timers go with the connection: leave, reset and a failure clear them
     h.media.leave('bia', 'socket-bia')
     assert.equal(clock.pending.size, 0, 'leave')
 })
+
+test('m-lines: walking from a conversation straight into a closed room recycles at the transition', async () => {
+    const h = harness()
+    await h.enter('ana', 14, 0)
+    await h.enter('caio', 22, 0)
+    await h.publish('ana', 'mic'); await h.publish('caio', 'mic')
+    const bia = await h.enter('bia', 16, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    const sub = receiveSessionOf(h.calls, 'bia')
+    connectionOf(h, 'bia').sub.mlines = 100
+    const steps = bia.steps.length
+    await h.place('bia', 21, 0)
+    assert.deepEqual(stepsOf(bia, steps).map(step => step.type), ['close', 'recycle', 'pull'])
+    assert.notEqual(callsOf(h.calls, 'pull').at(-1)![1], sub, 'caio is pulled on a new receive session')
+    assert.deepEqual(pulledKinds(bia), ['caio|mic'])
+    assert.equal(connectionOf(h, 'bia').sub.mlines, 1)
+})

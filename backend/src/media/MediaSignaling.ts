@@ -588,6 +588,9 @@ export class MediaSignaling {
         // stepped into a closed room, a meeting room, another floor, or left) is closed before any pull or flip.
         const urgent = [...sub.pulled].filter(([key, pull]) => !wanted.has(key) && pull.kind !== 'speaker' && !this.mayHold(snapshot, connection.uid, pull.fromUid)).map(([key]) => key)
         for (let i = 0; i < urgent.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, urgent.slice(i, i + MAX_TRACKS_PER_REQUEST))
+        // Nothing left and many dead m-lines (walking from one conversation straight into a closed room): the receive
+        // side starts over now, at the transition, instead of in the middle of the next conversation.
+        if (sub.sessionId && sub.pulled.size === 0 && sub.mlines >= RECEIVE_RECYCLE_MLINES) await this.recycleReceive(connection)
         const conversing = [...wanted.values()].some(pull => !pull.prefetch)
         if (sub.sessionId && sub.mlines >= RECEIVE_RECYCLE_MLINES && !conversing) {
             // Nothing of a conversation is received and many dead m-lines: the prefetched tracks (invisible) are
