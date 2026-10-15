@@ -1,7 +1,7 @@
 import type { Session } from '../session'
 import { conversationChannelFor } from '../office/ConversationAuthorization'
 import { MAX_TRACKS_PER_REQUEST, type IceServer, type Layer, type RealtimeApi, type Simulcast } from './CloudflareRealtime'
-import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PULL_RETRY_MS, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
+import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PULL_RETRY_MS, RECEIVE_FORCE_RECYCLE_MLINES, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
 import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
 
 export type MediaClient = { socketId: string, emit(event: string, payload?: unknown): void, ask(event: string, payload: unknown): Promise<any> }
@@ -442,17 +442,27 @@ export class MediaSignaling {
         const wanted = this.wanted(this.snapshot(connection.session), connection.uid)
         for (const key of sub.failed) if (!wanted.has(key)) sub.failed.delete(key)
         for (const key of [...sub.retried.keys()]) if (!wanted.has(key)) sub.retried.delete(key)
+        // Someone who never runs out of pulls and carries too many dead m-lines: their pulls are closed and the
+        // receive side starts over, then everything wanted is pulled again below, on the new session.
+        if (sub.sessionId && sub.pulled.size > 0 && sub.mlines >= RECEIVE_FORCE_RECYCLE_MLINES) {
+            const keys = [...sub.pulled.keys()]
+            for (let i = 0; i < keys.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, keys.slice(i, i + MAX_TRACKS_PER_REQUEST))
+            await this.recycleReceive(connection)
+        }
         const { add, remove } = diffPulls(sub.pulled, wanted, sub.failed)
         // Additions first: walking straight from one group to another never empties the connection on the way,
         // so only a real "nothing left" takes the forced close.
         for (let i = 0; i < add.length; i += MAX_TRACKS_PER_REQUEST) await this.pullTracks(connection, add.slice(i, i + MAX_TRACKS_PER_REQUEST))
         for (let i = 0; i < remove.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, remove.slice(i, i + MAX_TRACKS_PER_REQUEST))
-        // Empty and full of dead m-lines: only the receive side starts over (publishing is untouched).
-        if (sub.pulled.size === 0 && sub.sessionId && sub.mlines >= RECEIVE_RECYCLE_MLINES) {
-            await this.ask(connection, { generation: connection.generation, type: 'recycle' })
-            sub.sessionId = null
-            sub.mlines = 0
-        }
+        // Nothing pulled and many dead m-lines: only the receive side starts over (publishing is untouched).
+        if (sub.sessionId && sub.pulled.size === 0 && sub.mlines >= RECEIVE_RECYCLE_MLINES) await this.recycleReceive(connection)
+    }
+
+    // The page closes its receive connection; the next pull starts a new Cloudflare session (the old one expires).
+    private async recycleReceive(connection: Connection) {
+        await this.ask(connection, { generation: connection.generation, type: 'recycle' })
+        connection.sub.sessionId = null
+        connection.sub.mlines = 0
     }
 
     private async ask(connection: Connection, step: NegotiateStep): Promise<any> {

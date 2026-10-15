@@ -610,3 +610,31 @@ test('a receive session full of dead m-lines is recycled once nothing is pulled;
     await h.place('bia', 14, 0)
     assert.equal(bia.steps.filter(step => step.type === 'recycle').length, 1)
 })
+
+test('someone who keeps receiving is recycled at 100 m-lines: pulls closed, receive side new, pulled again', async () => {
+    const h = harness()
+    const ana = await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const caio = await h.enter('caio', 4, 0)
+    await h.publish('caio', 'mic')
+    const bia = await h.enter('bia', 6, 0)
+    // bia keeps caio's mic while ana comes and goes: 3 m-lines on arrival, 2 per visit of ana.
+    const sub = receiveSessionOf(h.calls, 'bia')
+    const publishes = callsOf(h.calls, 'publish').length
+    for (let i = 0; i < 48; i++) { await h.place('ana', 0, 9); await h.place('ana', 2, 0) }
+    await h.place('ana', 0, 9)
+    await h.place('ana', 2, 0)
+    assert.equal(bia.steps.some(step => step.type === 'recycle'), false, '101 m-lines, nothing changed for bia since')
+    // The next change for bia (ana leaves): every pull is closed, the receive side recycled, caio's mic pulled again.
+    await h.place('ana', 0, 9)
+    const recycle = bia.steps.findIndex(step => step.type === 'recycle')
+    assert.ok(recycle > 0)
+    assert.deepEqual(stepsOf(bia).slice(recycle - 1).map(step => step.type), ['close', 'recycle', 'pull'])
+    assert.equal(bia.steps[recycle - 1].force, true)
+    assert.notEqual(callsOf(h.calls, 'pull').at(-1)![1], sub)
+    assert.deepEqual(pulledKinds(bia), ['caio|mic'])
+    await h.place('ana', 2, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic', 'caio|mic'])
+    for (const client of [ana, bia, caio]) assert.equal(client.emitted.some(([event]) => event === 'mediaRestart'), false)
+    assert.equal(callsOf(h.calls, 'publish').length, publishes)
+})

@@ -47,6 +47,10 @@ export const PULL_RETRY_MS = 2000
 // Cloudflare never reuses the m-lines of a receive session: once nothing is pulled and it carries this many, the
 // receive session and connection are replaced (a `recycle` step), so the SDP never grows past the limit above.
 export const RECEIVE_RECYCLE_MLINES = 40
+// Someone who never runs out of pulled tracks (staying in a group while others come and go) is recycled anyway at this
+// many m-lines (about 140 KB of SDP): their pulls are closed, the receive side starts over and pulls them again, a
+// second or two without received media instead of a full restart at the SDP limit.
+export const RECEIVE_FORCE_RECYCLE_MLINES = 100
 // Cloudflare refuses a pull with `empty_track_error` while the published track has not sent media yet (a camera that
 // just came on): those are retried with this backoff, about 7.5 s in all, before the page is told.
 export const EMPTY_TRACK_RETRY_MS = [500, 1000, 2000, 4000]
