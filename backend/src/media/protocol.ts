@@ -8,6 +8,10 @@ const sdp = z.string().min(1).max(200_000)
 const mid = z.string().min(1).max(32)
 const speakerHasObject = (value: { kind: string, objectId?: string }) => (value.kind === 'speaker') === Boolean(value.objectId)
 
+// The first message of a send connection: an offer with only the page's data channel. Its m-line stays first in the
+// BUNDLE group for the life of the connection, so unpublishing any track never removes the group's first m-line
+// (Chrome then drops the transport and Cloudflare answers every later call with 410) nor empties the group.
+export const MediaOpen = z.object({ offer: sdp })
 export const MediaPublish = z.object({ kind, objectId, mid, offer: sdp, simulcast: z.boolean() }).refine(speakerHasObject)
 // `offer` may be left out only to unpublish the connection's last publication: a max-bundle send connection
 // with every m-line stopped has no BUNDLE group, so the page stops the transceiver without renegotiating and the

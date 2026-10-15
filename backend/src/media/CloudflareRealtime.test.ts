@@ -28,6 +28,15 @@ test('newSession and publish', async () => {
     assert.deepEqual(calls[1].body, { sessionDescription: { type: 'offer', sdp: 'OFFER' }, tracks: [{ location: 'local', mid: '0', trackName: 'camera-1' }] })
 })
 
+test('openSession starts a session from the page offer and returns its answer', async () => {
+    const { calls, api } = fake([{ json: { sessionId: 's9', sessionDescription: { type: 'answer', sdp: 'ANSWER' } } }, { json: { sessionId: 's10' } }])
+    assert.deepEqual(await api.openSession('DC-OFFER'), { sessionId: 's9', answer: 'ANSWER' })
+    assert.equal(calls[0].url, `${BASE}/sessions/new`)
+    assert.equal(calls[0].method, 'POST')
+    assert.deepEqual(calls[0].body, { sessionDescription: { type: 'offer', sdp: 'DC-OFFER' } })
+    await assert.rejects(api.openSession('DC-OFFER'), /sem SDP/)
+})
+
 test('pull, renegotiate, close, update', async () => {
     const { calls, api } = fake([{}, {}, {}, {}, {}])
     const simulcast = { preferredRid: 'q' as const, priorityOrdering: 'none' as const, ridNotAvailable: 'asciibetical' as const }

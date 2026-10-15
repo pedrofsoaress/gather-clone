@@ -394,7 +394,7 @@ export function sockets(io: Server) {
         })
 
         // Cloudflare Realtime: the page publishes and reports its tracks; pulls are driven by the server (media/MediaSignaling).
-        for (const [event, handle] of [['mediaPublish', 'publish'], ['mediaUnpublish', 'unpublish'], ['mediaTrackState', 'trackState'], ['mediaLayer', 'layer'], ['mediaReset', 'reset']] as const) socket.on(event, async (raw: unknown, ack: unknown) => {
+        for (const [event, handle] of [['mediaOpen', 'open'], ['mediaPublish', 'publish'], ['mediaUnpublish', 'unpublish'], ['mediaTrackState', 'trackState'], ['mediaLayer', 'layer'], ['mediaReset', 'reset']] as const) socket.on(event, async (raw: unknown, ack: unknown) => {
             if (typeof ack !== 'function') return
             await officeStepQueue
             ack(await media()[handle](socket.handshake.query.uid as string, socket.id, raw).catch(() => ({ ok: false, error: 'Não foi possível conectar o vídeo. Tente novamente.' })))

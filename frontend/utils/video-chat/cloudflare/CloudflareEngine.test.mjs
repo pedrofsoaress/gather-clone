@@ -53,6 +53,8 @@ function fakePc(world) {
             if (d.type === 'answer') settle()
         },
         setConfiguration(config) { pc.configs.push(config) },
+        // Only with world.dataChannels: the send connection then opens with its data channel first.
+        ...(world.dataChannels ? { createDataChannel(label) { pc.role ??= 'pub'; (pc.channels ??= []).push(label); return { label } } } : {}),
         close() { pc.closed = true },
     }
     const settle = () => pc.transceivers.forEach(t => { if (t.stopped) t.removed = true })
@@ -729,4 +731,52 @@ test('a failed reset acks the parked steps stale at once', async () => {
 test('exports the timing constants of the plan', () => {
     const { IDLE_UNPUBLISH_MS, NOTICE_DELAY_MS, RECONNECT_GRACE_MS, RESTART_RETRY_MS } = load()
     assert.deepEqual([IDLE_UNPUBLISH_MS, NOTICE_DELAY_MS, RECONNECT_GRACE_MS, RESTART_RETRY_MS], [25_000, 3_000, 5_000, 2_000])
+})
+
+test('the send connection negotiates its data channel first, then every unpublish renegotiates, the last one too', async () => {
+    const h = harness({ world: { dataChannels: true } })
+    await h.engine.start(cfg())
+    await h.engine.publish('camera', { id: 'cam' })
+    const pub = h.pub()
+    assert.deepEqual(pub.channels, ['anchor'])
+    assert.deepEqual(h.socket.requests.map(([event]) => event), ['mediaOpen', 'mediaPublish'])
+    assert.deepEqual(h.sent('mediaOpen'), [{ offer: 'offer-1' }])
+    assert.deepEqual(h.sent('mediaPublish'), [{ kind: 'camera', mid: '0', offer: 'offer-2', simulcast: true }])
+    assert.deepEqual(h.world.order, ['pub:answer', 'pub:answer'])
+    await h.engine.publish('mic', { id: 'mic' })
+    assert.equal(h.sent('mediaOpen').length, 1, 'opened once per connection')
+    await h.engine.unpublish('camera')
+    await h.engine.unpublish('mic')
+    // With the data channel first the BUNDLE group never empties: the last track goes out with an offer as well.
+    assert.deepEqual(h.sent('mediaUnpublish').map(payload => [payload.kind, typeof payload.offer]), [['camera', 'string'], ['mic', 'string']])
+    await h.engine.publish('mic', { id: 'mic2' })
+    assert.equal(h.sent('mediaOpen').length, 1)
+    assert.equal(h.pcs.filter(pc => pc.role === 'pub').length, 1)
+})
+
+test('a refused open closes the half-open send connection and the next publish opens a new one', async () => {
+    const h = harness({ world: { dataChannels: true } })
+    await h.engine.start(cfg())
+    h.socket.replies.mediaOpen = () => ({ ok: false, error: 'Não foi possível conectar o vídeo. Tente novamente.' })
+    await assert.rejects(h.engine.publish('camera', { id: 'cam' }), /Não foi possível conectar/)
+    const first = h.pcs.find(pc => pc.role === 'pub')
+    assert.equal(first.closed, true)
+    assert.equal(first.transceivers.length, 0, 'no track was added to the half-open connection')
+    assert.equal(h.sent('mediaPublish').length, 0)
+    delete h.socket.replies.mediaOpen
+    await h.engine.publish('camera', { id: 'cam' })
+    const second = h.pub()
+    assert.notEqual(second, first)
+    assert.deepEqual(second.channels, ['anchor'])
+    assert.equal(h.sent('mediaOpen').length, 2)
+    assert.equal(h.sent('mediaPublish').length, 1)
+})
+
+test('a reconnect opens the new send connection again before republishing', async () => {
+    const h = harness({ world: { dataChannels: true } })
+    await h.engine.start(cfg())
+    await h.engine.publish('mic', { id: 'mic' })
+    await h.engine.start(cfg(2))
+    assert.deepEqual(h.socket.requests.map(([event]) => event), ['mediaOpen', 'mediaPublish', 'mediaOpen', 'mediaPublish'])
+    assert.equal(h.pcs.filter(pc => pc.role === 'pub' && !pc.closed).length, 1)
 })

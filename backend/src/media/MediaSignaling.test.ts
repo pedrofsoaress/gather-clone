@@ -24,6 +24,7 @@ function harness(provider: 'agora' | 'cloudflare' = 'cloudflare', overrides: Par
     let sessions = 0, mids = 100
     const api: RealtimeApi = {
         async newSession() { calls.push(['newSession']); return `s${++sessions}` },
+        async openSession(offer) { calls.push(['openSession', offer]); return { sessionId: `s${++sessions}`, answer: `open-answer-${offer}` } },
         async publish(sid, offer, tracks) { calls.push(['publish', sid, tracks]); return { sessionDescription: { type: 'answer', sdp: `answer-${offer}` }, tracks } },
         async pull(sid, tracks) { calls.push(['pull', sid, tracks]); return { requiresImmediateRenegotiation: true, sessionDescription: { type: 'offer', sdp: 'pull-offer' }, tracks: tracks.map(t => ({ mid: String(++mids), sessionId: t.sessionId, trackName: t.trackName })) } },
         async renegotiate(sid, answer) { calls.push(['renegotiate', sid, answer]) },
@@ -176,6 +177,23 @@ test('closing the last pulled track is forced, with no offer and no answer step'
     assert.equal(callsOf(h.calls, 'newSession').length, sessions)
     assert.equal(callsOf(h.calls, 'pull').at(-1)![1], sub)
     assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+})
+
+test('open: the send session starts from the page offer with its data channel, publishes then use it', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    const invalid = { ok: false, error: 'Pedido de vídeo inválido.' }
+    assert.deepEqual(await h.media.open('ana', 'socket-ana', {}), invalid)
+    assert.deepEqual(await h.media.open('ana', 'socket-stale', { offer: 'dc' }), { ok: false, error: 'Fora do escritório.' })
+    assert.deepEqual(await h.media.open('ana', 'socket-ana', { offer: 'dc' }), { ok: true, answer: 'open-answer-dc' })
+    assert.deepEqual(callsOf(h.calls, 'openSession'), [['openSession', 'dc']])
+    assert.equal(callsOf(h.calls, 'newSession').length, 0, 'no other send session is made')
+    await h.publish('ana', 'mic')
+    assert.equal(callsOf(h.calls, 'publish')[0][1], 's1', 'the publish goes to the opened session')
+    assert.equal(callsOf(h.calls, 'newSession').length, 0)
+    // Once tracks are out on it, the session is not replaced.
+    assert.deepEqual(await h.media.open('ana', 'socket-ana', { offer: 'dc2' }), invalid)
+    assert.deepEqual(await harness('agora').media.open('ana', 'socket-ana', { offer: 'dc' }), { ok: false, error: 'O vídeo deste escritório usa a Agora.' })
 })
 
 test('authorization: closed rooms, speakers, screens, layers and stale sockets', async () => {

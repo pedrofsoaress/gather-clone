@@ -104,6 +104,8 @@ export class CloudflareEngine implements MediaEngine {
     // Bumped to cancel a reset loop (start, suspend, stop).
     private restartRun = 0
     private sendPc: RTCPeerConnection | null = null
+    // The send connection whose data channel is negotiated (openSend).
+    private anchoredPc: RTCPeerConnection | null = null
     private receivePc: RTCPeerConnection | null = null
     private readonly entries = new Map<string, RemoteEntry>()
     private readonly receiving = new Map<string, RTCRtpTransceiver>()
@@ -320,6 +322,7 @@ export class CloudflareEngine implements MediaEngine {
         this.epoch++
         for (const pc of [this.sendPc, this.receivePc]) if (pc) try { pc.close() } catch { /* already closed */ }
         this.sendPc = null
+        this.anchoredPc = null
         this.receivePc = null
         this.receiving.clear()
         for (const timer of this.graceTimers.values()) this.options.clearTimeout(timer)
@@ -447,10 +450,12 @@ export class CloudflareEngine implements MediaEngine {
         }
         const epoch = this.epoch
         const pc = this.connection('send')
-        const transceiver = this.addSender(pc, kind, track)
-        publication.transceiver = transceiver
+        let transceiver: RTCRtpTransceiver | null = null
         let offered = false
         try {
+            await this.openSend(pc, epoch)
+            transceiver = this.addSender(pc, kind, track)
+            publication.transceiver = transceiver
             const offer = await pc.createOffer()
             this.check(epoch)
             await pc.setLocalDescription(offer)
@@ -469,13 +474,41 @@ export class CloudflareEngine implements MediaEngine {
         } catch (error) {
             if (error instanceof StaleWork || epoch !== this.epoch || !this.running) return
             if (offered) try { await pc.setLocalDescription({ type: 'rollback' }) } catch { /* nothing to undo */ }
-            transceiver.stop()
+            transceiver?.stop()
             if (this.publications.get(key) === publication) {
                 // A refused republish leaves the older track out, as the server still has it.
                 if (older?.transceiver && older.mid) {
                     this.publications.set(key, older)
                     if (!older.live) this.armIdle(key, older)
                 } else this.publications.delete(key)
+            }
+            throw error
+        }
+    }
+
+    // Before the first track of a send connection: a data channel is negotiated alone, so its m-line is the first of
+    // the BUNDLE group for the life of the connection. Chrome drops the transport when the group's first m-line is
+    // rejected (Cloudflare then answers every later call on the session with 410), and a group with every media
+    // m-line stopped would be empty; with the data channel first, any track can be unpublished with an offer.
+    private async openSend(pc: RTCPeerConnection, epoch: number): Promise<void> {
+        if (this.anchoredPc === pc || typeof pc.createDataChannel !== 'function') return
+        try {
+            pc.createDataChannel('anchor')
+            const offer = await pc.createOffer()
+            this.check(epoch)
+            await pc.setLocalDescription(offer)
+            this.check(epoch)
+            const reply = await this.socket.request<{ answer?: string }>('mediaOpen', { offer: pc.localDescription?.sdp ?? offer.sdp })
+            this.check(epoch)
+            if (!reply.answer) throw new Error(CONNECT_ERROR)
+            await pc.setRemoteDescription({ type: 'answer', sdp: reply.answer })
+            this.check(epoch)
+            this.anchoredPc = pc
+        } catch (error) {
+            // A half-open connection cannot negotiate its data channel again: the next publish starts a new one.
+            if (!(error instanceof StaleWork) && epoch === this.epoch && this.sendPc === pc) {
+                try { pc.close() } catch { /* already closed */ }
+                this.sendPc = null
             }
             throw error
         }
@@ -490,9 +523,9 @@ export class CloudflareEngine implements MediaEngine {
         const pc = this.sendPc
         if (!transceiver || !mid || !pc || !this.ready) { transceiver?.stop(); return }
         const epoch = this.epoch
-        // The last track out: an offer with every m-line stopped has no BUNDLE group, so the page stops it
-        // locally and the server closes it forced, with no SDP.
-        const last = ![...this.publications.values()].some(other => other.transceiver && other.mid)
+        // The last track out of a connection without its data channel: an offer with every m-line stopped has no
+        // BUNDLE group, so the page stops it locally and the server closes it forced, with no SDP.
+        const last = this.anchoredPc !== pc && ![...this.publications.values()].some(other => other.transceiver && other.mid)
         transceiver.stop()
         const payload = { kind, ...(objectId ? { objectId } : {}), mid }
         let offered = false

@@ -20,6 +20,8 @@ export class CloudflareError extends Error {
 
 export interface RealtimeApi {
     newSession(): Promise<string>
+    // A session started from the page's offer (its data channel, which keeps the BUNDLE group's first m-line).
+    openSession(offer: string): Promise<{ sessionId: string, answer: string }>
     publish(sessionId: string, offer: string, tracks: LocalTrack[]): Promise<TracksResponse>
     pull(sessionId: string, tracks: RemoteTrack[]): Promise<TracksResponse>
     renegotiate(sessionId: string, answer: string): Promise<void>
@@ -49,6 +51,11 @@ export class CloudflareRealtime implements RealtimeApi {
     }
 
     async newSession(): Promise<string> { return (await this.sfu<{ sessionId: string }>('POST', '/sessions/new')).sessionId }
+    async openSession(offer: string): Promise<{ sessionId: string, answer: string }> {
+        const { sessionId, sessionDescription } = await this.sfu<{ sessionId?: string, sessionDescription?: Sdp }>('POST', '/sessions/new', { sessionDescription: { type: 'offer', sdp: offer } })
+        if (!sessionId || !sessionDescription?.sdp) throw new Error('sessions/new sem SDP de resposta')
+        return { sessionId, answer: sessionDescription.sdp }
+    }
     publish(sessionId: string, offer: string, tracks: LocalTrack[]) { return this.sfu<TracksResponse>('POST', `/sessions/${sessionId}/tracks/new`, { sessionDescription: { type: 'offer', sdp: offer }, tracks }) }
     pull(sessionId: string, tracks: RemoteTrack[]) { return this.sfu<TracksResponse>('POST', `/sessions/${sessionId}/tracks/new`, { tracks }) }
     async renegotiate(sessionId: string, answer: string) { await this.sfu('PUT', `/sessions/${sessionId}/renegotiate`, { sessionDescription: { type: 'answer', sdp: answer } }) }

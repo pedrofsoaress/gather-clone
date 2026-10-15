@@ -1,7 +1,7 @@
 import type { Session } from '../session'
 import { conversationChannelFor } from '../office/ConversationAuthorization'
 import { MAX_TRACKS_PER_REQUEST, type IceServer, type Layer, type RealtimeApi, type Simulcast } from './CloudflareRealtime'
-import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, PULL_RETRY_MS, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
+import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, PULL_RETRY_MS, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
 import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
 
 export type MediaClient = { socketId: string, emit(event: string, payload?: unknown): void, ask(event: string, payload: unknown): Promise<any> }
@@ -91,6 +91,29 @@ export class MediaSignaling {
         if (!connection || connection.client.socketId !== socketId) return
         this.connections.delete(uid)
         this.touch(connection.session)
+    }
+
+    // Starts the send session from the page's data channel offer (see MediaOpen). Until a track is published on it,
+    // a new open replaces it (a page that lost the reply opens again).
+    async open(uid: string, socketId: string, raw: unknown): Promise<MediaAck> {
+        if (!this.cloudflare) return AGORA
+        const connection = this.connectionFor(uid, socketId)
+        if (!connection) return OUTSIDE
+        if (connection.awaitingReset) return CLOUDFLARE
+        const parsed = MediaOpen.safeParse(raw)
+        if (!parsed.success) return INVALID
+        try {
+            return await this.onLane(connection, 'pub', async () => {
+                if (connection.publications.size > 0) return INVALID
+                const { sessionId, answer } = await this.api.openSession(parsed.data.offer)
+                this.check(connection)
+                connection.pub.sessionId = sessionId
+                return { ok: true, answer } as MediaAck
+            })
+        } catch (error) {
+            this.fail(connection, error)
+            return CLOUDFLARE
+        }
     }
 
     async publish(uid: string, socketId: string, raw: unknown): Promise<MediaAck> {
