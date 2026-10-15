@@ -1,6 +1,8 @@
 import io, { Socket } from 'socket.io-client'
 import { createClient } from '../supabase/client'
 import { request } from './requests'
+import signal from '../signal'
+import { parseMediaConfig } from '../video-chat/cloudflare/config'
 
 export type JoinedPosition = { roomIndex: number, x: number, y: number }
 
@@ -73,6 +75,11 @@ class Server {
                     : 'O servidor demorou demais para responder. Tente novamente.')
             }, 150000)
 
+            // Sent by the server on every join, before joinedRealm: which video provider the office uses now.
+            this.socket.on('mediaConfig', (raw: unknown) => {
+                const config = parseMediaConfig(raw)
+                if (config) signal.emit('mediaConfig', config)
+            })
             this.socket.on('connect', () => {
                 this.connected = true
 

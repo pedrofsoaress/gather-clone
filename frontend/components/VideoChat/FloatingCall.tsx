@@ -152,6 +152,12 @@ function FloatingPerson({ user, win, compact = false }: { user: RemoteUser, win:
         else video.current?.replaceChildren()
     }, [user, compact])
 
+    // Bubbles of the slim strip are tiny (q); the full floating window shows the middle layer (h).
+    useEffect(() => {
+        if (!user.cameraEnabled || !user.videoSubscribed) return
+        return videoChat.requestLayer(user.uid, compact ? 'q' : 'h')
+    }, [user.uid, user.cameraEnabled, user.videoSubscribed, compact])
+
     // The floating window stays visible while the office tab is hidden, so its own timer keeps the speaking ring live.
     useEffect(() => {
         const timer = win.setInterval(() => setSpeaking(videoChat.getRemoteAudio(user.uid).speaking), 250)

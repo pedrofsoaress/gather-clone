@@ -48,7 +48,7 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
         createCustomVideoTrack() { return track('screen') },
     }
     const transpile = file => ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText
-    const source = transpile('./video-chat.ts')
+    const source = transpile('./agora-video-chat.ts')
     const exports = {}
     const timerApi = {
         setTimeout: manualTimers ? (callback, ms) => { timers.set(++timerId, callback); delays.push(ms); return timerId } : setTimeout,
@@ -81,7 +81,7 @@ function harness({ token = async () => 'token', screenCapture, manualTimers = fa
     })
     // Like meeting.ts: store the snapshot, then broadcast it.
     const setMeeting = snapshot => { meeting = snapshot; (listeners.get('meetingState') ?? []).forEach(fn => fn(snapshot)) }
-    return { chat: exports.videoChat, clients, captures, events, signals, delays, warnings, setMeeting, setDevices: next => { devices = next }, flushTimers: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()) } }
+    return { chat: new exports.AgoraVideoChat(), clients, captures, events, signals, delays, warnings, setMeeting, setDevices: next => { devices = next }, flushTimers: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()) } }
 }
 
 test('first enable clears disconnected saved devices and keeps screen client independent', async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng'
+import type { MediaRemoteUser } from '@/utils/video-chat/media-chat'
 import signal from '@/utils/signal'
 import { videoChat } from '@/utils/video-chat/video-chat'
 
@@ -10,22 +10,22 @@ export interface RemoteUser {
     // False when this page does not receive the camera (the audience in a meeting room only
     // receives the stage): the tile then shows the avatar, as if the camera were off.
     videoSubscribed: boolean
-    user: IAgoraRTCRemoteUser
+    user: MediaRemoteUser
 }
 
-// People currently in the Agora conversation, shared by the meeting view and the floating window.
+// People currently in the conversation, shared by the meeting view and the floating window.
 export function useRemoteUsers() {
     const [remoteUsers, setRemoteUsers] = useState<Record<string, RemoteUser>>({})
 
     useEffect(() => {
-        const onUserInfoUpdated = (user: IAgoraRTCRemoteUser) => {
+        const onUserInfoUpdated = (user: MediaRemoteUser) => {
             setRemoteUsers(previous => ({ ...previous, [user.uid]: {
                 uid: user.uid.toString(), micEnabled: user.hasAudio,
                 cameraEnabled: user.hasVideo, videoSubscribed: videoChat.isVideoSubscribed(user.uid.toString()), user,
             } }))
         }
         const onResetUsers = () => setRemoteUsers({})
-        const onUserLeft = (user: IAgoraRTCRemoteUser) => {
+        const onUserLeft = (user: MediaRemoteUser) => {
             setRemoteUsers(previous => {
                 const next = { ...previous }
                 delete next[user.uid]

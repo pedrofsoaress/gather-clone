@@ -143,6 +143,12 @@ function RemoteUser({ user, meetingMode, localUid, localName, localSkin, classNa
         user.user.videoTrack?.play(`remote-user-${user.uid}`, { fit: isScreen ? 'contain' : 'cover' })
     }, [user, showVideo, meetingMode, isScreen, isLocalScreen, floating])
 
+    // Small strip tiles receive the lowest layer, the expanded meeting the middle one, an enlarged tile the full one.
+    useEffect(() => {
+        if (isScreen || !showVideo || floating) return
+        return videoChat.requestLayer(user.uid, expanded ? 'f' : meetingMode ? 'h' : 'q')
+    }, [isScreen, showVideo, floating, expanded, meetingMode, user.uid])
+
     useEffect(() => {
         if (isScreen) return
         const refresh = () => setAudioState(videoChat.getRemoteAudio(user.uid))

@@ -8,6 +8,7 @@ function harness() {
     const handlers = new Map()
     const managerHandlers = new Map()
     const emitted = []
+    const signals = []
     let options
     let currentToken = 'fresh-token'
     const socket = {
@@ -30,10 +31,12 @@ function harness() {
             if (name === 'socket.io-client') return { __esModule: true, default: (_url, nextOptions) => { options = nextOptions; return socket } }
             if (name === '../supabase/client') return { createClient: () => ({ auth: { getSession: async () => ({ data: { session: currentToken ? { user: { id: 'user-1' }, access_token: currentToken } : null }, error: null }) } }) }
             if (name === './requests') return { request() {} }
+            if (name === '../signal') return { __esModule: true, default: { emit: (event, data) => signals.push([event, data]) } }
+            if (name === '../video-chat/cloudflare/config') return { parseMediaConfig: raw => raw?.valid ? { provider: raw.provider } : null }
             throw new Error(`Unexpected import: ${name}`)
         },
     })
-    return { server: exports.server, handlers, emitted, getOptions: () => options, setToken: value => { currentToken = value } }
+    return { server: exports.server, handlers, emitted, signals, getOptions: () => options, setToken: value => { currentToken = value } }
 }
 
 test('socket connects over WebSocket with polling fallback and refreshes auth on every handshake', async () => {
@@ -83,4 +86,18 @@ test('connect resolves without a position when the server does not report one', 
         assert.equal(result.success, true)
         assert.equal(result.position, undefined, JSON.stringify(payload))
     }
+})
+
+test('every valid mediaConfig from the server reaches the page, malformed ones are dropped', async () => {
+    const env = harness()
+    const connection = env.server.connect('realm', 'user-1', 'share', 'Pedro')
+    env.handlers.get('joinedRealm')()
+    await connection
+    const onConfig = env.handlers.get('mediaConfig')
+    assert.equal(typeof onConfig, 'function')
+    onConfig({ valid: true, provider: 'cloudflare' })
+    onConfig({ provider: 'cloudflare' })
+    onConfig(undefined)
+    onConfig({ valid: true, provider: 'agora' })
+    assert.deepEqual(JSON.parse(JSON.stringify(env.signals)), [['mediaConfig', { provider: 'cloudflare' }], ['mediaConfig', { provider: 'agora' }]])
 })
