@@ -5,7 +5,11 @@ import type { SignalingSocket } from './protocol'
 export const REQUEST_TIMEOUT_MS = 8000
 
 async function ask<T>(socket: Socket, event: string, payload: unknown, timeoutMs: number): Promise<T> {
-    const reply = await socket.timeout(timeoutMs).emitWithAck(event, payload) as { ok?: boolean, error?: string } | undefined
+    let reply: { ok?: boolean, error?: string } | undefined
+    // No reply in time: marked, as the server may still carry it out (CloudflareEngine abandons such a publish).
+    try { reply = await socket.timeout(timeoutMs).emitWithAck(event, payload) } catch (error) {
+        throw Object.assign(new Error('O servidor não respondeu a tempo.'), { timeout: true, cause: error })
+    }
     if (!reply?.ok) throw new Error(reply?.error || 'O servidor recusou o pedido de vídeo.')
     return reply as never
 }

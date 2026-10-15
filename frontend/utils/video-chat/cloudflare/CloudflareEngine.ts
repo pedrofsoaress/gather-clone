@@ -90,6 +90,8 @@ const INVALID_STEP = 'Passo de vídeo inválido.'
 export const PULL_UNMATCHED_ERROR = 'pull sem transceptor de recepção'
 const stale = (): NegotiateReply => ({ ok: false, error: 'stale' })
 const keyOf = (kind: MediaKind, objectId?: string) => kind === 'speaker' ? `speaker:${objectId}` : kind
+// A request that got no reply in time (socket.ts marks those): the server may still carry it out.
+const timedOut = (error: unknown) => (error as { timeout?: unknown } | null)?.timeout === true
 const messageOf = (error: unknown) => typeof (error as { message?: unknown })?.message === 'string' ? (error as { message: string }).message : String(error)
 // `stopped` is gone from the spec but still set by some browsers; a stopped transceiver has direction 'stopped'.
 const isStopped = (transceiver: RTCRtpTransceiver) => (transceiver as { stopped?: boolean }).stopped === true || transceiver.direction === 'stopped' || transceiver.currentDirection === 'stopped'
@@ -589,16 +591,34 @@ export class CloudflareEngine implements MediaEngine {
         const pc = this.connection('send')
         let transceiver: RTCRtpTransceiver | null = null
         let offered = false
+        let mid: string | null = null
         try {
             await this.openSend(pc, epoch)
             transceiver = this.addSender(pc, kind, track)
             publication.transceiver = transceiver
-            const offer = await pc.createOffer()
+            let offer = await pc.createOffer()
             this.check(epoch)
             await pc.setLocalDescription(offer)
             offered = true
             this.check(epoch)
-            const mid = transceiver.mid
+            if (!transceiver.mid) {
+                // A publish that failed earlier was rolled back and stopped: Chrome offers its m-line again, in place
+                // of the new transceiver, until one negotiation drops it. That offer settles it first.
+                const stale = pc.getTransceivers().filter(other => other !== transceiver && other.mid !== null && isStopped(other)).map(other => other.mid!)
+                if (!stale.length) throw new Error(CONNECT_ERROR)
+                const settled = await this.socket.request<{ answer?: string }>('mediaSettle', { mids: stale, offer: pc.localDescription?.sdp ?? offer.sdp })
+                this.check(epoch)
+                if (!settled.answer) throw new Error(CONNECT_ERROR)
+                await pc.setRemoteDescription({ type: 'answer', sdp: settled.answer })
+                offered = false
+                this.check(epoch)
+                offer = await pc.createOffer()
+                this.check(epoch)
+                await pc.setLocalDescription(offer)
+                offered = true
+                this.check(epoch)
+            }
+            mid = transceiver.mid
             if (!mid) throw new Error(CONNECT_ERROR)
             const simulcast = kind === 'camera' && (transceiver.sender.getParameters().encodings?.length ?? 0) >= 2
             const reply = await this.socket.request<{ answer?: string }>('mediaPublish', { kind, ...(objectId ? { objectId } : {}), mid, offer: pc.localDescription?.sdp ?? offer.sdp, simulcast })
@@ -612,6 +632,9 @@ export class CloudflareEngine implements MediaEngine {
             if (error instanceof StaleWork || epoch !== this.epoch || !this.running) return
             if (offered) try { await pc.setLocalDescription({ type: 'rollback' }) } catch { /* nothing to undo */ }
             transceiver?.stop()
+            // No reply in time: the server may still publish it. It is told to drop it, offer-less, as this page
+            // never applied that answer; queued behind the publish on the server.
+            if (timedOut(error) && mid) void this.socket.request('mediaUnpublish', { kind, ...(objectId ? { objectId } : {}), mid, abandoned: true }).catch(() => {})
             if (this.publications.get(key) === publication) {
                 // A refused republish leaves the older track out, as the server still has it.
                 if (older?.transceiver && older.mid) {

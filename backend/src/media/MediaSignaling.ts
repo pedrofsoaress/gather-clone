@@ -1,12 +1,12 @@
 import type { Session } from '../session'
 import { conversationChannelFor } from '../office/ConversationAuthorization'
 import { MAX_TRACKS_PER_REQUEST, type IceServer, type Layer, type RealtimeApi, type Simulcast } from './CloudflareRealtime'
-import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PULL_RETRY_MS, RECEIVE_FORCE_RECYCLE_MLINES, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
+import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaSettle, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PUBLISH_TIMEOUT_MS, PULL_RETRY_MS, RECEIVE_FORCE_RECYCLE_MLINES, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
 import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
 
 export type MediaClient = { socketId: string, emit(event: string, payload?: unknown): void, ask(event: string, payload: unknown): Promise<any> }
 export type MediaAck = { ok: true, answer?: string, config?: MediaConfig } | { ok: false, error: string }
-export type MediaSignalingOptions = { provider: 'agora' | 'cloudflare', api: RealtimeApi | null, iceServers: () => Promise<IceServer[]>, getSession: (uid: string) => Session | undefined, schedule?: (run: () => void) => void, log?: (line: string) => void, pullRetryMs?: number, emptyTrackRetryMs?: number[] }
+export type MediaSignalingOptions = { provider: 'agora' | 'cloudflare', api: RealtimeApi | null, iceServers: () => Promise<IceServer[]>, getSession: (uid: string) => Session | undefined, schedule?: (run: () => void) => void, log?: (line: string) => void, pullRetryMs?: number, emptyTrackRetryMs?: number[], publishTimeoutMs?: number }
 
 const AGORA: MediaAck = { ok: false, error: 'O vídeo deste escritório usa a Agora.' }
 const INVALID: MediaAck = { ok: false, error: 'Pedido de vídeo inválido.' }
@@ -60,6 +60,7 @@ export class MediaSignaling {
     private readonly log: (line: string) => void
     private readonly pullRetryMs: number
     private readonly emptyTrackRetryMs: number[]
+    private readonly publishTimeoutMs: number
     private trackCounter = 0
     private generations = 0
 
@@ -68,6 +69,7 @@ export class MediaSignaling {
         this.log = options.log ?? console.error
         this.pullRetryMs = options.pullRetryMs ?? PULL_RETRY_MS
         this.emptyTrackRetryMs = options.emptyTrackRetryMs ?? EMPTY_TRACK_RETRY_MS
+        this.publishTimeoutMs = options.publishTimeoutMs ?? PUBLISH_TIMEOUT_MS
     }
 
     private get cloudflare() { return this.options.provider === 'cloudflare' && this.options.api !== null }
@@ -131,27 +133,73 @@ export class MediaSignaling {
         if (kind === 'screen' && !conversationChannelFor(session, uid)) return SCREEN
         const key = publicationKey(kind, objectId)
         try {
-            return await this.onLane(connection, 'pub', async () => {
-                const sessionId = await this.sendSession(connection)
-                // A republish of the same kind: the older track goes first, so nobody keeps pulling a dead one.
-                const older = connection.publications.get(key)
-                if (older) {
-                    try { await this.api.close(sessionId, [older.mid]) } catch (error) { this.log(`media: ${uid} não fechou ${older.trackName}: ${messageOf(error)}`) }
+            return await new Promise<MediaAck>((resolve, reject) => {
+                // The page hears once: the outcome, or a refusal when Cloudflare takes longer than publishTimeoutMs.
+                let answered = false
+                const reply = (ack: MediaAck) => { if (!answered) { answered = true; resolve(ack) } }
+                this.onLane(connection, 'pub', async (): Promise<MediaAck> => {
+                    const sessionId = await this.sendSession(connection)
+                    // A republish of the same kind: the older track goes first, so nobody keeps pulling a dead one.
+                    const older = connection.publications.get(key)
+                    if (older) {
+                        try { await this.api.close(sessionId, [older.mid]) } catch (error) { this.log(`media: ${uid} não fechou ${older.trackName}: ${messageOf(error)}`) }
+                        this.check(connection)
+                        if (connection.publications.get(key) === older) { connection.publications.delete(key); this.touch(session) }
+                    }
+                    const trackName = `${kind}${objectId ? `-${objectId}` : ''}-${++this.trackCounter}`
+                    const timer = setTimeout(() => {
+                        this.log(`media: ${uid} não publicou ${trackName} a tempo; recusado`)
+                        reply(CLOUDFLARE)
+                    }, this.publishTimeoutMs)
+                    let response: Awaited<ReturnType<RealtimeApi['publish']>>
+                    try { response = await this.api.publish(sessionId, offer, [{ location: 'local', mid, trackName }]) } finally { clearTimeout(timer) }
+                    const track = response.tracks?.find(result => result.trackName === trackName) ?? response.tracks?.[0]
+                    if (answered) {
+                        // Refused already: the track Cloudflare made is closed, nothing of it stays published.
+                        if (!track?.errorCode) await this.api.close(sessionId, [mid]).catch(error => this.log(`media: ${uid} não fechou ${trackName}: ${messageOf(error)}`))
+                        return CLOUDFLARE
+                    }
                     this.check(connection)
-                    if (connection.publications.get(key) === older) { connection.publications.delete(key); this.touch(session) }
-                }
-                const trackName = `${kind}${objectId ? `-${objectId}` : ''}-${++this.trackCounter}`
-                const response = await this.api.publish(sessionId, offer, [{ location: 'local', mid, trackName }])
+                    if (track?.errorCode) {
+                        this.log(`media: ${uid} não publicou ${trackName}: ${track.errorCode}`)
+                        return CLOUDFLARE
+                    }
+                    const answer = response.sessionDescription?.sdp
+                    if (!answer) throw new Error('publish sem SDP de resposta')
+                    connection.publications.set(key, { uid, kind, ...(objectId ? { objectId } : {}), sessionId, trackName, mid, live: true, simulcast: kind === 'camera' && simulcast })
+                    this.touch(session)
+                    return { ok: true, answer } as MediaAck
+                }).then(reply, error => {
+                    // After a refusal the page already moved on: a late failure is only logged.
+                    if (!answered) reject(error)
+                    else if (!(error instanceof Stale)) this.log(`media: ${uid} publicação recusada terminou com erro: ${messageOf(error)}`)
+                })
+            })
+        } catch (error) {
+            this.fail(connection, error)
+            return CLOUDFLARE
+        }
+    }
+
+    // Closes m-lines the page abandoned, with the page's offer, and answers it (see MediaSettle). Publications on
+    // those mids, if any, are dropped. Per-track errors (a track Cloudflare never had) are expected.
+    async settle(uid: string, socketId: string, raw: unknown): Promise<MediaAck> {
+        if (!this.cloudflare) return AGORA
+        const connection = this.connectionFor(uid, socketId)
+        if (!connection) return OUTSIDE
+        if (connection.awaitingReset) return CLOUDFLARE
+        const parsed = MediaSettle.safeParse(raw)
+        if (!parsed.success) return INVALID
+        const { mids, offer } = parsed.data
+        try {
+            return await this.onLane(connection, 'pub', async () => {
+                const sessionId = connection.pub.sessionId
+                if (!sessionId) return INVALID
+                const response = await this.api.close(sessionId, mids, offer)
                 this.check(connection)
-                const track = response.tracks?.find(result => result.trackName === trackName) ?? response.tracks?.[0]
-                if (track?.errorCode) {
-                    this.log(`media: ${uid} não publicou ${trackName}: ${track.errorCode}`)
-                    return CLOUDFLARE
-                }
                 const answer = response.sessionDescription?.sdp
-                if (!answer) throw new Error('publish sem SDP de resposta')
-                connection.publications.set(key, { uid, kind, ...(objectId ? { objectId } : {}), sessionId, trackName, mid, live: true, simulcast: kind === 'camera' && simulcast })
-                this.touch(session)
+                if (!answer) throw new Error('close sem SDP de resposta')
+                for (const [key, publication] of [...connection.publications]) if (mids.includes(publication.mid)) { connection.publications.delete(key); this.touch(connection.session) }
                 return { ok: true, answer } as MediaAck
             })
         } catch (error) {
@@ -167,8 +215,25 @@ export class MediaSignaling {
         if (connection.awaitingReset) return CLOUDFLARE
         const parsed = MediaUnpublish.safeParse(raw)
         if (!parsed.success) return INVALID
-        const { kind, objectId, mid, offer } = parsed.data
+        const { kind, objectId, mid, offer, abandoned } = parsed.data
         const key = publicationKey(kind, objectId)
+        if (abandoned) {
+            // A publish the page gave up on (its request timed out): if it went through after all, it is closed,
+            // forced, as the page rolled its offer back. Queued behind that publish on the send lane.
+            try {
+                return await this.onLane(connection, 'pub', async () => {
+                    const publication = connection.publications.get(key)
+                    if (!publication || publication.mid !== mid || !connection.pub.sessionId) return { ok: true } as MediaAck
+                    await this.api.close(connection.pub.sessionId, [mid])
+                    this.check(connection)
+                    if (connection.publications.get(key) === publication) { connection.publications.delete(key); this.touch(connection.session) }
+                    return { ok: true } as MediaAck
+                })
+            } catch (error) {
+                this.fail(connection, error)
+                return CLOUDFLARE
+            }
+        }
         const isLast = () => connection.publications.size === 1 && connection.publications.get(key)?.mid === mid
         if (connection.publications.get(key)?.mid !== mid || (!offer && !isLast())) return INVALID
         try {

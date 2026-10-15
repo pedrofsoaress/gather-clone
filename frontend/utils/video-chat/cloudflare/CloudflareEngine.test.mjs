@@ -41,7 +41,21 @@ function fakePc(world) {
         getTransceivers: () => { pc.transceiverReads++; return pc.transceivers.filter(t => !t.removed) },
         async createOffer() { pc.offers++; return { type: 'offer', sdp: `offer-${++world.sdp}` } },
         async createAnswer() { return { type: 'answer', sdp: `answer-${++world.sdp}` } },
-        async setLocalDescription(d) { if (d.type === 'rollback') { pc.rolledBack++; return } pc.transceivers.forEach((t, i) => { t.mid ??= String(i) }); pc.localDescription = d; if (d.type === 'answer') settle() },
+        async setLocalDescription(d) {
+            if (d.type === 'rollback') {
+                pc.rolledBack++
+                // Like Chrome: a transceiver offered but never negotiated loses its mid on rollback.
+                if (world.chromeStale) pc.transceivers.forEach(t => { if (!t.negotiated && t.mid !== null && !t.removed && pc.role === 'pub') { t.mid = null; t.rolledBack = true } })
+                return
+            }
+            // Like Chrome: a rolled back and stopped transceiver takes a new mid in the next offer, in place of the
+            // newest transceiver, which gets none until that offer is negotiated.
+            const stale = world.chromeStale && d.type === 'offer' ? pc.transceivers.filter(t => t.stopped && t.rolledBack && !t.removed) : []
+            if (stale.length) stale.forEach(t => { t.mid = String(100 + ++world.sdp) })
+            else pc.transceivers.forEach((t, i) => { t.mid ??= String(i) })
+            pc.localDescription = d
+            if (d.type === 'answer') settle()
+        },
         // A pull offer "mids=3,4" adds a receiving transceiver for each mid it does not have yet. As in browsers
         // (JSEP), a mid still held by a stopped transceiver, whose stop was never negotiated, matches that
         // transceiver: the section is rejected and nothing new is received.
@@ -57,7 +71,7 @@ function fakePc(world) {
         ...(world.dataChannels ? { createDataChannel(label) { pc.role ??= 'pub'; (pc.channels ??= []).push(label); return { label } } } : {}),
         close() { pc.closed = true },
     }
-    const settle = () => pc.transceivers.forEach(t => { if (t.stopped) t.removed = true })
+    const settle = () => pc.transceivers.forEach(t => { if (t.stopped) t.removed = true; else if (t.mid !== null) t.negotiated = true })
     return pc
 }
 
@@ -935,4 +949,38 @@ test('recycle: the receive connection is closed and forgotten, sending is untouc
     assert.notEqual(h.sub(), sub)
     assert.ok(h.engine.remoteTrack('ana', 'camera'))
     assert.equal(h.sent('mediaReset').length, 0)
+})
+
+test('a publish that timed out is abandoned on the server, and the next one first settles the m-line Chrome offers again', async () => {
+    const h = harness({ world: { chromeStale: true } })
+    await h.engine.start(cfg())
+    await h.engine.publish('camera', { id: 'cam' })
+    h.socket.replies.mediaPublish = () => { throw Object.assign(new Error('O servidor não respondeu a tempo.'), { timeout: true }) }
+    await assert.rejects(h.engine.publish('mic', { id: 'mic' }), /a tempo/)
+    await tick()
+    // Offer-less: this page rolled its offer back and never applied that answer.
+    assert.deepEqual(h.sent('mediaUnpublish'), [{ kind: 'mic', mid: '1', abandoned: true }])
+    const pub = h.pub()
+    assert.equal(pub.transceivers[1].stopped, true)
+    delete h.socket.replies.mediaPublish
+    h.socket.replies.mediaSettle = () => ({ ok: true, answer: 'settled' })
+    await h.engine.publish('mic', { id: 'mic-2' })
+    const settles = h.sent('mediaSettle')
+    assert.equal(settles.length, 1)
+    assert.deepEqual(settles[0].mids, [pub.transceivers[1].mid])
+    assert.deepEqual(h.socket.requests.map(([event]) => event).slice(-3), ['mediaUnpublish', 'mediaSettle', 'mediaPublish'])
+    assert.equal(h.sent('mediaPublish').at(-1).mid, '2')
+    assert.equal(pub.transceivers[1].removed, true, 'the stale m-line is gone')
+    // Settled once: the next publish needs nothing more.
+    await h.engine.publish('screen', { id: 'screen' })
+    assert.equal(h.sent('mediaSettle').length, 1)
+})
+
+test('a publish the server refused is not abandoned: only a timed-out one is', async () => {
+    const h = harness()
+    await h.engine.start(cfg())
+    h.socket.replies.mediaPublish = () => ({ ok: false, error: 'Não foi possível conectar o vídeo. Tente novamente.' })
+    await assert.rejects(h.engine.publish('mic', { id: 'mic' }))
+    await tick()
+    assert.deepEqual(h.sent('mediaUnpublish'), [])
 })

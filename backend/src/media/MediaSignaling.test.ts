@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { Session, type Room } from '../session'
 import { CloudflareError, type RealtimeApi } from './CloudflareRealtime'
 import { MediaSignaling } from './MediaSignaling'
-import { EMPTY_TRACK_RETRY_MS, STUN_ONLY } from './protocol'
+import { EMPTY_TRACK_RETRY_MS, PUBLISH_TIMEOUT_MS, STUN_ONLY } from './protocol'
 
 type Client = ReturnType<typeof fakeClient>
 function fakeClient(uid: string) {
@@ -39,7 +39,7 @@ function harness(provider: 'agora' | 'cloudflare' = 'cloudflare', overrides: Par
     const room: Room = { name: 'A', tilemap, areas: { training: { label: 'Treinamento', meeting: { stage: { x1: 0, y1: 9, x2: 29, y2: 9 } } } } }
     const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [room, structuredClone(room)] })
     const logs: string[] = [], clients = new Map<string, Client>()
-    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line), pullRetryMs: 5, emptyTrackRetryMs: [1, 2, 3, 4] })
+    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line), pullRetryMs: 5, emptyTrackRetryMs: [1, 2, 3, 4], publishTimeoutMs: 40 })
     const place = async (uid: string, x: number, y: number, floor = 0) => { session.changeRoom(uid, floor, x, y); media.changed(session); await media.idle() }
     const enter = async (uid: string, x: number, y: number, floor = 0) => {
         session.addPlayer(`socket-${uid}`, uid, uid, '009')
@@ -637,4 +637,66 @@ test('someone who keeps receiving is recycled at 100 m-lines: pulls closed, rece
     assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic', 'caio|mic'])
     for (const client of [ana, bia, caio]) assert.equal(client.emitted.some(([event]) => event === 'mediaRestart'), false)
     assert.equal(callsOf(h.calls, 'publish').length, publishes)
+})
+
+test('a publish slower than the cap is refused, and the track Cloudflare made is closed once the call returns', async () => {
+    assert.equal(PUBLISH_TIMEOUT_MS, 7000)
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    const bia = await h.enter('bia', 4, 0)
+    const publish = h.api.publish
+    let slow = true
+    h.api.publish = async (sid, offer, tracks) => { if (slow) await new Promise(resolve => setTimeout(resolve, 120)); return publish(sid, offer, tracks) }
+    const started = Date.now()
+    assert.deepEqual(await h.publish('ana', 'mic'), { ok: false, error: 'Não foi possível conectar o vídeo. Tente novamente.' })
+    assert.ok(Date.now() - started < 110, 'refused at the cap, before Cloudflare answered')
+    await h.media.idle()
+    assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === 's1'), [['close', 's1', ['mic'], undefined]], 'the late track is closed, forced')
+    assert.deepEqual(pulledKinds(bia), [])
+    assert.equal(lastPeers(bia)?.peers.find((peer: any) => peer.uid === 'ana')?.mic ?? false, false, 'bia never sees a mic from ana')
+    assert.ok(h.logs.some(line => line.includes('não publicou mic-') && line.includes('a tempo')))
+    assert.equal(bia.emitted.some(([event]) => event === 'mediaRestart'), false)
+    // A refused publish leaves the person working: the next one goes through.
+    slow = false
+    assert.deepEqual(await h.publish('ana', 'mic'), { ok: true, answer: 'answer-offer-mic' })
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+})
+
+test('abandoned unpublish: a publish the page gave up on is closed, forced, if it went through', async () => {
+    const h = harness()
+    const ana = await h.enter('ana', 2, 0)
+    const bia = await h.enter('bia', 4, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+    const unpublish = (payload: object) => h.media.unpublish('ana', 'socket-ana', payload)
+    assert.deepEqual(await unpublish({ kind: 'camera', mid: 'camera', abandoned: true, offer: 'x' }), { ok: false, error: 'Pedido de vídeo inválido.' })
+    // Not the last publication, and no offer: allowed because the page never applied that answer.
+    assert.deepEqual(await unpublish({ kind: 'camera', mid: 'camera', abandoned: true }), { ok: true })
+    assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === 's1'), [['close', 's1', ['camera'], undefined]])
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    // Nothing published on that mid: nothing to do.
+    const closes = callsOf(h.calls, 'close').length
+    assert.deepEqual(await unpublish({ kind: 'screen', mid: 'screen', abandoned: true }), { ok: true })
+    assert.equal(callsOf(h.calls, 'close').length, closes)
+    assert.equal(ana.emitted.some(([event]) => event === 'mediaRestart'), false)
+})
+
+test('settle: m-lines the page abandoned are closed with its offer and answered', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    const bia = await h.enter('bia', 4, 0)
+    assert.deepEqual(await h.media.settle('ana', 'socket-ana', { mids: ['3'], offer: 'o' }), { ok: false, error: 'Pedido de vídeo inválido.' }, 'no send session yet')
+    await h.publish('ana', 'mic')
+    assert.deepEqual(await h.media.settle('ana', 'socket-ana', { mids: [], offer: 'o' }), { ok: false, error: 'Pedido de vídeo inválido.' })
+    assert.deepEqual(await h.media.settle('ana', 'socket-ana', { mids: ['3'], offer: 'settle-offer' }), { ok: true, answer: 'close-answer' })
+    assert.deepEqual(callsOf(h.calls, 'close').at(-1), ['close', 's1', ['3'], 'settle-offer'])
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'], 'publications on other mids untouched')
+    assert.deepEqual(await h.media.settle('ana', 'socket-ana', { mids: ['mic'], offer: 'o2' }), { ok: true, answer: 'close-answer' })
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), [], 'a publication on a settled mid is dropped')
+    assert.deepEqual(await harness('agora').media.settle('ana', 'socket-ana', { mids: ['3'], offer: 'o' }), { ok: false, error: 'O vídeo deste escritório usa a Agora.' })
 })

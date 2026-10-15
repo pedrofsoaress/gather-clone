@@ -16,7 +16,10 @@ export const MediaPublish = z.object({ kind, objectId, mid, offer: sdp, simulcas
 // `offer` may be left out only to unpublish the connection's last publication: a max-bundle send connection
 // with every m-line stopped has no BUNDLE group, so the page stops the transceiver without renegotiating and the
 // server closes the track forced, with no SDP. The ack then has no `answer`.
-export const MediaUnpublish = z.object({ kind, objectId, mid, offer: sdp.optional() }).refine(speakerHasObject)
+export const MediaUnpublish = z.object({ kind, objectId, mid, offer: sdp.optional(), abandoned: z.literal(true).optional() }).refine(speakerHasObject).refine(value => !(value.abandoned && value.offer))
+// A page offer that only settles m-lines the page abandoned (a publish it gave up on, rolled back and stopped): Chrome
+// puts such an m-line back in its next offer, in the place of the new transceiver, until one negotiation drops it.
+export const MediaSettle = z.object({ mids: z.array(mid).min(1).max(64), offer: sdp })
 export const MediaTrackState = z.object({ kind: z.enum(['mic', 'camera']), live: z.boolean() })
 export const MediaLayer = z.object({ fromUid: z.string().min(1).max(64), layer: z.enum(['f', 'h', 'q']) })
 // What the page sends back inside a negotiation ack.
@@ -44,6 +47,9 @@ export const CONFIG_REFRESH_MS = 6 * 60 * 60 * 1000
 export const ICE_SERVERS_TIMEOUT_MS = 5000
 // A refused pull may race a fresh publish: it is retried once after this delay before the page is told.
 export const PULL_RETRY_MS = 2000
+// The Cloudflare publish call is given this long, under the page's 8 s request timeout: past it the page is refused and
+// the track Cloudflare made is closed when the call returns, so a page that gave up never ends up published.
+export const PUBLISH_TIMEOUT_MS = 7000
 // Cloudflare never reuses the m-lines of a receive session: once nothing is pulled and it carries this many, the
 // receive session and connection are replaced (a `recycle` step), so the SDP never grows past the limit above.
 export const RECEIVE_RECYCLE_MLINES = 40
