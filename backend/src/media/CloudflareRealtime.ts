@@ -38,7 +38,9 @@ export class CloudflareRealtime implements RealtimeApi {
         const response = await this.fetchImpl(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
         const text = await response.text()
         let json: { errorCode?: string, errorDescription?: string } & Record<string, unknown> = {}
-        try { json = text ? JSON.parse(text) : {} } catch { /* an HTML error page */ }
+        let parsed = true
+        try { json = text ? JSON.parse(text) : {} } catch { parsed = false }
+        if (response.ok && !parsed) throw new CloudflareError(`Cloudflare ${method} ${response.status} resposta não é JSON: ${text.slice(0, 120)}`, response.status, 'not_json')
         if (!response.ok || json.errorCode) {
             const code = json.errorCode ?? `http_${response.status}`
             throw new CloudflareError(`Cloudflare ${method} ${response.status} ${code}${json.errorDescription ? `: ${json.errorDescription}` : ''}`, response.status, code)
@@ -65,8 +67,12 @@ export class CloudflareRealtime implements RealtimeApi {
     update(sessionId: string, tracks: (RemoteTrack & { mid: string })[]) { return this.sfu<TracksResponse>('PUT', `/sessions/${sessionId}/tracks/update`, { tracks }) }
     async iceServers(ttlSeconds: number): Promise<IceServer[]> {
         const url = `${API}/turn/keys/${this.credentials.turnKeyId}/credentials/generate-ice-servers`
-        const { iceServers } = await this.call<{ iceServers?: IceServer[] }>('POST', url, { ttl: ttlSeconds }, this.credentials.turnApiToken)
-        return usableIceServers(iceServers ?? [])
+        const json = await this.call<{ iceServers?: IceServer | IceServer[] }>('POST', url, { ttl: ttlSeconds }, this.credentials.turnApiToken)
+        // Cloudflare answers with a list, but a single object is also accepted. Anything else is reported, never silently STUN.
+        const servers = Array.isArray(json.iceServers) ? json.iceServers : json.iceServers ? [json.iceServers] : []
+        const usable = usableIceServers(servers)
+        if (!usable.length) throw new Error(`generate-ice-servers sem servidores: ${JSON.stringify(json).replace(/"(username|credential)":"[^"]*"/g, '"$1":"…"').slice(0, 160)}`)
+        return usable
     }
 }
 

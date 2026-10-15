@@ -66,6 +66,15 @@ test('errors carry status and code and never leak secrets', async () => {
     await assert.rejects(api.newSession(), (e: unknown) => e instanceof CloudflareError && e.code === 'bad')
 })
 
+test('iceServers accepts a single object and reports an answer without servers', async () => {
+    const one = fake([{ json: { iceServers: { urls: ['turn:a'], username: 'u', credential: 'c' } } }])
+    assert.deepEqual(await one.api.iceServers(60), [{ urls: ['turn:a'], username: 'u', credential: 'c' }])
+    const none = fake([{ json: { ok: true } }])
+    await assert.rejects(none.api.iceServers(60), /generate-ice-servers sem servidores: \{"ok":true\}/)
+    const html = { calls: [] as any[], api: new CloudflareRealtime(credentials, async () => ({ ok: true, status: 200, text: async () => '<html>challenge</html>' })) }
+    await assert.rejects(html.api.iceServers(60), /resposta não é JSON: <html>challenge/)
+})
+
 test('iceServers drops port 53 urls and empty entries', async () => {
     const { calls, api } = fake([{ json: { iceServers: [
         { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.cloudflare.com:53'] },
