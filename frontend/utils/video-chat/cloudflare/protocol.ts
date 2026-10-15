@@ -17,7 +17,10 @@ export type RemoteEntry = { mid: string, fromUid: string, kind: MediaKind, objec
 export type NegotiateStep = { generation: number } & (
     | { type: 'pull', offer: string, tracks: RemoteEntry[] }
     | { type: 'close', mids: string[], force?: true }
-    | { type: 'answer', answer: string })
+    | { type: 'answer', answer: string }
+    // Nothing is pulled and the receive connection has many dead m-lines: the page closes it (sending untouched) and
+    // the next pull opens a new one.
+    | { type: 'recycle' })
 export type NegotiateReply = { ok: true, answer?: string, offer?: string } | { ok: false, error: string }
 
 export interface SignalingSocket {

@@ -33,7 +33,10 @@ export type MediaConfig = { provider: 'agora' } | { provider: 'cloudflare', iceS
 export type NegotiateStep = { generation: number } & (
     | { type: 'pull', offer: string, tracks: { mid: string, fromUid: string, kind: MediaKind, objectId?: string }[] }
     | { type: 'close', mids: string[], force?: true }
-    | { type: 'answer', answer: string })
+    | { type: 'answer', answer: string }
+    // Nothing is pulled and the receive connection carries RECEIVE_RECYCLE_MLINES dead m-lines: the page closes it
+    // (sending is untouched) and acks `{ ok: true }`; the next pull starts a new session and connection.
+    | { type: 'recycle' })
 export const STUN_ONLY: IceServer[] = [{ urls: 'stun:stun.cloudflare.com:3478' }]
 export const NEGOTIATE_TIMEOUT_MS = 8000
 export const CONFIG_REFRESH_MS = 6 * 60 * 60 * 1000
@@ -41,6 +44,9 @@ export const CONFIG_REFRESH_MS = 6 * 60 * 60 * 1000
 export const ICE_SERVERS_TIMEOUT_MS = 5000
 // A refused pull may race a fresh publish: it is retried once after this delay before the page is told.
 export const PULL_RETRY_MS = 2000
+// Cloudflare never reuses the m-lines of a receive session: once nothing is pulled and it carries this many, the
+// receive session and connection are replaced (a `recycle` step), so the SDP never grows past the limit above.
+export const RECEIVE_RECYCLE_MLINES = 40
 // Cloudflare refuses a pull with `empty_track_error` while the published track has not sent media yet (a camera that
 // just came on): those are retried with this backoff, about 7.5 s in all, before the page is told.
 export const EMPTY_TRACK_RETRY_MS = [500, 1000, 2000, 4000]

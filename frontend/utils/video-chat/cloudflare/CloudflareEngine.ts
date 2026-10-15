@@ -8,6 +8,8 @@ export const NOTICE_DELAY_MS = 3_000
 // A connection `disconnected` for this long is rebuilt; most network blips recover by themselves before.
 export const RECONNECT_GRACE_MS = 5_000
 export const RESTART_RETRY_MS = 2_000
+// A reset that keeps failing is asked again after 2, 4, 8, 16 s, then every 30 s.
+export const RESTART_RETRY_MAX_MS = 30_000
 // While off, the camera sends the placeholder (a black frame a second) at most this fast per layer, instead of
 // nothing: its Cloudflare track and the connection's bandwidth estimate stay alive (with no video at all, Chrome's
 // estimate falls to about 80 kbps in 25 s, as Cloudflare gives no feedback on audio) and turning it on is immediate.
@@ -16,6 +18,10 @@ export const PLACEHOLDER_BITRATE = 30_000
 // shows a black frame.
 export const RESUME_FRAMES = 3
 export const RESUME_WAIT_MS = 400
+// While the camera is held, the sender's packet count is read this often. A canvas can stall (a frozen or background
+// tab, an off-page canvas in WebKit) and Cloudflare collects a track with no packets for 30 s: turning on a camera with
+// no packet seen in the last IDLE_UNPUBLISH_MS publishes it again instead of swapping the track.
+export const HELD_CHECK_MS = 10_000
 
 export type EngineEvent =
     | { type: 'peers', peers: PeersSnapshot }
@@ -67,8 +73,9 @@ type Publication = {
     live: boolean
     pausedAt: number
     idleTimer: unknown
-    // Off and sending the placeholder: the encoding limits to put back when it is turned on.
-    held: { maxBitrate?: number, maxFramerate?: number }[] | null
+    // Off and sending the placeholder: the encoding limits to put back when it is turned on, the last packet count
+    // read and when, and the latest time a packet is known to have gone out after.
+    held: { limits: { maxBitrate?: number, maxFramerate?: number }[], read: { packets: number | null, at: number }, progressAt: number } | null
 }
 
 // Thrown when the connections were rebuilt (or the engine stopped) while some work awaited: it ends quietly.
@@ -95,6 +102,7 @@ function validStep(raw: unknown): raw is NegotiateStep {
     })
     if (step.type === 'close') return Array.isArray(step.mids) && step.mids.every(mid => typeof mid === 'string')
     if (step.type === 'answer') return typeof step.answer === 'string'
+    if (step.type === 'recycle') return true
     return false
 }
 
@@ -241,7 +249,10 @@ export class CloudflareEngine implements MediaEngine {
                 // Told first: every tile shows the avatar before a black frame can arrive.
                 await this.socket.request('mediaTrackState', { kind, live: false }).catch(() => {})
                 if (epoch !== this.epoch || this.publications.get(kind) !== publication || publication.live) return
-                publication.held = await this.hold(transceiver.sender, placeholder)
+                const limits = await this.hold(transceiver.sender, placeholder)
+                const at = this.now()
+                publication.held = { limits, read: { packets: await this.sentPackets(transceiver.sender), at }, progressAt: at }
+                this.armHeldCheck(publication)
                 return
             }
             this.armIdle(kind, publication)
@@ -263,13 +274,20 @@ export class CloudflareEngine implements MediaEngine {
             }
             const held = publication.held
             if (held && !publication.live && publication.transceiver) {
+                this.clearIdle(publication)
+                await this.checkHeld(publication)
                 publication.held = null
+                // No packet known in the last 25 s: Cloudflare may have collected the track, so it goes out again.
+                if (this.now() - held.progressAt >= IDLE_UNPUBLISH_MS) {
+                    try { await this.doUnpublish(kind) } catch { /* the republish closes the older track on the server */ }
+                    return this.doPublish(kind, kind, track)
+                }
                 publication.track = track
                 publication.live = true
                 const epoch = this.epoch
                 const sender = publication.transceiver.sender
                 await sender.replaceTrack(track)
-                await this.release(sender, held)
+                await this.release(sender, held.limits)
                 await this.framesOut(sender, epoch)
                 if (epoch !== this.epoch || !publication.live) return
                 await this.socket.request('mediaTrackState', { kind, live: true }).catch(() => {})
@@ -379,6 +397,7 @@ export class CloudflareEngine implements MediaEngine {
         this.interrupted = true
         this.teardown()
         this.armNotice()
+        let delay = RESTART_RETRY_MS
         while (run === this.restartRun) {
             try {
                 const reply = await this.socket.request<{ config?: unknown }>('mediaReset', {})
@@ -391,7 +410,8 @@ export class CloudflareEngine implements MediaEngine {
                 if (run !== this.restartRun) return
                 // Steps parked for the reset's generation are acked stale now, so the receive queue moves on.
                 this.releaseWaiters()
-                await this.sleep(RESTART_RETRY_MS)
+                await this.sleep(delay)
+                delay = Math.min(delay * 2, RESTART_RETRY_MAX_MS)
             }
         }
     }
@@ -465,6 +485,38 @@ export class CloudflareEngine implements MediaEngine {
             else encoding.maxFramerate = saved.maxFramerate
         })
         try { await sender.setParameters(parameters) } catch { /* the placeholder limits stay */ }
+    }
+
+    // Packets sent by every layer of the sender, or null when the browser does not say.
+    private async sentPackets(sender: RTCRtpSender): Promise<number | null> {
+        if (typeof sender.getStats !== 'function') return null
+        try {
+            let packets = 0
+            ;(await sender.getStats()).forEach((stat: { type: string, packetsSent?: number }) => { if (stat.type === 'outbound-rtp') packets += stat.packetsSent ?? 0 })
+            return packets
+        } catch { return null }
+    }
+
+    // Reads the held camera's packet count: a count that grew means a packet went out after the previous read.
+    private async checkHeld(publication: Publication): Promise<void> {
+        const held = publication.held
+        const sender = publication.transceiver?.sender
+        if (!held || !sender) return
+        const packets = await this.sentPackets(sender)
+        const at = this.now()
+        if (packets === null || held.read.packets === null) held.progressAt = at
+        else if (packets > held.read.packets) held.progressAt = held.read.at
+        held.read = { packets, at }
+    }
+
+    private armHeldCheck(publication: Publication) {
+        this.clearIdle(publication)
+        publication.idleTimer = this.options.setTimeout(() => {
+            publication.idleTimer = null
+            void this.checkHeld(publication).then(() => {
+                if (publication.held && !publication.live && this.publications.get(publication.kind) === publication) this.armHeldCheck(publication)
+            })
+        }, HELD_CHECK_MS)
     }
 
     // Waits until some layer sent RESUME_FRAMES real frames, at most RESUME_WAIT_MS.
@@ -677,6 +729,20 @@ export class CloudflareEngine implements MediaEngine {
                 }
                 this.emit({ type: 'tracks' })
                 return { ok: true, answer: pc.localDescription?.sdp ?? answer.sdp! }
+            }
+            if (step.type === 'recycle') {
+                // Nothing is received now and the connection carries many dead m-lines (Cloudflare never reuses
+                // them): it is closed, and the next pull starts a new one. Sending is untouched.
+                const pc = this.receivePc
+                if (pc) {
+                    const timer = this.graceTimers.get(pc)
+                    if (timer !== undefined) { this.options.clearTimeout(timer); this.graceTimers.delete(pc) }
+                    try { pc.close() } catch { /* already closed */ }
+                }
+                this.receivePc = null
+                this.receiving.clear()
+                if (this.entries.size) { this.entries.clear(); this.emit({ type: 'tracks' }) }
+                return { ok: true }
             }
             if (step.type === 'close') {
                 const mids = new Set(step.mids)

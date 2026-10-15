@@ -1,7 +1,7 @@
 import type { Session } from '../session'
 import { conversationChannelFor } from '../office/ConversationAuthorization'
 import { MAX_TRACKS_PER_REQUEST, type IceServer, type Layer, type RealtimeApi, type Simulcast } from './CloudflareRealtime'
-import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PULL_RETRY_MS, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
+import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PULL_RETRY_MS, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
 import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
 
 export type MediaClient = { socketId: string, emit(event: string, payload?: unknown): void, ask(event: string, payload: unknown): Promise<any> }
@@ -25,7 +25,7 @@ type Connection = {
     session: Session,
     pub: Lane,
     // failed: refused pulls not to be asked again; retried: how many retries each refused pull already had.
-    sub: Lane & { pulled: Map<string, Pulled>, failed: Set<string>, retried: Map<string, number>, syncing: boolean, again: boolean },
+    sub: Lane & { pulled: Map<string, Pulled>, failed: Set<string>, retried: Map<string, number>, syncing: boolean, again: boolean, mlines: number },
     // 'mic' | 'camera' | 'screen' | 'speaker:<objectId>'
     publications: Map<string, Publication>,
     layers: Map<string, Layer>,
@@ -278,7 +278,7 @@ export class MediaSignaling {
         return {
             uid, generation: ++this.generations, client, session,
             pub: { sessionId: null, chain: Promise.resolve() },
-            sub: { sessionId: null, chain: Promise.resolve(), pulled: new Map(), failed: new Set(), retried: new Map(), syncing: false, again: false },
+            sub: { sessionId: null, chain: Promise.resolve(), pulled: new Map(), failed: new Set(), retried: new Map(), syncing: false, again: false, mlines: 0 },
             publications: new Map(), layers: new Map(), lastPeers: null, awaitingReset: false,
         }
     }
@@ -447,6 +447,12 @@ export class MediaSignaling {
         // so only a real "nothing left" takes the forced close.
         for (let i = 0; i < add.length; i += MAX_TRACKS_PER_REQUEST) await this.pullTracks(connection, add.slice(i, i + MAX_TRACKS_PER_REQUEST))
         for (let i = 0; i < remove.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, remove.slice(i, i + MAX_TRACKS_PER_REQUEST))
+        // Empty and full of dead m-lines: only the receive side starts over (publishing is untouched).
+        if (sub.pulled.size === 0 && sub.sessionId && sub.mlines >= RECEIVE_RECYCLE_MLINES) {
+            await this.ask(connection, { generation: connection.generation, type: 'recycle' })
+            sub.sessionId = null
+            sub.mlines = 0
+        }
     }
 
     private async ask(connection: Connection, step: NegotiateStep): Promise<any> {
@@ -498,6 +504,7 @@ export class MediaSignaling {
             if (stillWanted.has(pull.key)) connection.client.emit('mediaTrackError', { fromUid: pull.fromUid, kind: pull.kind })
         }
         if (!working.length) return
+        sub.mlines += working.length
         if (response.requiresImmediateRenegotiation) {
             const offer = response.sessionDescription?.sdp
             if (!offer) throw new Error('pull sem oferta')

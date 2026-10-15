@@ -584,3 +584,29 @@ test('a change that does not touch media costs no reconcile work', async () => {
     assert.deepEqual(lastPeers(bia).peers, [{ uid: 'ana', mic: false, camera: false, screen: false }])
     assert.equal(bia.steps.length, steps)
 })
+
+test('a receive session full of dead m-lines is recycled once nothing is pulled; publishing is untouched', async () => {
+    const h = harness()
+    const ana = await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 4, 0)
+    const sub = receiveSessionOf(h.calls, 'bia')
+    const publishes = callsOf(h.calls, 'publish').length
+    // 2 m-lines on arrival, 2 more on each return: 40 after 19 rounds, still pulled.
+    for (let i = 0; i < 19; i++) { await h.place('bia', 14, 0); await h.place('bia', 4, 0) }
+    assert.equal(bia.steps.some(step => step.type === 'recycle'), false)
+    await h.place('bia', 14, 0)
+    assert.deepEqual(stepsOf(bia).slice(-2).map(step => step.type), ['close', 'recycle'])
+    const sessions = callsOf(h.calls, 'newSession').length
+    await h.place('bia', 4, 0)
+    assert.equal(callsOf(h.calls, 'newSession').length, sessions + 1, 'a new receive session')
+    assert.notEqual(callsOf(h.calls, 'pull').at(-1)![1], sub)
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+    // Nobody restarted, and nothing was published or closed on the send side.
+    for (const client of [ana, bia]) assert.equal(client.emitted.some(([event]) => event === 'mediaRestart'), false)
+    assert.equal(callsOf(h.calls, 'publish').length, publishes)
+    assert.equal(callsOf(h.calls, 'close').some(call => call[1] === 's1'), false)
+    // Walking away again: below the threshold, no recycle.
+    await h.place('bia', 14, 0)
+    assert.equal(bia.steps.filter(step => step.type === 'recycle').length, 1)
+})

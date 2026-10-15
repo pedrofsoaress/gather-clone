@@ -850,3 +850,87 @@ test('turning the camera on says "on" only once real frames went out, or after 4
     await late
     assert.deepEqual(h.sent('mediaTrackState').at(-1), { kind: 'camera', live: true })
 })
+
+test('a reset that keeps failing is retried after 2, 4, 8, 16 s, then every 30 s', async () => {
+    const h = harness()
+    await h.engine.start(cfg(1))
+    h.socket.replies.mediaReset = () => ({ ok: false, error: 'Fora do escritório.' })
+    h.socket.handlers.get('mediaRestart')()
+    const delays = []
+    for (let i = 0; i < 7; i++) {
+        await tick()
+        const [id, timer] = [...h.timers].find(([, timer]) => timer.ms >= 2_000 && timer.ms !== 3_000)
+        delays.push(timer.ms)
+        h.timers.delete(id)
+        timer.callback()
+    }
+    assert.deepEqual(delays, [2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000])
+    const { RESTART_RETRY_MAX_MS, HELD_CHECK_MS } = load()
+    assert.deepEqual([RESTART_RETRY_MAX_MS, HELD_CHECK_MS], [30_000, 10_000])
+})
+
+test('held camera: no packet seen in the last 25 s means it is published again on resume, not swapped', async () => {
+    const placeholder = { id: 'black', readyState: 'live', stop() {} }
+    let packets = 100, frames = 0
+    const stats = () => { frames += 5; return new Map([['o', { type: 'outbound-rtp', ssrc: 1, packetsSent: packets, framesEncoded: frames }]]) }
+    const make = async () => {
+        const h = harness({ placeholder, world: { senderStats: stats } })
+        await h.engine.start(cfg())
+        await h.engine.publish('camera', { id: 'cam' })
+        await h.engine.publish('mic', { id: 'mic' })
+        await h.engine.pause('camera')
+        return h
+    }
+    const drive = async (h, promise) => { let done = false; promise.then(() => { done = true }, () => { done = true }); for (let i = 0; i < 40 && !done; i++) { await tick(); h.fire(50) } return promise }
+    const check = async h => { h.advance(10_000); h.fire(10_000); await tick() }
+
+    // The placeholder kept sending: the checks see the count grow, and on is a swap.
+    const alive = await make()
+    assert.ok([...alive.timers.values()].some(timer => timer.ms === 10_000), 'the held camera is checked every 10 s')
+    for (let i = 0; i < 4; i++) { packets += 4; await check(alive) }
+    packets += 4
+    await drive(alive, alive.engine.resume('camera', { id: 'cam-2' }))
+    assert.deepEqual(alive.sent('mediaUnpublish'), [])
+    assert.equal(alive.sent('mediaPublish').length, 2)
+    assert.deepEqual(alive.pub().transceivers[0].sender.replaced.map(track => track.id), ['black', 'cam-2'])
+
+    // The placeholder stalled (a frozen tab): nothing went out for 40 s, so the camera is published again.
+    const stalled = await make()
+    for (let i = 0; i < 4; i++) await check(stalled)
+    await drive(stalled, stalled.engine.resume('camera', { id: 'cam-3' }))
+    assert.deepEqual(stalled.sent('mediaUnpublish').map(payload => payload.kind), ['camera'])
+    assert.equal(stalled.sent('mediaPublish').length, 3)
+    assert.equal(stalled.sent('mediaPublish')[2].kind, 'camera')
+    assert.equal(stalled.pub().transceivers[0].stopped, true)
+
+    // Timers that never ran (the whole tab frozen): the last count is 40 s old, so it is published again too.
+    const frozen = await make()
+    frozen.advance(40_000)
+    packets += 50
+    await drive(frozen, frozen.engine.resume('camera', { id: 'cam-4' }))
+    assert.equal(frozen.sent('mediaPublish').length, 3)
+
+    // Back within 25 s: always a swap.
+    const quick = await make()
+    quick.advance(20_000)
+    await drive(quick, quick.engine.resume('camera', { id: 'cam-5' }))
+    assert.equal(quick.sent('mediaPublish').length, 2)
+    assert.deepEqual(quick.sent('mediaUnpublish'), [])
+})
+
+test('recycle: the receive connection is closed and forgotten, sending is untouched, the next pull opens a new one', async () => {
+    const h = harness()
+    await h.engine.start(cfg())
+    await h.engine.publish('mic', { id: 'mic' })
+    assert.equal((await h.step({ type: 'pull', offer: 'mids=3', tracks: [{ mid: '3', fromUid: 'ana', kind: 'camera' }] })).ok, true)
+    const sub = h.sub()
+    await h.step({ type: 'close', mids: ['3'], force: true })
+    assert.deepEqual(plain(await h.step({ type: 'recycle' })), { ok: true })
+    assert.equal(sub.closed, true)
+    assert.equal(h.pub().closed, false)
+    assert.equal(h.engine.mapping.size, 0)
+    assert.equal((await h.step({ type: 'pull', offer: 'mids=0', tracks: [{ mid: '0', fromUid: 'ana', kind: 'camera' }] })).ok, true)
+    assert.notEqual(h.sub(), sub)
+    assert.ok(h.engine.remoteTrack('ana', 'camera'))
+    assert.equal(h.sent('mediaReset').length, 0)
+})
