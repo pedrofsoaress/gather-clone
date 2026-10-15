@@ -8,6 +8,19 @@ export const AUDIO_LEVEL_FRESH_MS = 500
 // RTCRtpSynchronizationSource.timestamp is relative to the time origin (spec); some browsers report epoch time.
 const clockFor = (timestamp: number) => timestamp > 1e12 ? Date.now() : performance.now()
 
+// Cloudflare forwards audio without the ssrc-audio-level header extension, so the receiver's sources carry no level.
+// The level is then measured from the decoded audio: RMS amplitude, the same 0 to 1 scale. One context per page.
+type AudioContextLike = { state: string, resume(): Promise<void>, createMediaStreamSource(stream: MediaStream): MediaStreamAudioSourceNode, createAnalyser(): AnalyserNode }
+let sharedContext: AudioContextLike | null = null
+function audioContext(): AudioContextLike | null {
+    if (sharedContext) return sharedContext
+    const Context = (globalThis as { AudioContext?: new () => AudioContextLike }).AudioContext
+    if (!Context) return null
+    try { sharedContext = new Context() } catch { return null }
+    return sharedContext
+}
+type Meter = { context: AudioContextLike, source: MediaStreamAudioSourceNode, analyser: AnalyserNode, samples: Float32Array }
+
 // A container id of this page, or an element of any document (the floating window has its own).
 function attach(element: string | HTMLElement, track: MediaStreamTrack, { fit = 'cover', mirror = false }: Options): HTMLVideoElement | null {
     const box = typeof element === 'string' ? document.getElementById(element) : element
@@ -45,6 +58,8 @@ export class RemoteAudio {
     private readonly receiver: RTCRtpReceiver | null
     private readonly element: HTMLAudioElement
     private stopGestureRetry: (() => void) | null = null
+    private meter: Meter | null = null
+    private meterFailed = false
     constructor(track: MediaStreamTrack, receiver: RTCRtpReceiver | null) {
         this.track = track
         this.receiver = receiver
@@ -62,12 +77,37 @@ export class RemoteAudio {
         this.stopGestureRetry?.()
         this.element.pause()
         this.element.srcObject = null
+        try { this.meter?.source.disconnect() } catch { /* already disconnected */ }
+        this.meter = null
     }
     getVolumeLevel(): number {
         const source = this.receiver?.getSynchronizationSources?.()[0]
-        if (!source || typeof source.audioLevel !== 'number') return 0
-        if (typeof source.timestamp === 'number' && clockFor(source.timestamp) - source.timestamp > AUDIO_LEVEL_FRESH_MS) return 0
-        return source.audioLevel
+        if (source && typeof source.audioLevel === 'number') {
+            if (typeof source.timestamp === 'number' && clockFor(source.timestamp) - source.timestamp > AUDIO_LEVEL_FRESH_MS) return 0
+            return source.audioLevel
+        }
+        return this.measuredLevel()
+    }
+    private measuredLevel(): number {
+        if (!this.element.srcObject || this.meterFailed) return 0
+        if (!this.meter) {
+            const context = audioContext()
+            if (!context) { this.meterFailed = true; return 0 }
+            try {
+                const source = context.createMediaStreamSource(new MediaStream([this.track]))
+                const analyser = context.createAnalyser()
+                analyser.fftSize = 512
+                source.connect(analyser)
+                this.meter = { context, source, analyser, samples: new Float32Array(analyser.fftSize) }
+            } catch { this.meterFailed = true; return 0 }
+        }
+        const { context, analyser, samples } = this.meter
+        // Created before any click, the context starts suspended; it measures once resumed.
+        if (context.state === 'suspended') void context.resume().catch(() => {})
+        analyser.getFloatTimeDomainData(samples)
+        let sum = 0
+        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
+        return Math.sqrt(sum / samples.length)
     }
     private retryOnGesture(): void {
         if (this.stopGestureRetry || !this.element.srcObject) return

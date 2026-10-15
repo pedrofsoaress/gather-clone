@@ -59,8 +59,9 @@ export const tracksOf = element => [...element.srcObject.tracks]
 export class FakeMediaStream { constructor(tracks) { this.tracks = tracks } }
 
 // The module running on `document`; MediaStream records the tracks it was made with. `clock.now` is performance.now().
-export function loadRemoteMedia(document, clock = { now: 0 }) {
+// `globals` adds browser globals (an AudioContext) to the module's context.
+export function loadRemoteMedia(document, clock = { now: 0 }, globals = {}) {
     const exports = {}
-    vm.runInNewContext(transpile('./remote-media.ts'), { exports, document, MediaStream: FakeMediaStream, HTMLMediaElement: class { setSinkId() {} }, performance: { now: () => clock.now } })
+    vm.runInNewContext(transpile('./remote-media.ts'), { exports, document, MediaStream: FakeMediaStream, HTMLMediaElement: class { setSinkId() {} }, performance: { now: () => clock.now }, ...globals })
     return exports
 }

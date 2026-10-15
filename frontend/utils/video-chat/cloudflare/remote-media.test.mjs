@@ -134,3 +134,36 @@ test('remote audio blocked by autoplay plays on the next click or key press, onc
     page.gesture('pointerdown')
     assert.equal(other.element.played, 0)
 })
+
+test('without a level in the RTP sources (Cloudflare sends none), the level is measured from the decoded audio', () => {
+    const page = fakeDocument('page')
+    const made = []
+    let samples = [0.1, -0.1, 0.1, -0.1]
+    class FakeAudioContext {
+        constructor() { this.state = 'suspended'; this.resumed = 0; made.push(this) }
+        resume() { this.resumed++; this.state = 'running'; return Promise.resolve() }
+        createMediaStreamSource(stream) { const node = { stream, connected: [], disconnected: false, connect(to) { node.connected.push(to) }, disconnect() { node.disconnected = true } }; this.source = node; return node }
+        createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData(array) { for (let i = 0; i < array.length; i++) array[i] = samples[i % samples.length] } } }
+    }
+    const { RemoteAudio, SPEAKING_AUDIO_LEVEL } = loadRemoteMedia(page, { now: 0 }, { AudioContext: FakeAudioContext, Float32Array })
+    const track = { id: 'mic' }
+    const audio = new RemoteAudio(track, { getSynchronizationSources: () => [{ timestamp: 5 }] })
+    assert.ok(Math.abs(audio.getVolumeLevel() - 0.1) < 1e-6)
+    assert.ok(audio.getVolumeLevel() > SPEAKING_AUDIO_LEVEL)
+    assert.equal(made.length, 1)
+    assert.deepEqual([...made[0].source.stream.tracks], [track])
+    assert.equal(made[0].resumed, 1, 'a suspended context is resumed')
+    samples = [0.001, -0.001]
+    assert.ok(audio.getVolumeLevel() < SPEAKING_AUDIO_LEVEL)
+    // One context for the page.
+    const other = new RemoteAudio({ id: 'mic-2' }, null)
+    samples = [0.3, -0.3]
+    assert.ok(Math.abs(other.getVolumeLevel() - 0.3) < 1e-6)
+    assert.equal(made.length, 1)
+    // A level in the sources is used as before, without measuring.
+    const sourced = new RemoteAudio({ id: 'mic-3' }, { getSynchronizationSources: () => [{ audioLevel: 0.4 }] })
+    assert.equal(sourced.getVolumeLevel(), 0.4)
+    audio.stop()
+    assert.equal(made[0].source.disconnected, false, 'the last source made belongs to the other audio')
+    assert.equal(audio.getVolumeLevel(), 0, 'a stopped audio is silent')
+})
