@@ -6,7 +6,7 @@ import { videoChat } from './video-chat'
 
 export type SpeakerSnapshot = Record<string, { ownerUid: string, channel: string, volume: number }>
 type Listener = { client: IAgoraRTCClient, channel: string, track?: IRemoteAudioTrack, cancelled: boolean }
-type Publication = { objectId: string, client: IAgoraRTCClient, stream: MediaStream, track?: ILocalAudioTrack, cancelled: boolean, authorized: boolean, reservationRequested: boolean, reservationReleased: boolean }
+type Publication = { objectId: string, client: IAgoraRTCClient | null, stream: MediaStream, track?: ILocalAudioTrack, cloudflare: boolean, cancelled: boolean, authorized: boolean, reservationRequested: boolean, reservationReleased: boolean }
 export type SpeakerSource = 'tab' | 'microphone'
 
 function command(event: string, objectId: string): Promise<void> {
@@ -22,11 +22,53 @@ class SpatialAudio {
     private publication: Publication | null = null
     private capturing = false
     private captureVersion = 0
+    private uid: string | null = null
     public muted = false
+
+    constructor() {
+        // A speaker track arrived or changed on the Cloudflare connection: give it its volume.
+        signal.on('remote-speakers-changed', () => this.applyCloudflareVolumes())
+        // The Cloudflare connection could not keep this page's speaker: end the publication, server included.
+        signal.on('speaker-publish-failed', ({ objectId }: { objectId: string }) => {
+            const publication = this.publication
+            if (publication?.cloudflare && publication.objectId === objectId) void this.stopPublication(publication, true)
+        })
+        // The router has already switched (it listens first): nothing of the other provider stays running.
+        signal.on('mediaConfig', () => this.onProviderChanged())
+    }
+
+    private applyCloudflareVolumes() {
+        if (videoChat.provider !== 'cloudflare') return
+        for (const [id, state] of Object.entries(this.snapshot)) {
+            const audio = videoChat.speakerAudio(id)
+            if (!audio) continue
+            audio.setVolume(this.muted || state.ownerUid === this.uid ? 0 : state.volume)
+            audio.play()
+        }
+    }
+
+    private onProviderChanged() {
+        const cloudflare = videoChat.provider === 'cloudflare'
+        if (this.publication && this.publication.cloudflare !== cloudflare) void this.stopPublication(this.publication, true)
+        if (this.uid !== null) this.listenAll(this.uid)
+    }
 
     public update(snapshot: SpeakerSnapshot, uid: string) {
         this.snapshot = snapshot
+        this.uid = uid
         if (this.publication?.authorized && snapshot[this.publication.objectId]?.ownerUid !== uid) void this.stop(false)
+        this.listenAll(uid)
+        signal.emit('officeSpeakerState', snapshot)
+    }
+
+    private listenAll(uid: string) {
+        const snapshot = this.snapshot
+        if (videoChat.provider === 'cloudflare') {
+            // The server pulls the speakers in range into the office connection; only the volumes are set here.
+            for (const [id, listener] of this.listeners) this.removeListener(id, listener)
+            this.applyCloudflareVolumes()
+            return
+        }
         for (const [id, listener] of this.listeners) {
             const state = snapshot[id]
             if (!state || state.volume <= 0 || state.channel !== listener.channel || state.ownerUid === uid) this.removeListener(id, listener)
@@ -35,7 +77,6 @@ class SpatialAudio {
         for (const [id, state] of Object.entries(snapshot)) {
             if (state.volume > 0 && state.ownerUid !== uid && !this.listeners.has(id)) void this.listen(id, state)
         }
-        signal.emit('officeSpeakerState', snapshot)
     }
 
     private async listen(id: string, state: SpeakerSnapshot[string]) {
@@ -103,26 +144,32 @@ class SpatialAudio {
             if (version !== this.captureVersion) throw new Error('Compartilhamento cancelado ao sair do escritório.')
             const audio = stream.getAudioTracks()[0]
             if (!audio) throw new Error(source === 'microphone' ? 'Permita o microfone no navegador para falar para a sala.' : 'Escolha uma aba e marque “Compartilhar áudio” no navegador.')
-            const client = AgoraRTC.createClient({ codec: 'vp8', mode: 'rtc' })
-            const current: Publication = { objectId, client, stream, cancelled: false, authorized: false, reservationRequested: true, reservationReleased: false }
+            const cloudflare = videoChat.provider === 'cloudflare'
+            const client = cloudflare ? null : AgoraRTC.createClient({ codec: 'vp8', mode: 'rtc' })
+            const current: Publication = { objectId, client, stream, cloudflare, cancelled: false, authorized: false, reservationRequested: true, reservationReleased: false }
             publication = current
             this.publication = current
             for (const track of stream.getTracks()) track.addEventListener('ended', () => { void this.stopPublication(current, true) }, { once: true })
             await command('speakerStart', objectId)
             current.authorized = true
             if (current.cancelled) throw new Error('Compartilhamento cancelado.')
-            const authorization = await generateSpeakerToken(objectId, true)
-            if (!authorization || current.cancelled) throw new Error('A caixa de som ficou indisponível.')
-            await client.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, authorization.channel, authorization.token, authorization.uid)
-            if (current.cancelled) throw new Error('Compartilhamento cancelado.')
-            current.track = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: audio })
-            await client.publish(current.track)
-            if (current.cancelled) throw new Error('Compartilhamento cancelado.')
-            client.on('token-privilege-will-expire', async () => {
-                const next = await generateSpeakerToken(objectId, true).catch(() => null)
-                if (next && !current.cancelled && next.channel === authorization.channel) await client.renewToken(next.token).catch(() => this.stopPublication(current, true))
-                else await this.stopPublication(current, true)
-            })
+            if (cloudflare) {
+                await videoChat.publishSpeaker(objectId, audio)
+                if (current.cancelled) throw new Error('Compartilhamento cancelado.')
+            } else {
+                const authorization = await generateSpeakerToken(objectId, true)
+                if (!authorization || current.cancelled) throw new Error('A caixa de som ficou indisponível.')
+                await client!.join(process.env.NEXT_PUBLIC_AGORA_APP_ID!, authorization.channel, authorization.token, authorization.uid)
+                if (current.cancelled) throw new Error('Compartilhamento cancelado.')
+                current.track = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: audio })
+                await client!.publish(current.track)
+                if (current.cancelled) throw new Error('Compartilhamento cancelado.')
+                client!.on('token-privilege-will-expire', async () => {
+                    const next = await generateSpeakerToken(objectId, true).catch(() => null)
+                    if (next && !current.cancelled && next.channel === authorization.channel) await client!.renewToken(next.token).catch(() => this.stopPublication(current, true))
+                    else await this.stopPublication(current, true)
+                })
+            }
             signal.emit('officeNotice', { message: source === 'microphone' ? 'Seu microfone está aberto para a sala toda.' : 'Áudio da aba tocando perto da caixa de som.', key: 'speaker-start' })
         } catch (error) {
             stream?.getTracks().forEach(track => track.stop())
@@ -143,7 +190,8 @@ class SpatialAudio {
         publication.stream.getTracks().forEach(track => track.stop())
         publication.track?.close()
         publication.track = undefined
-        if (publication.client.connectionState !== 'DISCONNECTED') await publication.client.leave().catch(() => {})
+        if (publication.cloudflare) await videoChat.unpublishSpeaker(publication.objectId).catch(() => {})
+        else if (publication.client && publication.client.connectionState !== 'DISCONNECTED') await publication.client.leave().catch(() => {})
         // Start and stop are ordered socket commands. Even a lost/late start ack
         // must release its claim; cleanup is bound to this capture, never a newer one.
         if (notifyServer && publication.reservationRequested && !publication.reservationReleased) {
@@ -155,6 +203,7 @@ class SpatialAudio {
     public setMuted(muted: boolean) {
         this.muted = muted
         for (const [id, listener] of this.listeners) listener.track?.setVolume(muted ? 0 : this.snapshot[id]?.volume ?? 0)
+        this.applyCloudflareVolumes()
         signal.emit('speakerMuted', muted)
     }
 
