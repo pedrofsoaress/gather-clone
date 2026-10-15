@@ -68,8 +68,8 @@ export interface Player {
 }
 
 export const defaultSkin = '009'
-const PROXIMITY_RADIUS = 3.5
-const SEATED_PROXIMITY_RADIUS = 2.5
+export const PROXIMITY_RADIUS = 3.5
+export const SEATED_PROXIMITY_RADIUS = 2.5
 export const MAX_PLAYERS_PER_SPACE = 80
 
 export const Spawnpoint = z.object({

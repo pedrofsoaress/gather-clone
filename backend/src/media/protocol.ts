@@ -33,8 +33,12 @@ export type MediaConfig = { provider: 'agora' } | { provider: 'cloudflare', iceS
 // `answer` step follows. (A page offer on this Cloudflare-offered session leaves it "disconnected" for Cloudflare,
 // and an offer with every m-line stopped has no BUNDLE group.) The next pull offer renegotiates as usual. A `close`
 // without `force` (page offer, then an `answer` step) is still understood by the page but no longer sent.
+// `prefetch` on a pulled track: pulled ahead of a conversation (the sender is close but not in it), at the lowest layer.
+// The page holds such a track without showing or playing it. Whether a received track is shown follows the roster,
+// `mediaPeers`, alone: a sender listed there is in the conversation (the same pull turned active, nothing is
+// renegotiated); a sender dropped from it is hidden again while their track may stay pulled as prefetch.
 export type NegotiateStep = { generation: number } & (
-    | { type: 'pull', offer: string, tracks: { mid: string, fromUid: string, kind: MediaKind, objectId?: string }[] }
+    | { type: 'pull', offer: string, tracks: { mid: string, fromUid: string, kind: MediaKind, objectId?: string, prefetch: boolean }[] }
     | { type: 'close', mids: string[], force?: true }
     | { type: 'answer', answer: string }
     // Nothing is pulled and the receive connection carries RECEIVE_RECYCLE_MLINES dead m-lines: the page closes it
@@ -60,3 +64,6 @@ export const RECEIVE_FORCE_RECYCLE_MLINES = 100
 // Cloudflare refuses a pull with `empty_track_error` while the published track has not sent media yet (a camera that
 // just came on): those are retried with this backoff, about 7.5 s in all, before the page is told.
 export const EMPTY_TRACK_RETRY_MS = [500, 1000, 2000, 4000]
+// A prefetched track whose sender walked out of PREFETCH_RADIUS is closed only after this long (unless they come back
+// first), so walking back and forth at the edge never closes and pulls again.
+export const PREFETCH_GRACE_MS = 3000

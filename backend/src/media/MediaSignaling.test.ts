@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Session, type Room } from '../session'
 import { CloudflareError, type RealtimeApi } from './CloudflareRealtime'
-import { MediaSignaling } from './MediaSignaling'
+import { MediaSignaling, type MediaSignalingOptions } from './MediaSignaling'
 import { EMPTY_TRACK_RETRY_MS, PUBLISH_TIMEOUT_MS, STUN_ONLY } from './protocol'
 
 type Client = ReturnType<typeof fakeClient>
@@ -19,7 +19,8 @@ function fakeClient(uid: string) {
     return client
 }
 
-function harness(provider: 'agora' | 'cloudflare' = 'cloudflare', overrides: Partial<RealtimeApi> = {}) {
+// The prefetch grace is off unless a test sets it (see the grace tests).
+function harness(provider: 'agora' | 'cloudflare' = 'cloudflare', overrides: Partial<RealtimeApi> = {}, options: Partial<MediaSignalingOptions> = {}) {
     const calls: any[][] = []
     let sessions = 0, mids = 100
     const api: RealtimeApi = {
@@ -39,7 +40,7 @@ function harness(provider: 'agora' | 'cloudflare' = 'cloudflare', overrides: Par
     const room: Room = { name: 'A', tilemap, areas: { training: { label: 'Treinamento', meeting: { stage: { x1: 0, y1: 9, x2: 29, y2: 9 } } } } }
     const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [room, structuredClone(room)] })
     const logs: string[] = [], clients = new Map<string, Client>()
-    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line), pullRetryMs: 5, emptyTrackRetryMs: [1, 2, 3, 4], publishTimeoutMs: 40 })
+    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line), pullRetryMs: 5, emptyTrackRetryMs: [1, 2, 3, 4], publishTimeoutMs: 40, prefetchGraceMs: 0, ...options })
     const place = async (uid: string, x: number, y: number, floor = 0) => { session.changeRoom(uid, floor, x, y); media.changed(session); await media.idle() }
     const enter = async (uid: string, x: number, y: number, floor = 0) => {
         session.addPlayer(`socket-${uid}`, uid, uid, '009')
@@ -119,7 +120,7 @@ test('publish: one send session, unique track names, and the neighbour pulls mic
     await h.media.idle()
     const pulls = stepsOf(bia).filter(step => step.type === 'pull')
     assert.equal(pulls.length, 1)
-    assert.deepEqual(pulls[0], { type: 'pull', offer: 'pull-offer', tracks: [{ mid: '101', fromUid: 'ana', kind: 'mic' }, { mid: '102', fromUid: 'ana', kind: 'camera' }] })
+    assert.deepEqual(pulls[0], { type: 'pull', offer: 'pull-offer', tracks: [{ mid: '101', fromUid: 'ana', kind: 'mic', prefetch: false }, { mid: '102', fromUid: 'ana', kind: 'camera', prefetch: false }] })
     assert.deepEqual(callsOf(h.calls, 'pull'), [['pull', 's2', [
         { location: 'remote', sessionId: 's1', trackName: 'mic-1' },
         { location: 'remote', sessionId: 's1', trackName: 'camera-2', simulcast: { preferredRid: 'q', ...SIMULCAST } },
@@ -699,4 +700,144 @@ test('settle: m-lines the page abandoned are closed with its offer and answered'
     await h.media.idle()
     assert.deepEqual(pulledKinds(bia), [], 'a publication on a settled mid is dropped')
     assert.deepEqual(await harness('agora').media.settle('ana', 'socket-ana', { mids: ['3'], offer: 'o' }), { ok: false, error: 'O vídeo deste escritório usa a Agora.' })
+})
+
+// A clock for the prefetch grace: timers run only when the test fires them.
+function fakeTimers() {
+    let id = 0
+    const pending = new Map<number, { run: () => void, ms: number }>()
+    return {
+        pending,
+        timers: { setTimeout(run: () => void, ms: number) { pending.set(++id, { run, ms }); return id }, clearTimeout(timer: unknown) { pending.delete(timer as number) } },
+        fire() { const due = [...pending.values()]; pending.clear(); for (const { run } of due) run() },
+    }
+}
+const pullSteps = (client: Client, from = 0) => stepsOf(client, from).filter(step => step.type === 'pull')
+
+test('prefetch: someone around is pulled at q and not shown; joining the conversation flips the same pull', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 8, 0)
+    const sub = receiveSessionOf(h.calls, 'bia')
+    assert.deepEqual(pullSteps(bia).map(step => step.tracks), [[{ mid: '101', fromUid: 'ana', kind: 'mic', prefetch: true }, { mid: '102', fromUid: 'ana', kind: 'camera', prefetch: true }]])
+    assert.deepEqual(callsOf(h.calls, 'pull')[0][2][1].simulcast, { preferredRid: 'q', ...SIMULCAST })
+    assert.deepEqual(lastPeers(bia), { self: 'bia', conversation: null, peers: [], ownScreen: false }, 'no tile while prefetched')
+    // A layer asked meanwhile is kept for later: a prefetched camera stays at q.
+    assert.deepEqual(await h.media.layer('bia', 'socket-bia', { fromUid: 'ana', layer: 'h' }), { ok: true })
+    await h.media.idle()
+    assert.deepEqual(callsOf(h.calls, 'update'), [])
+
+    const steps = bia.steps.length, pulls = callsOf(h.calls, 'pull').length
+    await h.place('bia', 4, 0)
+    assert.deepEqual(stepsOf(bia, steps), [], 'no renegotiation, no close')
+    assert.equal(callsOf(h.calls, 'pull').length, pulls)
+    assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === sub), [])
+    assert.deepEqual(callsOf(h.calls, 'update'), [['update', sub, [{ location: 'remote', mid: '102', sessionId: 's1', trackName: 'camera-2', simulcast: { preferredRid: 'h', ...SIMULCAST } }]]])
+    assert.deepEqual(lastPeers(bia).peers, [{ uid: 'ana', mic: true, camera: true, screen: false }], 'the roster shows her at once')
+
+    // Out of the conversation, still around: back to prefetch, at q, hidden, still pulled.
+    await h.place('bia', 8, 0)
+    assert.deepEqual(stepsOf(bia, steps), [])
+    assert.deepEqual(callsOf(h.calls, 'update').at(-1), ['update', sub, [{ location: 'remote', mid: '102', sessionId: 's1', trackName: 'camera-2', simulcast: { preferredRid: 'q', ...SIMULCAST } }]])
+    assert.deepEqual(lastPeers(bia).peers, [])
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+
+    // Out of reach (no grace here): closed forced.
+    await h.place('bia', 14, 0)
+    assert.deepEqual(stepsOf(bia, steps), [{ type: 'close', mids: ['101', '102'], force: true }])
+    assert.deepEqual(pulledKinds(bia), [])
+})
+
+test('prefetch grace: walking out of reach keeps the pulls 3 s, coming back first cancels the close', async () => {
+    const clock = fakeTimers()
+    const h = harness('cloudflare', {}, { prefetchGraceMs: 3000, timers: clock.timers })
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 8, 0)
+    const steps = bia.steps.length, pulls = callsOf(h.calls, 'pull').length
+
+    await h.place('bia', 10, 0)
+    assert.deepEqual(stepsOf(bia, steps), [])
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+    assert.deepEqual([...clock.pending.values()].map(timer => timer.ms), [3000, 3000])
+    await h.place('bia', 9, 0)
+    await h.place('bia', 8, 0)
+    assert.equal(clock.pending.size, 0, 'back within reach: the timers are cancelled')
+    await h.place('bia', 11, 0)
+    await h.place('bia', 8, 0)
+    await h.place('bia', 10, 0)
+    assert.deepEqual(stepsOf(bia, steps), [], 'back and forth at the edge: nothing closed, nothing pulled again')
+    assert.equal(callsOf(h.calls, 'pull').length, pulls)
+
+    clock.fire()
+    await h.media.idle()
+    assert.deepEqual(stepsOf(bia, steps), [{ type: 'close', mids: ['101', '102'], force: true }])
+    assert.deepEqual(pulledKinds(bia), [])
+    assert.equal(clock.pending.size, 0)
+
+    // From the conversation straight out of reach (a teleport): hidden at once, kept as prefetch at q until the timer.
+    await h.place('bia', 4, 0)
+    await h.media.layer('bia', 'socket-bia', { fromUid: 'ana', layer: 'h' })
+    await h.media.idle()
+    const sub = receiveSessionOf(h.calls, 'bia')
+    const before = bia.steps.length
+    await h.place('bia', 14, 0)
+    assert.deepEqual(lastPeers(bia).peers, [])
+    assert.deepEqual(stepsOf(bia, before), [])
+    assert.equal(callsOf(h.calls, 'update').at(-1)![2][0].simulcast.preferredRid, 'q')
+    assert.equal(callsOf(h.calls, 'update').at(-1)![1], sub)
+    clock.fire()
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), [])
+})
+
+test('prefetch grace: a sender entering a closed room, leaving or republishing is closed at once', async () => {
+    const clock = fakeTimers()
+    const h = harness('cloudflare', {}, { prefetchGraceMs: 3000, timers: clock.timers })
+    await h.enter('ana', 12, 0)
+    await h.publish('ana', 'mic')
+    const bia = await h.enter('bia', 18, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    await h.place('ana', 21, 0)
+    assert.deepEqual(pulledKinds(bia), [], 'ana is inside the closed room: nothing of hers, not even for the grace')
+    assert.equal(clock.pending.size, 0)
+    // Nor is anything prefetched across its door, from either side.
+    await h.place('bia', 19, 0)
+    assert.deepEqual(pulledKinds(bia), [])
+    assert.deepEqual(pullSteps(h.clients.get('ana')!), [])
+
+    await h.place('ana', 12, 0)
+    await h.place('bia', 17, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    await h.place('bia', 19, 4)
+    assert.equal(clock.pending.size, 1)
+    // Republished in the meantime: the old track is dead, closed without waiting; the new one is out of reach.
+    await h.publish('ana', 'mic')
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), [])
+    assert.equal(clock.pending.size, 0)
+})
+
+test('prefetch: a refused prefetch is never reported, and is asked again once the conversation starts', async () => {
+    let refuse = true
+    const h = harness('cloudflare', {
+        async pull(sid, tracks) {
+            h.calls.push(['pull', sid, tracks])
+            return { requiresImmediateRenegotiation: true, sessionDescription: { type: 'offer', sdp: 'pull-offer' }, tracks: tracks.map((t, i) => refuse && t.trackName.startsWith('camera') ? { sessionId: t.sessionId, trackName: t.trackName, errorCode: 'not_found' } : { mid: `m${h.calls.length}-${i}`, sessionId: t.sessionId, trackName: t.trackName }) }
+        },
+    })
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 8, 0)
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    assert.equal(bia.emitted.some(([event]) => event === 'mediaTrackError'), false)
+    assert.ok(h.logs.some(line => line.includes('(prefetch)')), h.logs.join('\n'))
+
+    refuse = false
+    await h.place('bia', 4, 0)
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+    assert.equal(pullSteps(bia).at(-1)!.tracks[0].prefetch, false)
 })

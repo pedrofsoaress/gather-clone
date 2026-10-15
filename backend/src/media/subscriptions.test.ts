@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Session, type Room } from '../session'
-import { desiredPulls, diffPulls, mediaView, peersFor, type MediaView, type Publication, type ViewPlayer } from './subscriptions'
+import { desiredPulls, diffPulls, mediaFingerprint, mediaView, peersFor, PREFETCH_RADIUS, SEATED_PREFETCH_RADIUS, type MediaView, type Publication, type ViewPlayer } from './subscriptions'
 
 const pub = (uid: string, kind: Publication['kind'], extra: Partial<Publication> = {}): Publication => ({ uid, kind, sessionId: `s-${uid}`, trackName: `${kind}-1`, mid: '0', live: true, simulcast: kind === 'camera', ...extra })
-const view = (players: Record<string, Partial<ViewPlayer>>): MediaView => new Map(Object.entries(players).map(([uid, p]) => [uid, { conversation: null, moderators: null, speakers: {}, ...p }]))
+const view = (players: Record<string, Partial<ViewPlayer>>): MediaView => new Map(Object.entries(players).map(([uid, p]) => [uid, { conversation: null, moderators: null, speakers: {}, open: null, nearby: [], ...p }]))
 const keys = (pulls: Map<string, unknown>) => [...pulls.keys()]
 
 test('a conversation receives the others microphones, cameras and screens, never its own', () => {
@@ -60,4 +60,90 @@ test('the view follows the server: closed rooms, floors and proximity', () => {
     assert.equal(v.get('bia')!.conversation, v.get('eva')!.conversation, 'bia is in the hallway group, outside the room')
     assert.notEqual(v.get('dani')!.conversation, v.get('ana')!.conversation, 'same tile on another floor')
     assert.deepEqual(keys(desiredPulls(v, 'bia', [pub('ana', 'mic'), pub('dani', 'mic')])), [])
+})
+
+test('prefetch: someone around you, outside your conversation, is pulled flagged prefetch; your conversation is active', () => {
+    const v = view({
+        ana: { conversation: 'c1', open: 0, nearby: ['bia', 'caio'] },
+        bia: { conversation: 'c1', open: 0, nearby: ['ana', 'caio'] },
+        caio: { conversation: null, open: 0, nearby: ['ana', 'bia'] },
+        dani: { conversation: null, open: 0, nearby: [] },
+    })
+    const pubs = [pub('bia', 'mic'), pub('bia', 'camera'), pub('caio', 'mic'), pub('caio', 'camera'), pub('caio', 'screen'), pub('dani', 'mic'), pub('ana', 'mic'), pub('caio', 'speaker', { objectId: 'lounge', trackName: 'speaker-lounge-1' })]
+    const wanted = desiredPulls(v, 'ana', pubs)
+    assert.deepEqual([...wanted.values()].map(pull => `${pull.key}:${pull.prefetch ? 'prefetch' : 'active'}`), ['bia|mic-1:active', 'bia|camera-1:active', 'caio|mic-1:prefetch', 'caio|camera-1:prefetch', 'caio|screen-1:prefetch'])
+    // caio is alone: everyone around him is prefetched, never his own tracks, never a speaker by proximity.
+    assert.deepEqual([...desiredPulls(v, 'caio', pubs).values()].map(pull => `${pull.key}:${pull.prefetch}`), ['bia|mic-1:true', 'bia|camera-1:true', 'ana|mic-1:true'])
+    assert.deepEqual(keys(desiredPulls(v, 'dani', pubs)), [])
+})
+
+test('prefetch: nothing from or into a closed room, a meeting room or another floor', () => {
+    const pubs = [pub('bia', 'mic'), pub('bia', 'camera')]
+    // bia is listed around ana but stands in a private area (open null): nothing, whatever the list says.
+    assert.deepEqual(keys(desiredPulls(view({ ana: { open: 0, nearby: ['bia'] }, bia: { open: null, nearby: ['ana'] } }), 'ana', pubs)), [])
+    assert.deepEqual(keys(desiredPulls(view({ ana: { open: null, nearby: ['bia'] }, bia: { open: 0, nearby: ['ana'] } }), 'ana', pubs)), [])
+    assert.deepEqual(keys(desiredPulls(view({ ana: { open: 0, nearby: ['bia'] }, bia: { open: 1, nearby: ['ana'] } }), 'ana', pubs)), [])
+    // The audience of a meeting room gets only the stage cameras: never a prefetch to make up for it.
+    const room = { conversation: 't', moderators: ['host'], open: null }
+    assert.deepEqual(keys(desiredPulls(view({ host: room, ana: room, bia: { ...room, nearby: ['ana'] } }), 'ana', [pub('bia', 'camera')])), [])
+})
+
+test('prefetch: the server view, closed rooms, meeting rooms, floors and the seated reach', () => {
+    const tilemap: Room['tilemap'] = {}
+    for (let x = 0; x < 40; x++) for (let y = 0; y < 12; y++) tilemap[`${x}, ${y}`] = x >= 30 ? { privateAreaId: 'room' } : x >= 20 && y >= 6 ? { areaId: 'training' } : {}
+    const desk = (id: string, x: number, y: number) => ({ id, kind: 'desk' as const, label: id, bounds: { x, y: y - 1, width: 1, height: 1 }, approach: { x, y } })
+    const room: Room = { name: 'A', tilemap, areas: { training: { label: 'Treinamento', conversation: 'stage', meeting: { stage: { x1: 20, y1: 11, x2: 29, y2: 11 } } } }, interactions: [desk('d1', 2, 1), desk('d2', 2, 6), desk('d3', 2, 7)] }
+    const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [room, structuredClone(room)] })
+    const office = session.roomFeatures[0].office
+    const add = (uid: string, x: number, y: number, floor = 0) => { if (!session.getPlayer(uid)) session.addPlayer(`socket-${uid}`, uid, uid, '009'); session.changeRoom(uid, floor, x, y) }
+    add('ana', 10, 1); add('bia', 16, 1)
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, ['bia'], 'six tiles: within PREFETCH_RADIUS')
+    assert.equal(mediaView(session).get('ana')!.conversation, null)
+    add('bia', 17, 1)
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, [], 'seven tiles: out')
+    add('bia', 16, 1, 1)
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, [], 'another floor')
+    add('bia', 31, 1); add('ana', 27, 1)
+    assert.equal(mediaView(session).get('bia')!.open, null, 'inside a closed room')
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, [], 'across the door of a closed room')
+    add('bia', 22, 7); add('ana', 22, 3)
+    assert.equal(mediaView(session).get('bia')!.open, null, 'inside a meeting room')
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, [])
+
+    // Two seated people: SEATED_PREFETCH_RADIUS (5.5). Seated 6 tiles apart: nothing; one standing: 6.5 applies.
+    add('ana', 2, 1); add('bia', 2, 7)
+    assert.ok(office.occupy('ana', 'd1').ok); assert.ok(office.occupy('bia', 'd3').ok)
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, [])
+    office.release('bia')
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, ['bia'])
+    add('bia', 2, 6); assert.ok(office.occupy('bia', 'd2').ok)
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, ['bia'], 'seated 5 tiles apart')
+    assert.equal(PREFETCH_RADIUS, 6.5); assert.equal(SEATED_PREFETCH_RADIUS, 5.5)
+})
+
+test('prefetch: the same track turning active (or back) is a flip, not a close and a pull', () => {
+    const active = desiredPulls(view({ ana: { conversation: 'c' }, bia: { conversation: 'c' } }), 'ana', [pub('bia', 'mic'), pub('bia', 'camera')])
+    const around = desiredPulls(view({ ana: { open: 0, nearby: ['bia'] }, bia: { open: 0, nearby: ['ana'] } }), 'ana', [pub('bia', 'mic'), pub('bia', 'camera')])
+    const pulled = (wanted: Map<string, { prefetch: boolean }>) => new Map([...wanted].map(([key, pull]) => [key, { prefetch: pull.prefetch }]))
+    const up = diffPulls(pulled(around), active)
+    assert.deepEqual({ add: up.add, remove: up.remove, flip: up.flip.map(pull => `${pull.key}:${pull.prefetch}`) }, { add: [], remove: [], flip: ['bia|mic-1:false', 'bia|camera-1:false'] })
+    const down = diffPulls(pulled(active), around)
+    assert.deepEqual(down.flip.map(pull => `${pull.key}:${pull.prefetch}`), ['bia|mic-1:true', 'bia|camera-1:true'])
+    assert.deepEqual(diffPulls(pulled(active), active).flip, [])
+})
+
+test('prefetch: the fingerprint moves when someone comes within reach or leaves it, not on every step inside it', () => {
+    const tilemap: Room['tilemap'] = {}
+    for (let x = 0; x < 30; x++) tilemap[`${x}, 0`] = {}
+    const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [{ name: 'A', tilemap }] })
+    const add = (uid: string, x: number) => { if (!session.getPlayer(uid)) session.addPlayer(`socket-${uid}`, uid, uid, '009'); session.changeRoom(uid, 0, x, 0) }
+    add('ana', 0); add('bia', 10)
+    const far = mediaFingerprint(session)
+    add('bia', 9)
+    assert.equal(mediaFingerprint(session), far, 'still out of reach')
+    add('bia', 6)
+    const near = mediaFingerprint(session)
+    assert.notEqual(near, far, 'within PREFETCH_RADIUS')
+    add('bia', 5)
+    assert.equal(mediaFingerprint(session), near, 'a step inside the reach, still no conversation')
 })

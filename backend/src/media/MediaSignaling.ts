@@ -1,12 +1,14 @@
 import type { Session } from '../session'
 import { conversationChannelFor } from '../office/ConversationAuthorization'
 import { MAX_TRACKS_PER_REQUEST, type IceServer, type Layer, type RealtimeApi, type Simulcast } from './CloudflareRealtime'
-import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaSettle, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PUBLISH_TIMEOUT_MS, PULL_RETRY_MS, RECEIVE_FORCE_RECYCLE_MLINES, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
-import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
+import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaSettle, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PREFETCH_GRACE_MS, PUBLISH_TIMEOUT_MS, PULL_RETRY_MS, RECEIVE_FORCE_RECYCLE_MLINES, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
+import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, pullKey, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
 
 export type MediaClient = { socketId: string, emit(event: string, payload?: unknown): void, ask(event: string, payload: unknown): Promise<any> }
 export type MediaAck = { ok: true, answer?: string, config?: MediaConfig } | { ok: false, error: string }
-export type MediaSignalingOptions = { provider: 'agora' | 'cloudflare', api: RealtimeApi | null, iceServers: () => Promise<IceServer[]>, getSession: (uid: string) => Session | undefined, schedule?: (run: () => void) => void, log?: (line: string) => void, pullRetryMs?: number, emptyTrackRetryMs?: number[], publishTimeoutMs?: number }
+// prefetchGraceMs: 0 closes a prefetch at once; timers: the clock of the prefetch grace (tests).
+export type MediaSignalingOptions = { provider: 'agora' | 'cloudflare', api: RealtimeApi | null, iceServers: () => Promise<IceServer[]>, getSession: (uid: string) => Session | undefined, schedule?: (run: () => void) => void, log?: (line: string) => void, pullRetryMs?: number, emptyTrackRetryMs?: number[], publishTimeoutMs?: number, prefetchGraceMs?: number, timers?: Timers }
+export type Timers = { setTimeout(run: () => void, ms: number): unknown, clearTimeout(timer: unknown): void }
 
 const AGORA: MediaAck = { ok: false, error: 'O vídeo deste escritório usa a Agora.' }
 const INVALID: MediaAck = { ok: false, error: 'Pedido de vídeo inválido.' }
@@ -15,7 +17,7 @@ const SPEAKER: MediaAck = { ok: false, error: 'A caixa de som ficou indisponíve
 const SCREEN: MediaAck = { ok: false, error: 'Aproxime-se de alguém para iniciar uma chamada antes de compartilhar a tela.' }
 const CLOUDFLARE: MediaAck = { ok: false, error: 'Não foi possível conectar o vídeo. Tente novamente.' }
 
-type Pulled = { mid: string, fromUid: string, kind: MediaKind, objectId?: string, sessionId: string, trackName: string, simulcast: boolean, layer: Layer }
+type Pulled = { mid: string, fromUid: string, kind: MediaKind, objectId?: string, sessionId: string, trackName: string, simulcast: boolean, layer: Layer, prefetch: boolean }
 type Lane = { sessionId: string | null, chain: Promise<void> }
 type Connection = {
     uid: string,
@@ -25,7 +27,9 @@ type Connection = {
     session: Session,
     pub: Lane,
     // failed: refused pulls not to be asked again; retried: how many retries each refused pull already had.
-    sub: Lane & { pulled: Map<string, Pulled>, failed: Set<string>, retried: Map<string, number>, syncing: boolean, again: boolean, mlines: number },
+    // quiet: failed while prefetched, never reported; asked again once they are wanted for the conversation.
+    // grace: prefetched tracks of someone who walked out of reach, kept until their timer expires (PREFETCH_GRACE_MS).
+    sub: Lane & { pulled: Map<string, Pulled>, failed: Set<string>, retried: Map<string, number>, quiet: Set<string>, grace: Map<string, { timer: unknown, expired: boolean }>, syncing: boolean, again: boolean, mlines: number },
     // 'mic' | 'camera' | 'screen' | 'speaker:<objectId>'
     publications: Map<string, Publication>,
     layers: Map<string, Layer>,
@@ -34,7 +38,8 @@ type Connection = {
     awaitingReset: boolean,
 }
 // syncKey: what decides who pulls what. peersKey: that plus the live flags shown on the tiles.
-type Snapshot = { syncKey: string, peersKey: string, view: MediaView, publications: Publication[], index: PublicationIndex, byConversation: Map<string, Publication[]>, speakers: Publication[] }
+// byUid: the microphones, cameras and screens of each person; keys: the pull key of every publication.
+type Snapshot = { syncKey: string, peersKey: string, view: MediaView, publications: Publication[], index: PublicationIndex, byConversation: Map<string, Publication[]>, byUid: Map<string, Publication[]>, keys: Set<string>, speakers: Publication[] }
 
 // The connection was replaced (leave, reset, restart, new join) while an operation was in flight.
 class Stale extends Error {}
@@ -42,6 +47,7 @@ class Stale extends Error {}
 const noop = () => {}
 const simulcastFor = (layer: Layer): Simulcast => ({ preferredRid: layer, priorityOrdering: 'none', ridNotAvailable: 'asciibetical' })
 const publicationKey = (kind: MediaKind, objectId?: string) => kind === 'speaker' ? `speaker:${objectId}` : kind
+const append = <K, V>(map: Map<K, V[]>, key: K, value: V) => { const list = map.get(key); if (list) list.push(value); else map.set(key, [value]) }
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 // The server side of the Cloudflare Realtime calls: it publishes what each page sends, and pulls into each
@@ -61,6 +67,8 @@ export class MediaSignaling {
     private readonly pullRetryMs: number
     private readonly emptyTrackRetryMs: number[]
     private readonly publishTimeoutMs: number
+    private readonly prefetchGraceMs: number
+    private readonly timers: Timers
     private trackCounter = 0
     private generations = 0
 
@@ -70,6 +78,8 @@ export class MediaSignaling {
         this.pullRetryMs = options.pullRetryMs ?? PULL_RETRY_MS
         this.emptyTrackRetryMs = options.emptyTrackRetryMs ?? EMPTY_TRACK_RETRY_MS
         this.publishTimeoutMs = options.publishTimeoutMs ?? PUBLISH_TIMEOUT_MS
+        this.prefetchGraceMs = options.prefetchGraceMs ?? PREFETCH_GRACE_MS
+        this.timers = options.timers ?? { setTimeout: (run, ms) => setTimeout(run, ms), clearTimeout: timer => clearTimeout(timer as NodeJS.Timeout) }
     }
 
     private get cloudflare() { return this.options.provider === 'cloudflare' && this.options.api !== null }
@@ -279,7 +289,8 @@ export class MediaSignaling {
         // Bounded by the people in the office: a page cannot grow this map with made-up ids.
         if (!connection.session.getPlayer(fromUid)) return { ok: true }
         connection.layers.set(fromUid, layer)
-        const needsUpdate = () => [...connection.sub.pulled.values()].find(pull => pull.fromUid === fromUid && pull.kind === 'camera' && pull.simulcast && pull.layer !== connection.layers.get(fromUid))
+        // A prefetched camera stays at q; the layer asked is applied when it joins the conversation.
+        const needsUpdate = () => [...connection.sub.pulled.values()].find(pull => pull.fromUid === fromUid && pull.kind === 'camera' && pull.simulcast && !pull.prefetch && pull.layer !== connection.layers.get(fromUid))
         if (needsUpdate()) {
             // Not awaited: the page gets its ack even while a negotiation holds the receive lane.
             this.onLane(connection, 'sub', async () => {
@@ -343,7 +354,7 @@ export class MediaSignaling {
         return {
             uid, generation: ++this.generations, client, session,
             pub: { sessionId: null, chain: Promise.resolve() },
-            sub: { sessionId: null, chain: Promise.resolve(), pulled: new Map(), failed: new Set(), retried: new Map(), syncing: false, again: false, mlines: 0 },
+            sub: { sessionId: null, chain: Promise.resolve(), pulled: new Map(), failed: new Set(), retried: new Map(), quiet: new Set(), grace: new Map(), syncing: false, again: false, mlines: 0 },
             publications: new Map(), layers: new Map(), lastPeers: null, awaitingReset: false,
         }
     }
@@ -445,26 +456,61 @@ export class MediaSignaling {
             const view = mediaView(session)
             const publications = this.active(session).flatMap(connection => [...connection.publications.values()])
             const byConversation = new Map<string, Publication[]>()
+            const byUid = new Map<string, Publication[]>()
             const speakers: Publication[] = []
             for (const publication of publications) {
                 if (publication.kind === 'speaker') { speakers.push(publication); continue }
+                append(byUid, publication.uid, publication)
                 const conversation = view.get(publication.uid)?.conversation
-                if (!conversation) continue
-                const list = byConversation.get(conversation)
-                if (list) list.push(publication)
-                else byConversation.set(conversation, [publication])
+                if (conversation) append(byConversation, conversation, publication)
             }
-            next = { syncKey, peersKey, view, publications, index: indexPublications(publications), byConversation, speakers }
+            next = { syncKey, peersKey, view, publications, index: indexPublications(publications), byConversation, byUid, keys: new Set(publications.map(pullKey)), speakers }
         }
         this.snapshots.set(session, next)
         return next
     }
 
-    // desiredPulls over the only publications that can match: the receiver's conversation and the speakers.
+    // desiredPulls over the only publications that can match: the receiver's conversation, the people around them
+    // outside it (prefetch) and the speakers.
     private wanted(snapshot: Snapshot, uid: string) {
-        const conversation = snapshot.view.get(uid)?.conversation
-        const candidates = conversation ? snapshot.byConversation.get(conversation) ?? [] : []
-        return desiredPulls(snapshot.view, uid, snapshot.speakers.length ? [...candidates, ...snapshot.speakers] : candidates)
+        const me = snapshot.view.get(uid)
+        const conversation = me?.conversation
+        const candidates = [...(conversation ? snapshot.byConversation.get(conversation) ?? [] : [])]
+        for (const other of me?.nearby ?? []) if (!conversation || snapshot.view.get(other)?.conversation !== conversation) candidates.push(...snapshot.byUid.get(other) ?? [])
+        candidates.push(...snapshot.speakers)
+        return desiredPulls(snapshot.view, uid, candidates)
+    }
+
+    // Prefetched or received tracks no longer wanted only because their sender walked out of reach (both still in the
+    // open office of the same floor, the track still published) stay pulled, as prefetch, until their grace timer
+    // expires: walking back and forth at the edge never closes and pulls again. Anything else closes at once.
+    private linger(connection: Connection, snapshot: Snapshot, wanted: Map<string, WantedPull>) {
+        const sub = connection.sub
+        const floor = snapshot.view.get(connection.uid)?.open ?? null
+        for (const [key, entry] of [...sub.grace]) {
+            if (wanted.has(key) || !sub.pulled.has(key)) { this.timers.clearTimeout(entry.timer); sub.grace.delete(key) }
+        }
+        if (this.prefetchGraceMs <= 0 || floor === null) return
+        for (const [key, pull] of sub.pulled) {
+            if (wanted.has(key) || pull.kind === 'speaker' || !snapshot.keys.has(key) || snapshot.view.get(pull.fromUid)?.open !== floor) continue
+            let entry = sub.grace.get(key)
+            if (entry?.expired) continue
+            if (!entry) {
+                const started = { timer: null as unknown, expired: false }
+                started.timer = this.timers.setTimeout(() => {
+                    started.expired = true
+                    if (this.alive(connection) && connection.sub.grace.get(key) === started) this.sync(connection)
+                }, this.prefetchGraceMs)
+                sub.grace.set(key, entry = started)
+            }
+            const { fromUid, kind, objectId, sessionId, trackName, simulcast } = pull
+            wanted.set(key, { key, fromUid, kind, ...(objectId ? { objectId } : {}), sessionId, trackName, simulcast, prefetch: true })
+        }
+    }
+
+    // The layer a pulled camera should be at: q while prefetched, else what the page asked for (q by default).
+    private layerFor(connection: Connection, pull: { fromUid: string, prefetch: boolean }): Layer {
+        return pull.prefetch ? 'q' : connection.layers.get(pull.fromUid) ?? 'q'
     }
 
     private reconcile(session: Session) {
@@ -504,7 +550,14 @@ export class MediaSignaling {
 
     private async syncOnce(connection: Connection) {
         const sub = connection.sub
-        const wanted = this.wanted(this.snapshot(connection.session), connection.uid)
+        const snapshot = this.snapshot(connection.session)
+        const wanted = this.wanted(snapshot, connection.uid)
+        this.linger(connection, snapshot, wanted)
+        // A track that failed while prefetched is asked again (and reported if refused) once it is wanted for real.
+        for (const key of sub.quiet) {
+            if (wanted.get(key)?.prefetch !== false) { if (!wanted.has(key)) sub.quiet.delete(key); continue }
+            sub.quiet.delete(key); sub.failed.delete(key); sub.retried.delete(key)
+        }
         for (const key of sub.failed) if (!wanted.has(key)) sub.failed.delete(key)
         for (const key of [...sub.retried.keys()]) if (!wanted.has(key)) sub.retried.delete(key)
         // Someone who never runs out of pulls and carries too many dead m-lines: their pulls are closed and the
@@ -514,7 +567,10 @@ export class MediaSignaling {
             for (let i = 0; i < keys.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, keys.slice(i, i + MAX_TRACKS_PER_REQUEST))
             await this.recycleReceive(connection)
         }
-        const { add, remove } = diffPulls(sub.pulled, wanted, sub.failed)
+        const { add, remove, flip } = diffPulls(sub.pulled, wanted, sub.failed)
+        // Prefetch <-> conversation: the same pull, only its layer changes. The page shows or hides it from the roster
+        // (mediaPeers), sent before this sync.
+        for (let i = 0; i < flip.length; i += MAX_TRACKS_PER_REQUEST) await this.flipPulls(connection, flip.slice(i, i + MAX_TRACKS_PER_REQUEST))
         // Additions first: walking straight from one group to another never empties the connection on the way,
         // so only a real "nothing left" takes the forced close.
         for (let i = 0; i < add.length; i += MAX_TRACKS_PER_REQUEST) await this.pullTracks(connection, add.slice(i, i + MAX_TRACKS_PER_REQUEST))
@@ -537,6 +593,21 @@ export class MediaSignaling {
         return reply
     }
 
+    private async flipPulls(connection: Connection, pulls: WantedPull[]) {
+        const sub = connection.sub
+        const changed: Pulled[] = []
+        for (const { key, prefetch } of pulls) {
+            const pulled = sub.pulled.get(key)
+            if (!pulled) continue
+            pulled.prefetch = prefetch
+            if (pulled.simulcast && pulled.layer !== this.layerFor(connection, pulled)) changed.push(pulled)
+        }
+        if (!changed.length || !sub.sessionId) return
+        await this.api.update(sub.sessionId, changed.map(pull => ({ location: 'remote' as const, mid: pull.mid, sessionId: pull.sessionId, trackName: pull.trackName, simulcast: simulcastFor(this.layerFor(connection, pull)) })))
+        this.check(connection)
+        for (const pull of changed) pull.layer = this.layerFor(connection, pull)
+    }
+
     private async closePulls(connection: Connection, keys: string[]) {
         const sub = connection.sub
         const sessionId = sub.sessionId!
@@ -548,7 +619,11 @@ export class MediaSignaling {
         // last tracks this way also avoids the max-bundle offer with no BUNDLE group. The next pull offer from
         // Cloudflare renegotiates the stopped m-lines.
         await this.ask(connection, { generation, type: 'close', mids, force: true })
-        for (const key of keys) sub.pulled.delete(key)
+        for (const key of keys) {
+            sub.pulled.delete(key)
+            const grace = sub.grace.get(key)
+            if (grace) { this.timers.clearTimeout(grace.timer); sub.grace.delete(key) }
+        }
         await this.api.close(sessionId, mids)
         this.check(connection)
     }
@@ -556,7 +631,7 @@ export class MediaSignaling {
     private async pullTracks(connection: Connection, pulls: WantedPull[]) {
         const sub = connection.sub
         const sessionId = await this.receiveSession(connection)
-        const requested = new Map(pulls.map(pull => [pull.key, connection.layers.get(pull.fromUid) ?? 'q' as Layer]))
+        const requested = new Map(pulls.map(pull => [pull.key, this.layerFor(connection, pull)]))
         const response = await this.api.pull(sessionId, pulls.map(pull => ({ location: 'remote' as const, sessionId: pull.sessionId, trackName: pull.trackName, ...(pull.simulcast ? { simulcast: simulcastFor(requested.get(pull.key)!) } : {}) })))
         this.check(connection)
         const working: { pull: WantedPull, mid: string }[] = []
@@ -574,16 +649,19 @@ export class MediaSignaling {
                 this.retryLater(connection, pull.key, delays[retries])
                 continue
             }
-            this.log(`media: ${connection.uid} não recebeu ${pull.key}: ${result?.errorCode ?? 'sem resposta'}`)
+            this.log(`media: ${connection.uid} não recebeu ${pull.key}${pull.prefetch ? ' (prefetch)' : ''}: ${result?.errorCode ?? 'sem resposta'}`)
             stillWanted ??= this.wanted(this.snapshot(connection.session), connection.uid)
-            if (stillWanted.has(pull.key)) connection.client.emit('mediaTrackError', { fromUid: pull.fromUid, kind: pull.kind })
+            // Only a track of the conversation is reported; a prefetched one is asked again if the conversation starts.
+            const still = stillWanted.get(pull.key)
+            if (still?.prefetch) sub.quiet.add(pull.key)
+            else if (still) connection.client.emit('mediaTrackError', { fromUid: pull.fromUid, kind: pull.kind })
         }
         if (!working.length) return
         sub.mlines += working.length
         if (response.requiresImmediateRenegotiation) {
             const offer = response.sessionDescription?.sdp
             if (!offer) throw new Error('pull sem oferta')
-            const tracks = working.map(({ pull, mid }) => ({ mid, fromUid: pull.fromUid, kind: pull.kind, ...(pull.objectId ? { objectId: pull.objectId } : {}) }))
+            const tracks = working.map(({ pull, mid }) => ({ mid, fromUid: pull.fromUid, kind: pull.kind, ...(pull.objectId ? { objectId: pull.objectId } : {}), prefetch: pull.prefetch }))
             const reply = await this.ask(connection, { generation: connection.generation, type: 'pull', offer, tracks })
             const answer = NegotiatedSdp.safeParse(reply.answer)
             if (!answer.success) throw new Error('pull sem resposta')
@@ -591,15 +669,15 @@ export class MediaSignaling {
             this.check(connection)
         }
         for (const { pull, mid } of working) {
-            const { key, fromUid, kind, objectId, sessionId: from, trackName, simulcast } = pull
-            sub.pulled.set(key, { mid, fromUid, kind, ...(objectId ? { objectId } : {}), sessionId: from, trackName, simulcast, layer: requested.get(key)! })
+            const { key, fromUid, kind, objectId, sessionId: from, trackName, simulcast, prefetch } = pull
+            sub.pulled.set(key, { mid, fromUid, kind, ...(objectId ? { objectId } : {}), sessionId: from, trackName, simulcast, layer: requested.get(key)!, prefetch })
         }
         // The page asked for another layer while this pull was negotiating.
-        const stale = working.map(({ pull }) => sub.pulled.get(pull.key)!).filter(pull => pull.simulcast && pull.layer !== (connection.layers.get(pull.fromUid) ?? 'q'))
+        const stale = working.map(({ pull }) => sub.pulled.get(pull.key)!).filter(pull => pull.simulcast && pull.layer !== this.layerFor(connection, pull))
         if (stale.length) {
-            await this.api.update(sessionId, stale.map(pull => ({ location: 'remote' as const, mid: pull.mid, sessionId: pull.sessionId, trackName: pull.trackName, simulcast: simulcastFor(connection.layers.get(pull.fromUid) ?? 'q') })))
+            await this.api.update(sessionId, stale.map(pull => ({ location: 'remote' as const, mid: pull.mid, sessionId: pull.sessionId, trackName: pull.trackName, simulcast: simulcastFor(this.layerFor(connection, pull)) })))
             this.check(connection)
-            for (const pull of stale) pull.layer = connection.layers.get(pull.fromUid) ?? 'q'
+            for (const pull of stale) pull.layer = this.layerFor(connection, pull)
         }
     }
 
