@@ -152,7 +152,13 @@ test('without a level in the RTP sources (Cloudflare sends none), the level is m
     assert.ok(audio.getVolumeLevel() > SPEAKING_AUDIO_LEVEL)
     assert.equal(made.length, 1)
     assert.deepEqual([...made[0].source.stream.tracks], [track])
-    assert.equal(made[0].resumed, 1, 'a suspended context is resumed')
+    assert.equal(made[0].resumed, 0, 'not resumed by a poll')
+    page.gesture('pointerdown')
+    assert.equal(made[0].resumed, 1, 'a suspended context is resumed on the first click')
+    page.gesture('keydown')
+    page.gesture('pointerdown')
+    assert.equal(made[0].resumed, 1, 'once')
+    assert.equal(page.listenerCount('pointerdown') + page.listenerCount('keydown'), 0)
     samples = [0.001, -0.001]
     assert.ok(audio.getVolumeLevel() < SPEAKING_AUDIO_LEVEL)
     // One context for the page.

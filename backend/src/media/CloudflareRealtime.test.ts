@@ -92,3 +92,26 @@ test('IceServerCache shares one request and renews after half the lifetime', asy
     await cache.get()
     assert.equal(requests, 2)
 })
+
+test('IceServerCache serves the current credentials while renewing, keeps them if renewal fails, never past expiry', async () => {
+    let clock = 1000, fail = false, requests = 0
+    const logs: string[] = []
+    const cache = new IceServerCache({ iceServers: async () => { requests++; if (fail) throw new Error('503'); return [{ urls: `turn:${requests}` }] as IceServer[] } }, () => clock, line => logs.push(line))
+    assert.deepEqual(await cache.get(), [{ urls: 'turn:1' }])
+    fail = true
+    clock += 13 * 3600 * 1000
+    // Served at once, without waiting for the renewal, which fails and is logged once.
+    assert.deepEqual(await Promise.all([cache.get(), cache.get()]), [[{ urls: 'turn:1' }], [{ urls: 'turn:1' }]])
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(requests, 2)
+    assert.equal(logs.length, 1)
+    assert.match(logs[0], /^Cloudflare TURN indisponível \(503\); usando as credenciais atuais até expirarem\.$/)
+    clock += 10 * 3600 * 1000
+    assert.deepEqual(await cache.get(), [{ urls: 'turn:1' }], 'still valid at 23 h')
+    await new Promise(resolve => setImmediate(resolve))
+    // Within the margin of their expiry they are no longer served: the failure reaches the caller (STUN only).
+    clock += 55 * 60 * 1000
+    await assert.rejects(cache.get(), /503/)
+    fail = false
+    assert.deepEqual(await cache.get(), [{ urls: `turn:${requests}` }])
+})

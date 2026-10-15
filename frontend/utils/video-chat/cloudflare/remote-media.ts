@@ -17,6 +17,17 @@ function audioContext(): AudioContextLike | null {
     const Context = (globalThis as { AudioContext?: new () => AudioContextLike }).AudioContext
     if (!Context) return null
     try { sharedContext = new Context() } catch { return null }
+    // Made before any click, it starts suspended: it is resumed once, on the first click or key press.
+    if (sharedContext.state === 'suspended') {
+        const context = sharedContext
+        const resume = () => {
+            document.removeEventListener('pointerdown', resume)
+            document.removeEventListener('keydown', resume)
+            void context.resume().catch(() => {})
+        }
+        document.addEventListener('pointerdown', resume)
+        document.addEventListener('keydown', resume)
+    }
     return sharedContext
 }
 type Meter = { context: AudioContextLike, source: MediaStreamAudioSourceNode, analyser: AnalyserNode, samples: Float32Array }
@@ -101,9 +112,7 @@ export class RemoteAudio {
                 this.meter = { context, source, analyser, samples: new Float32Array(analyser.fftSize) }
             } catch { this.meterFailed = true; return 0 }
         }
-        const { context, analyser, samples } = this.meter
-        // Created before any click, the context starts suspended; it measures once resumed.
-        if (context.state === 'suspended') void context.resume().catch(() => {})
+        const { analyser, samples } = this.meter
         analyser.getFloatTimeDomainData(samples)
         let sum = 0
         for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]

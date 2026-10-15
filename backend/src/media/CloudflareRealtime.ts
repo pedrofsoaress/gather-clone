@@ -77,16 +77,25 @@ export function usableIceServers(servers: IceServer[]): IceServer[] {
         .filter(server => server.urls.length > 0)
 }
 
-// One set of TURN credentials for every visitor, renewed after half of its lifetime.
+// One set of TURN credentials for every visitor, renewed after half of its lifetime. Until they really expire, the
+// current ones are served at once while new ones load, and kept if the renewal fails: a join never waits for the
+// TURN API, and a TURN outage does not push STUN only to everyone. Expired credentials are never served.
+export const TURN_EXPIRY_MARGIN_MS = 10 * 60 * 1000
 export class IceServerCache {
     private value: { servers: IceServer[], at: number } | null = null
     private pending: Promise<IceServer[]> | null = null
-    constructor(private readonly api: Pick<RealtimeApi, 'iceServers'>, private readonly now: () => number = Date.now) {}
+    constructor(private readonly api: Pick<RealtimeApi, 'iceServers'>, private readonly now: () => number = Date.now, private readonly log: (line: string) => void = console.error) {}
     get(): Promise<IceServer[]> {
-        if (this.value && this.now() - this.value.at < TURN_TTL_SECONDS * 500) return Promise.resolve(this.value.servers)
-        this.pending ??= this.api.iceServers(TURN_TTL_SECONDS)
-            .then(servers => { this.value = { servers, at: this.now() }; return servers })
-            .finally(() => { this.pending = null })
-        return this.pending
+        const age = this.value ? this.now() - this.value.at : Infinity
+        if (this.value && age < TURN_TTL_SECONDS * 500) return Promise.resolve(this.value.servers)
+        const usable = this.value && age < TURN_TTL_SECONDS * 1000 - TURN_EXPIRY_MARGIN_MS ? this.value.servers : null
+        if (!this.pending) {
+            const pending = this.api.iceServers(TURN_TTL_SECONDS)
+                .then(servers => { this.value = { servers, at: this.now() }; return servers })
+                .finally(() => { if (this.pending === pending) this.pending = null })
+            this.pending = pending
+            if (usable) pending.catch(error => this.log(`Cloudflare TURN indisponível (${error instanceof Error ? error.message : String(error)}); usando as credenciais atuais até expirarem.`))
+        }
+        return usable ? Promise.resolve(usable) : this.pending
     }
 }
