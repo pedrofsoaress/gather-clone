@@ -13,6 +13,8 @@ import { formatEmailToName } from '../utils'
 import { OfficeNotes, validNoteObject, noteStorageKey } from '../office/OfficeNotes'
 import { canReceiveNearbyChat } from '../office/chat'
 import { randomUUID } from 'crypto'
+import { media } from '../media/media'
+import { NEGOTIATE_TIMEOUT_MS } from '../media/protocol'
 
 const joiningInProgress = new Set<string>()
 const officeNotes = new OfficeNotes(supabase)
@@ -25,6 +27,7 @@ function broadcastSpeakers(io: Server, session: Session, room?: number) {
     for (const player of Object.values(session.players)) {
         if (room === undefined || player.room === room) io.to(player.socketId).emit('speakerState', session.featuresFor(player.uid).speakers.snapshotFor(player.uid))
     }
+    media().changed(session)
 }
 
 function broadcastRoomFeatures(io: Server, session: Session, room: number) {
@@ -61,6 +64,7 @@ function protectConnection(io: Server) {
 
 
 export function sockets(io: Server) {
+    media()
     protectConnection(io)
 
     setInterval(() => {
@@ -178,10 +182,17 @@ export function sockets(io: Server) {
 
                 socket.join(realmData.realmId)
                 sendConversationToken(newSession, uid)
+                await media().join(uid, { socketId: socket.id, emit: (event, payload) => socket.emit(event, payload), ask: (event, payload) => socket.timeout(NEGOTIATE_TIMEOUT_MS).emitWithAck(event, payload) })
+                // Fetching the TURN servers can take a moment: the visitor may have left or been replaced meanwhile.
+                if (socket.disconnected || newSession.getPlayer(uid)?.socketId !== socket.id) {
+                    joiningInProgress.delete(uid)
+                    return
+                }
                 socket.emit('joinedRealm', { roomIndex: player.room, x: player.x, y: player.y })
                 emit('playerJoinedRoom', player)
                 sendPresence(newSession)
                 sendMeeting(newSession, uid)
+                media().changed(newSession)
                 joiningInProgress.delete(uid)
             }
 
@@ -234,6 +245,7 @@ export function sockets(io: Server) {
             const leavingMeeting = session.meetingOf(uid)
             const success = sessionManager.logOutBySocketId(socket.id)
             if (success) {
+                media().leave(uid, socket.id)
                 leaveMeeting(session, uid, leavingMeeting)
                 emitToSocketIds(socketIds, 'playerLeftRoom', uid)
                 sendPresence(session)
@@ -379,6 +391,13 @@ export function sockets(io: Server) {
             const result = event === 'speakerStart' ? session.featuresFor(uid).speakers.start(uid, parsed.data.objectId) : session.featuresFor(uid).speakers.stop(uid, parsed.data.objectId)
             ack(result)
             if (result.ok) broadcastSpeakers(io, session)
+        })
+
+        // Cloudflare Realtime: the page publishes and reports its tracks; pulls are driven by the server (media/MediaSignaling).
+        for (const [event, handle] of [['mediaPublish', 'publish'], ['mediaUnpublish', 'unpublish'], ['mediaTrackState', 'trackState'], ['mediaLayer', 'layer'], ['mediaReset', 'reset']] as const) socket.on(event, async (raw: unknown, ack: unknown) => {
+            if (typeof ack !== 'function') return
+            await officeStepQueue
+            ack(await media()[handle](socket.handshake.query.uid as string, socket.id, raw).catch(() => ({ ok: false, error: 'Não foi possível conectar o vídeo. Tente novamente.' })))
         })
 
         socket.on('meetingGetState', (ack: unknown) => {

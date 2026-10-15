@@ -1,5 +1,6 @@
 import { sessionManager, Session } from '../session'
 import { io } from '..'
+import { media } from '../media/media'
 
 // Pushes the Agora token of the conversation `uid` is in now, so the client
 // has it before deciding to join. Nothing when it is unchanged or the server has no credentials.
@@ -18,6 +19,7 @@ export function sendProximity(session: Session, changed: Iterable<string>) {
         sendConversationToken(session, changedUid)
         io.to(player.socketId).emit('proximityUpdate', { proximityId: player.proximityId })
     }
+    media().changed(session)
 }
 
 // Sends the meeting `uid` is in to all of its members.
@@ -26,6 +28,7 @@ export function sendMeeting(session: Session, uid: string) {
     if (!meeting) return
     const snapshot = meeting.state.snapshot(meeting.areaId, meeting.moderators)
     for (const member of meeting.members) io.to(session.getPlayer(member).socketId).emit('meetingState', snapshot)
+    media().changed(session)
 }
 
 // `uid` left `meeting` (read before they moved or logged out): the rest get the new state, an empty one resets.
@@ -62,6 +65,7 @@ export function kickPlayer(uid: string, reason: string, { sessionEnding = false 
     const player = session.getPlayer(uid)
     io.sockets.sockets.get(player.socketId)?.leave(session.id)
     // player is already in session, kick them
+    media().leave(uid, player.socketId)
     sessionManager.logOutPlayer(uid)
     if (!sessionEnding) sendPresence(session)
     leaveMeeting(session, uid, meeting)
