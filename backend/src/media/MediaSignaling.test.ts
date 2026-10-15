@@ -834,11 +834,136 @@ test('prefetch: a refused prefetch is never reported, and is asked again once th
     await h.media.idle()
     assert.deepEqual(pulledKinds(bia), ['ana|mic'])
     assert.equal(bia.emitted.some(([event]) => event === 'mediaTrackError'), false)
-    assert.ok(h.logs.some(line => line.includes('(prefetch)')), h.logs.join('\n'))
+    assert.deepEqual(h.logs, [], 'not even logged')
 
     refuse = false
     await h.place('bia', 4, 0)
     await h.media.idle()
     assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
     assert.equal(pullSteps(bia).at(-1)!.tracks[0].prefetch, false)
+})
+
+const connectionOf = (h: ReturnType<typeof harness>, uid: string) => (h.media as any).connections.get(uid)
+
+test('prefetch: a shared screen is pulled only when the conversation starts', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    await h.enter('caio', 3, 1)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'screen')
+    const bia = await h.enter('bia', 8, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    const steps = bia.steps.length
+    await h.place('bia', 4, 0)
+    assert.deepEqual(stepsOf(bia, steps).map(step => step.type === 'pull' ? step.tracks.map((t: any) => `${t.kind}:${t.prefetch}`) : step.type), [['screen:false']])
+    await h.place('bia', 8, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'], 'back to prefetch: the screen is closed, the mic kept')
+})
+
+test('privacy: a sender stepping into a closed room is closed before the pulls queued in the same sync', async () => {
+    const h = harness()
+    await h.enter('ana', 12, 0)
+    await h.enter('caio', 5, 0, 1)
+    await h.enter('dani', 8, 0, 1)
+    for (const uid of ['ana', 'caio', 'dani']) await h.publish(uid, 'mic')
+    const bia = await h.enter('bia', 18, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    const anaMid = [...openPulls(bia).keys()][0]
+    const steps = bia.steps.length
+    bia.delayMs = 20
+    // caio comes around (a prefetch pull in flight), then ana enters the closed room and dani comes around.
+    h.session.changeRoom('caio', 0, 17, 4); h.media.changed(h.session)
+    await until(() => bia.active === 1)
+    h.session.changeRoom('ana', 0, 21, 0); h.session.changeRoom('dani', 0, 16, 3); h.media.changed(h.session)
+    await h.media.idle()
+    const after = stepsOf(bia, steps).map(step => step.type === 'pull' ? `pull:${step.tracks.map((t: any) => t.fromUid).join(',')}` : `${step.type}:${step.mids.join(',')}`)
+    assert.deepEqual(after, ['pull:caio', `close:${anaMid}`, 'pull:dani'])
+})
+
+test('m-lines: with no conversation received, prefetched tracks never keep a full receive session; it is recycled and they come back', async () => {
+    const h = harness()
+    await h.enter('ana', 12, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 18, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+    const sub = receiveSessionOf(h.calls, 'bia')
+    connectionOf(h, 'bia').sub.mlines = 40
+    const steps = bia.steps.length
+    await h.enter('eva', 5, 0, 1)
+    assert.deepEqual(stepsOf(bia, steps).map(step => step.type), ['close', 'recycle', 'pull'])
+    assert.deepEqual(stepsOf(bia, steps)[2].tracks.map((t: any) => `${t.kind}:${t.prefetch}`), ['mic:true', 'camera:true'])
+    assert.notEqual(callsOf(h.calls, 'pull').at(-1)![1], sub)
+    assert.equal(connectionOf(h, 'bia').sub.mlines, 2)
+    assert.equal(bia.emitted.some(([event]) => event === 'mediaRestart'), false)
+})
+
+test('m-lines: while a conversation is received, passers-by are not prefetched past the budget', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    await h.enter('caio', 9, 0, 1)
+    await h.publish('ana', 'mic'); await h.publish('caio', 'mic')
+    const bia = await h.enter('bia', 4, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    connectionOf(h, 'bia').sub.mlines = 60
+    await h.place('caio', 9, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'], 'caio is around, not prefetched')
+    assert.equal(bia.steps.some(step => step.type === 'recycle'), false)
+    // He joins the conversation: pulled as usual.
+    await h.place('caio', 6, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic', 'caio|mic'])
+    // Below the budget, prefetch again.
+    connectionOf(h, 'bia').sub.mlines = 59
+    await h.place('caio', 9, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic', 'caio|mic'])
+})
+
+test('m-lines: a forced recycle does not pull again what only the grace was holding', async () => {
+    const clock = fakeTimers()
+    const h = harness('cloudflare', {}, { prefetchGraceMs: 3000, timers: clock.timers })
+    await h.enter('ana', 2, 0)
+    await h.enter('caio', 8, 0)
+    await h.publish('ana', 'mic'); await h.publish('caio', 'mic')
+    const bia = await h.enter('bia', 4, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic', 'caio|mic'])
+    connectionOf(h, 'bia').sub.mlines = 100
+    await h.place('caio', 14, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'], 'caio was only held by the grace: not pulled again')
+    assert.ok(bia.steps.some(step => step.type === 'recycle'))
+    assert.equal(connectionOf(h, 'bia').sub.grace.size, 0, 'its grace ended with the recycle')
+})
+
+test('a refused conversation pull still wanted as prefetch is asked again when the conversation comes back', async () => {
+    let refuse = true
+    const h = harness('cloudflare', {
+        async pull(sid, tracks) {
+            h.calls.push(['pull', sid, tracks])
+            return { requiresImmediateRenegotiation: true, sessionDescription: { type: 'offer', sdp: 'pull-offer' }, tracks: tracks.map((t, i) => refuse && t.trackName.startsWith('camera') ? { sessionId: t.sessionId, trackName: t.trackName, errorCode: 'not_found' } : { mid: `m${h.calls.length}-${i}`, sessionId: t.sessionId, trackName: t.trackName }) }
+        },
+    })
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 4, 0)
+    await until(() => bia.emitted.some(([event]) => event === 'mediaTrackError'))
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    await h.place('bia', 8, 0)
+    refuse = false
+    await h.place('bia', 4, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+})
+
+test('grace timers go with the connection: leave, reset and a failure clear them', async () => {
+    const clock = fakeTimers()
+    const h = harness('cloudflare', {}, { prefetchGraceMs: 3000, timers: clock.timers })
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic')
+    await h.enter('bia', 8, 0)
+    await h.place('bia', 10, 0)
+    assert.equal(clock.pending.size, 1)
+    await h.media.reset('bia', 'socket-bia', {})
+    assert.equal(clock.pending.size, 0, 'reset')
+    await h.media.idle()
+    await h.place('bia', 8, 0); await h.place('bia', 10, 0)
+    assert.equal(clock.pending.size, 1)
+    h.media.leave('bia', 'socket-bia')
+    assert.equal(clock.pending.size, 0, 'leave')
 })

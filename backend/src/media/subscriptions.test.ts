@@ -71,7 +71,9 @@ test('prefetch: someone around you, outside your conversation, is pulled flagged
     })
     const pubs = [pub('bia', 'mic'), pub('bia', 'camera'), pub('caio', 'mic'), pub('caio', 'camera'), pub('caio', 'screen'), pub('dani', 'mic'), pub('ana', 'mic'), pub('caio', 'speaker', { objectId: 'lounge', trackName: 'speaker-lounge-1' })]
     const wanted = desiredPulls(v, 'ana', pubs)
-    assert.deepEqual([...wanted.values()].map(pull => `${pull.key}:${pull.prefetch ? 'prefetch' : 'active'}`), ['bia|mic-1:active', 'bia|camera-1:active', 'caio|mic-1:prefetch', 'caio|camera-1:prefetch', 'caio|screen-1:prefetch'])
+    // Never a screen ahead of time (full resolution, no q layer): it comes when the conversation starts.
+    assert.deepEqual([...wanted.values()].map(pull => `${pull.key}:${pull.prefetch ? 'prefetch' : 'active'}`), ['bia|mic-1:active', 'bia|camera-1:active', 'caio|mic-1:prefetch', 'caio|camera-1:prefetch'])
+    assert.deepEqual(keys(desiredPulls(view({ ana: { conversation: 'c', open: 0, nearby: [] }, caio: { conversation: 'c', open: 0, nearby: [] } }), 'ana', pubs)), ['caio|mic-1', 'caio|camera-1', 'caio|screen-1'])
     // caio is alone: everyone around him is prefetched, never his own tracks, never a speaker by proximity.
     assert.deepEqual([...desiredPulls(v, 'caio', pubs).values()].map(pull => `${pull.key}:${pull.prefetch}`), ['bia|mic-1:true', 'bia|camera-1:true', 'ana|mic-1:true'])
     assert.deepEqual(keys(desiredPulls(v, 'dani', pubs)), [])

@@ -67,3 +67,6 @@ export const EMPTY_TRACK_RETRY_MS = [500, 1000, 2000, 4000]
 // A prefetched track whose sender walked out of PREFETCH_RADIUS is closed only after this long (unless they come back
 // first), so walking back and forth at the edge never closes and pulls again.
 export const PREFETCH_GRACE_MS = 3000
+// While a conversation is received, nothing new is prefetched past this many m-lines on the receive session, so
+// passers-by never push the conversation into the forced recycle (RECEIVE_FORCE_RECYCLE_MLINES).
+export const PREFETCH_MLINES_BUDGET = 60

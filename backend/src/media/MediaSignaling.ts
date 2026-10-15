@@ -1,7 +1,7 @@
 import type { Session } from '../session'
 import { conversationChannelFor } from '../office/ConversationAuthorization'
 import { MAX_TRACKS_PER_REQUEST, type IceServer, type Layer, type RealtimeApi, type Simulcast } from './CloudflareRealtime'
-import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaSettle, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PREFETCH_GRACE_MS, PUBLISH_TIMEOUT_MS, PULL_RETRY_MS, RECEIVE_FORCE_RECYCLE_MLINES, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
+import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaSettle, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PREFETCH_GRACE_MS, PREFETCH_MLINES_BUDGET, PUBLISH_TIMEOUT_MS, PULL_RETRY_MS, RECEIVE_FORCE_RECYCLE_MLINES, RECEIVE_RECYCLE_MLINES, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
 import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, pullKey, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
 
 export type MediaClient = { socketId: string, emit(event: string, payload?: unknown): void, ask(event: string, payload: unknown): Promise<any> }
@@ -88,7 +88,7 @@ export class MediaSignaling {
     async join(uid: string, client: MediaClient): Promise<void> {
         if (!this.cloudflare) return client.emit('mediaConfig', { provider: 'agora' })
         const older = this.connections.get(uid)
-        if (older) { this.connections.delete(uid); this.touch(older.session) }
+        if (older) { this.retire(older); this.connections.delete(uid); this.touch(older.session) }
         const iceServers = await this.iceServers()
         const session = this.options.getSession(uid)
         // The visitor left, or another tab took over, while the TURN servers were loading.
@@ -103,6 +103,7 @@ export class MediaSignaling {
     leave(uid: string, socketId: string): void {
         const connection = this.connections.get(uid)
         if (!connection || connection.client.socketId !== socketId) return
+        this.retire(connection)
         this.connections.delete(uid)
         this.touch(connection.session)
     }
@@ -313,6 +314,7 @@ export class MediaSignaling {
         // The page is tearing its connections down: drop the state now and negotiate nothing until the ack.
         const paused = this.fresh(uid, client, session)
         paused.awaitingReset = true
+        this.retire(connection)
         this.connections.set(uid, paused)
         this.touch(session)
         const iceServers = await this.iceServers()
@@ -357,6 +359,12 @@ export class MediaSignaling {
             sub: { sessionId: null, chain: Promise.resolve(), pulled: new Map(), failed: new Set(), retried: new Map(), quiet: new Set(), grace: new Map(), syncing: false, again: false, mlines: 0 },
             publications: new Map(), layers: new Map(), lastPeers: null, awaitingReset: false,
         }
+    }
+
+    // A connection being replaced or dropped: its grace timers go with it.
+    private retire(connection: Connection) {
+        for (const entry of connection.sub.grace.values()) this.timers.clearTimeout(entry.timer)
+        connection.sub.grace.clear()
     }
 
     private touch(session: Session, what: 'pubs' | 'live' = 'pubs') {
@@ -484,15 +492,17 @@ export class MediaSignaling {
     // Prefetched or received tracks no longer wanted only because their sender walked out of reach (both still in the
     // open office of the same floor, the track still published) stay pulled, as prefetch, until their grace timer
     // expires: walking back and forth at the edge never closes and pulls again. Anything else closes at once.
-    private linger(connection: Connection, snapshot: Snapshot, wanted: Map<string, WantedPull>) {
+    // Returns the keys it kept that way.
+    private linger(connection: Connection, snapshot: Snapshot, wanted: Map<string, WantedPull>): Set<string> {
         const sub = connection.sub
+        const kept = new Set<string>()
         const floor = snapshot.view.get(connection.uid)?.open ?? null
         for (const [key, entry] of [...sub.grace]) {
             if (wanted.has(key) || !sub.pulled.has(key)) { this.timers.clearTimeout(entry.timer); sub.grace.delete(key) }
         }
-        if (this.prefetchGraceMs <= 0 || floor === null) return
+        if (this.prefetchGraceMs <= 0 || floor === null) return kept
         for (const [key, pull] of sub.pulled) {
-            if (wanted.has(key) || pull.kind === 'speaker' || !snapshot.keys.has(key) || snapshot.view.get(pull.fromUid)?.open !== floor) continue
+            if (wanted.has(key) || (pull.kind !== 'mic' && pull.kind !== 'camera') || !snapshot.keys.has(key) || snapshot.view.get(pull.fromUid)?.open !== floor) continue
             let entry = sub.grace.get(key)
             if (entry?.expired) continue
             if (!entry) {
@@ -506,7 +516,18 @@ export class MediaSignaling {
             }
             const { fromUid, kind, objectId, sessionId, trackName, simulcast } = pull
             wanted.set(key, { key, fromUid, kind, ...(objectId ? { objectId } : {}), sessionId, trackName, simulcast, prefetch: true })
+            kept.add(key)
         }
+        return kept
+    }
+
+    // Whether `uid` may still hold what `fromUid` sends: in the same conversation, or both in the open office of the
+    // same floor (prefetch reach or its grace). Anything else is closed before any other work of a sync.
+    private mayHold(snapshot: Snapshot, uid: string, fromUid: string): boolean {
+        const me = snapshot.view.get(uid), other = snapshot.view.get(fromUid)
+        if (!me || !other) return false
+        if (me.conversation && me.conversation === other.conversation) return true
+        return me.open !== null && me.open === other.open
     }
 
     // The layer a pulled camera should be at: q while prefetched, else what the page asked for (q by default).
@@ -553,7 +574,9 @@ export class MediaSignaling {
         const sub = connection.sub
         const snapshot = this.snapshot(connection.session)
         const wanted = this.wanted(snapshot, connection.uid)
-        this.linger(connection, snapshot, wanted)
+        const lingering = this.linger(connection, snapshot, wanted)
+        // A refused track now only wanted as prefetch waits, silently, for the conversation to ask it again.
+        for (const key of sub.failed) if (wanted.get(key)?.prefetch) sub.quiet.add(key)
         // A track that failed while prefetched is asked again (and reported if refused) once it is wanted for real.
         for (const key of sub.quiet) {
             if (wanted.get(key)?.prefetch !== false) { if (!wanted.has(key)) sub.quiet.delete(key); continue }
@@ -561,23 +584,44 @@ export class MediaSignaling {
         }
         for (const key of sub.failed) if (!wanted.has(key)) sub.failed.delete(key)
         for (const key of [...sub.retried.keys()]) if (!wanted.has(key)) sub.retried.delete(key)
-        // Someone who never runs out of pulls and carries too many dead m-lines: their pulls are closed and the
-        // receive side starts over, then everything wanted is pulled again below, on the new session.
-        if (sub.sessionId && sub.pulled.size > 0 && sub.mlines >= RECEIVE_FORCE_RECYCLE_MLINES) {
-            const keys = [...sub.pulled.keys()]
-            for (let i = 0; i < keys.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, keys.slice(i, i + MAX_TRACKS_PER_REQUEST))
+        // Privacy first: what comes from someone neither in the conversation nor around in the open office (they
+        // stepped into a closed room, a meeting room, another floor, or left) is closed before any pull or flip.
+        const urgent = [...sub.pulled].filter(([key, pull]) => !wanted.has(key) && pull.kind !== 'speaker' && !this.mayHold(snapshot, connection.uid, pull.fromUid)).map(([key]) => key)
+        for (let i = 0; i < urgent.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, urgent.slice(i, i + MAX_TRACKS_PER_REQUEST))
+        const conversing = [...wanted.values()].some(pull => !pull.prefetch)
+        if (sub.sessionId && sub.mlines >= RECEIVE_RECYCLE_MLINES && !conversing) {
+            // Nothing of a conversation is received and many dead m-lines: the prefetched tracks (invisible) are
+            // closed, only the receive side starts over (publishing is untouched), and the next round pulls again
+            // what is still wanted. Lingering tracks are not pulled again: their grace ends here.
+            if (sub.pulled.size > 0) await this.closeAll(connection)
             await this.recycleReceive(connection)
+            sub.again = true
+            return
         }
-        const { add, remove, flip } = diffPulls(sub.pulled, wanted, sub.failed)
+        if (sub.sessionId && sub.pulled.size > 0 && sub.mlines >= RECEIVE_FORCE_RECYCLE_MLINES) {
+            // Someone who never runs out of a conversation and carries too many dead m-lines: their pulls are closed
+            // and the receive side starts over, then everything wanted is pulled again below, on the new session.
+            await this.closeAll(connection)
+            await this.recycleReceive(connection)
+            for (const key of lingering) wanted.delete(key)
+        }
+        const { add: adds, remove, flip } = diffPulls(sub.pulled, wanted, sub.failed)
+        // While a conversation is received, prefetch never brings the session near the forced recycle (a blackout
+        // of the conversation): past PREFETCH_MLINES_BUDGET m-lines nothing new is prefetched.
+        const add = conversing && sub.mlines >= PREFETCH_MLINES_BUDGET ? adds.filter(pull => !pull.prefetch) : adds
         // Prefetch <-> conversation: the same pull, only its layer changes. The page shows or hides it from the roster
         // (mediaPeers), sent before this sync.
         for (let i = 0; i < flip.length; i += MAX_TRACKS_PER_REQUEST) await this.flipPulls(connection, flip.slice(i, i + MAX_TRACKS_PER_REQUEST))
-        // Additions first: walking straight from one group to another never empties the connection on the way,
-        // so only a real "nothing left" takes the forced close.
+        // Additions first: walking straight from one group to another never empties the connection on the way.
         for (let i = 0; i < add.length; i += MAX_TRACKS_PER_REQUEST) await this.pullTracks(connection, add.slice(i, i + MAX_TRACKS_PER_REQUEST))
         for (let i = 0; i < remove.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, remove.slice(i, i + MAX_TRACKS_PER_REQUEST))
         // Nothing pulled and many dead m-lines: only the receive side starts over (publishing is untouched).
         if (sub.sessionId && sub.pulled.size === 0 && sub.mlines >= RECEIVE_RECYCLE_MLINES) await this.recycleReceive(connection)
+    }
+
+    private async closeAll(connection: Connection) {
+        const keys = [...connection.sub.pulled.keys()]
+        for (let i = 0; i < keys.length; i += MAX_TRACKS_PER_REQUEST) await this.closePulls(connection, keys.slice(i, i + MAX_TRACKS_PER_REQUEST))
     }
 
     // The page closes its receive connection; the next pull starts a new Cloudflare session (the old one expires).
@@ -650,12 +694,13 @@ export class MediaSignaling {
                 this.retryLater(connection, pull.key, delays[retries])
                 continue
             }
-            this.log(`media: ${connection.uid} não recebeu ${pull.key}${pull.prefetch ? ' (prefetch)' : ''}: ${result?.errorCode ?? 'sem resposta'}`)
             stillWanted ??= this.wanted(this.snapshot(connection.session), connection.uid)
-            // Only a track of the conversation is reported; a prefetched one is asked again if the conversation starts.
+            // Only a track of the conversation is reported (and logged); a prefetched one is asked again, silently,
+            // once the conversation starts, and logged then if still refused.
             const still = stillWanted.get(pull.key)
-            if (still?.prefetch) sub.quiet.add(pull.key)
-            else if (still) connection.client.emit('mediaTrackError', { fromUid: pull.fromUid, kind: pull.kind })
+            if (still?.prefetch) { sub.quiet.add(pull.key); continue }
+            this.log(`media: ${connection.uid} não recebeu ${pull.key}: ${result?.errorCode ?? 'sem resposta'}`)
+            if (still) connection.client.emit('mediaTrackError', { fromUid: pull.fromUid, kind: pull.kind })
         }
         if (!working.length) return
         sub.mlines += working.length
@@ -698,6 +743,7 @@ export class MediaSignaling {
         this.log(`media: reiniciando ${connection.uid}: ${messageOf(error)}`)
         const restarted = this.fresh(connection.uid, connection.client, connection.session)
         restarted.awaitingReset = true
+        this.retire(connection)
         this.connections.set(connection.uid, restarted)
         connection.client.emit('mediaRestart')
         this.touch(connection.session)

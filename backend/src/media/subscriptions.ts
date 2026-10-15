@@ -20,7 +20,7 @@ export type PublicationIndex = Map<string, { mic: boolean, camera: boolean, scre
 
 export const pullKey = (publication: Pick<Publication, 'uid' | 'trackName'>) => `${publication.uid}|${publication.trackName}`
 
-// Prefetch: the microphone, camera and screen of someone this close are pulled before the conversation starts
+// Prefetch: the microphone and camera of someone this close are pulled before the conversation starts
 // (camera at the lowest layer, nothing shown or played), so joining it only shows what is already arriving. Three
 // tiles past the conversation reach. Never between two seated people: they cannot walk into each other, and within
 // SEATED_PROXIMITY_RADIUS they already talk. At most PREFETCH_LIMIT people per person, the nearest.
@@ -125,8 +125,9 @@ export function indexPublications(publications: Iterable<Publication>): Publicat
 // What `uid` must receive now. The same rules that authorized an Agora call: the microphones and cameras of
 // your conversation (in a meeting room the audience only gets the stage's cameras), the others' shared
 // screens, and every lounge speaker in range. Nothing of your own, nothing from another floor.
-// Then, flagged `prefetch`, the microphone, camera and screen of the prefetch candidates around you (both in the open
-// office, see openFloor) who are not in your conversation.
+// Then, flagged `prefetch`, the microphone and camera of the prefetch candidates around you (both in the open office,
+// see openFloor) who are not in your conversation. Never a screen (full resolution, no q layer): it is pulled when the
+// conversation starts.
 export function desiredPulls(view: MediaView, uid: string, publications: Iterable<Publication>): Map<string, WantedPull> {
     const me = view.get(uid)
     const wanted = new Map<string, WantedPull>()
@@ -139,7 +140,7 @@ export function desiredPulls(view: MediaView, uid: string, publications: Iterabl
             if (!speaker || speaker.ownerUid !== publication.uid || speaker.volume <= 0) continue
         } else if (me.conversation && view.get(publication.uid)?.conversation === me.conversation) {
             if (publication.kind === 'camera' && me.moderators && !me.moderators.includes(uid) && !me.moderators.includes(publication.uid)) continue
-        } else if (me.open !== null && me.nearby.includes(publication.uid) && view.get(publication.uid)?.open === me.open) {
+        } else if (publication.kind !== 'screen' && me.open !== null && me.nearby.includes(publication.uid) && view.get(publication.uid)?.open === me.open) {
             prefetch = true
         } else continue
         const key = pullKey(publication)
