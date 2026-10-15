@@ -4,7 +4,7 @@ import type { Layer, MediaChat, MediaConfig } from '../media-chat'
 import type { CloudflareMediaConfig, MediaKind, PeersSnapshot, SignalingSocket } from './protocol'
 import { CloudflareEngine, type EngineEvent, type EngineOptions, type MediaEngine } from './CloudflareEngine'
 import { LayerRequests, LAYER_DEBOUNCE_MS } from './layers'
-import { CloudflareRemoteUser, LocalPreview, RemoteAudio, RemoteVideo, SPEAKING_AUDIO_LEVEL, signature } from './remote-media'
+import { blackFrames, CloudflareRemoteUser, LocalPreview, RemoteAudio, RemoteVideo, SPEAKING_AUDIO_LEVEL, signature } from './remote-media'
 import { currentOfficeSocket, officeSocket, pinnedOfficeSocket } from './socket'
 
 const RECEIVE_ERROR = 'Não foi possível receber a mídia de um participante.'
@@ -31,6 +31,8 @@ export type ChatDeps = {
     setTimeout: (callback: () => void, ms: number) => unknown
     clearTimeout: (timer: unknown) => void
     mediaDevices?: Partial<Pick<MediaDevices, 'getUserMedia' | 'getDisplayMedia' | 'enumerateDevices' | 'addEventListener' | 'removeEventListener'>>
+    // What the camera sends while off (the engine's createPlaceholder). Optional.
+    createPlaceholder?: () => MediaStreamTrack | null
 }
 
 function browserDeps(): ChatDeps {
@@ -42,6 +44,7 @@ function browserDeps(): ChatDeps {
         setTimeout: (callback, ms) => window.setTimeout(callback, ms),
         clearTimeout: timer => window.clearTimeout(timer as number),
         mediaDevices: typeof navigator === 'undefined' ? undefined : navigator.mediaDevices,
+        createPlaceholder: blackFrames,
     }
 }
 
@@ -103,6 +106,7 @@ export class CloudflareVideoChat implements MediaChat {
             createPeerConnection: rtcConfig => new RTCPeerConnection(rtcConfig),
             setTimeout: this.deps.setTimeout,
             clearTimeout: this.deps.clearTimeout,
+            ...(this.deps.createPlaceholder ? { createPlaceholder: this.deps.createPlaceholder } : {}),
             // A replaced engine speaks no more.
             onEvent: event => { if (engine === this.engine) this.onEngineEvent(event) },
         })

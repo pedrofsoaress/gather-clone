@@ -33,7 +33,7 @@ function fakePc(world) {
             pc.role ??= 'pub'
             if (init.sendEncodings && pc.failEncodings) throw new Error('sendEncodings unsupported')
             const encodings = init.sendEncodings ? (pc.singleEncoding ? [{}] : init.sendEncodings) : [{}]
-            const t = { mid: null, init, stopped: false, sender: { track, replaced: [], async replaceTrack(next) { this.replaced.push(next); this.track = next }, getParameters: () => ({ encodings }) }, receiver: { track: null }, stop() { t.stopped = true } }
+            const t = { mid: null, init, stopped: false, sender: { track, replaced: [], parameters: [], async replaceTrack(next) { this.replaced.push(next); this.track = next }, getParameters: () => ({ encodings }), async setParameters(p) { this.parameters.push(JSON.parse(JSON.stringify(p.encodings))) }, ...(world.senderStats ? { getStats: async () => world.senderStats() } : {}) }, receiver: { track: null }, stop() { t.stopped = true } }
             pc.transceivers.push(t); return t
         },
         // `transceivers` keeps every transceiver ever made (for the asserts); like browsers, a stopped one leaves
@@ -95,6 +95,7 @@ function harness(options = {}) {
         clearTimeout: id => timers.delete(id),
         onEvent: event => events.push({ ...plain(event), at: { subAnswer: engine?.mapping && pcs.find(pc => pc.role === 'sub' && !pc.closed)?.localDescription?.sdp } }),
         now: () => clock,
+        ...(options.placeholder ? { createPlaceholder: () => { world.placeholders = (world.placeholders ?? 0) + 1; return options.placeholder } } : {}),
     })
     const fire = ms => { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.callback() } }
     const step = (payload, gen = 1) => new Promise(resolve => socket.handlers.get('mediaNegotiate')({ generation: gen, ...payload }, resolve))
@@ -779,4 +780,73 @@ test('a reconnect opens the new send connection again before republishing', asyn
     await h.engine.start(cfg(2))
     assert.deepEqual(h.socket.requests.map(([event]) => event), ['mediaOpen', 'mediaPublish', 'mediaOpen', 'mediaPublish'])
     assert.equal(h.pcs.filter(pc => pc.role === 'pub' && !pc.closed).length, 1)
+})
+
+test('camera off with a placeholder: black frames at 1 fps and low bitrate, no idle unpublish; on swaps back', async () => {
+    const placeholder = { id: 'black', readyState: 'live', stopped: false, stop() { this.stopped = true } }
+    const h = harness({ placeholder })
+    await h.engine.start(cfg())
+    await h.engine.publish('camera', { id: 'cam' })
+    await h.engine.publish('mic', { id: 'mic' })
+    const [cam] = h.pub().transceivers
+    let replacedWhenTold = null
+    h.socket.replies.mediaTrackState = () => { replacedWhenTold ??= cam.sender.replaced.length; return { ok: true } }
+    await h.engine.pause('camera')
+    assert.equal(replacedWhenTold, 0, 'everyone hears "off" before the black frames go out')
+    assert.deepEqual(cam.sender.replaced, [placeholder])
+    assert.deepEqual(h.sent('mediaTrackState'), [{ kind: 'camera', live: false }])
+    assert.deepEqual(cam.sender.parameters.at(-1).map(e => [e.rid, e.maxBitrate, e.maxFramerate]), [['f', 30_000, 1], ['h', 30_000, 1], ['q', 30_000, 1]])
+    // No idle timer: the track stays alive however long the camera is off.
+    assert.equal([...h.timers.values()].some(timer => timer.ms === 25_000), false)
+    h.advance(40_000)
+    h.fire(25_000)
+    await tick()
+    assert.deepEqual(h.sent('mediaUnpublish'), [])
+    const next = { id: 'cam-2' }
+    await h.engine.resume('camera', next)
+    assert.deepEqual(cam.sender.replaced, [placeholder, next])
+    assert.deepEqual(cam.sender.parameters.at(-1).map(e => [e.rid, e.maxBitrate, e.maxFramerate]), [['f', 1_200_000, undefined], ['h', 450_000, undefined], ['q', 150_000, undefined]])
+    assert.deepEqual(h.sent('mediaTrackState')[1], { kind: 'camera', live: true })
+    assert.equal(h.sent('mediaPublish').length, 2, 'no republish')
+    // Off and on again: the same placeholder, made once.
+    await h.engine.pause('camera')
+    await h.engine.resume('camera', { id: 'cam-3' })
+    assert.equal(h.world.placeholders, 1)
+    // The mic keeps pausing with nothing sent, and is unpublished after 25 s.
+    await h.engine.pause('mic')
+    assert.deepEqual(h.pub().transceivers[1].sender.replaced, [null])
+    h.fire(25_000)
+    await tick()
+    assert.deepEqual(h.sent('mediaUnpublish').map(payload => payload.kind), ['mic'])
+    h.engine.stop()
+    assert.equal(placeholder.stopped, true)
+})
+
+test('turning the camera on says "on" only once real frames went out, or after 400 ms', async () => {
+    let frames = 0
+    const placeholder = { id: 'black', readyState: 'live', stop() {} }
+    const h = harness({ placeholder, world: { senderStats: () => new Map([['o', { type: 'outbound-rtp', ssrc: 7, framesEncoded: frames }]]) } })
+    await h.engine.start(cfg())
+    await h.engine.publish('camera', { id: 'cam' })
+    await h.engine.pause('camera')
+    const resumed = h.engine.resume('camera', { id: 'cam-2' })
+    await tick()
+    assert.equal(h.sent('mediaTrackState').length, 1, 'not yet: no new frame went out')
+    frames = 2
+    h.fire(50)
+    await tick()
+    assert.equal(h.sent('mediaTrackState').length, 1)
+    frames = 3
+    h.fire(50)
+    await resumed
+    assert.deepEqual(h.sent('mediaTrackState')[1], { kind: 'camera', live: true })
+
+    // Frames that never come: told after the wait.
+    await h.engine.pause('camera')
+    const late = h.engine.resume('camera', { id: 'cam-3' })
+    await tick()
+    h.advance(450)
+    h.fire(50)
+    await late
+    assert.deepEqual(h.sent('mediaTrackState').at(-1), { kind: 'camera', live: true })
 })

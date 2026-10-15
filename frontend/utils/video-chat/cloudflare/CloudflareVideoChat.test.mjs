@@ -633,3 +633,14 @@ test('the audio output is saved only once the audio moved there', async () => {
     assert.equal(chat.getDevicePreferences().outputId, 'usb-out')
     assert.equal(env.named('media-preferences-changed').length, 1)
 })
+
+test('the engine gets the camera placeholder of the deps', () => {
+    const env = load()
+    const placeholder = () => null
+    env.deps.createPlaceholder = placeholder
+    env.create()
+    assert.equal(env.engine.options.createPlaceholder, placeholder)
+    const without = load()
+    without.create()
+    assert.equal('createPlaceholder' in without.engine.options, false)
+})

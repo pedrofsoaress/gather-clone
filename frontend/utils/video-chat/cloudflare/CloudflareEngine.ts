@@ -8,6 +8,14 @@ export const NOTICE_DELAY_MS = 3_000
 // A connection `disconnected` for this long is rebuilt; most network blips recover by themselves before.
 export const RECONNECT_GRACE_MS = 5_000
 export const RESTART_RETRY_MS = 2_000
+// While off, the camera sends the placeholder (a black frame a second) at most this fast per layer, instead of
+// nothing: its Cloudflare track and the connection's bandwidth estimate stay alive (with no video at all, Chrome's
+// estimate falls to about 80 kbps in 25 s, as Cloudflare gives no feedback on audio) and turning it on is immediate.
+export const PLACEHOLDER_BITRATE = 30_000
+// Turning the camera on, the server hears "on" once a few real frames went out (or after this wait), so no tile
+// shows a black frame.
+export const RESUME_FRAMES = 3
+export const RESUME_WAIT_MS = 400
 
 export type EngineEvent =
     | { type: 'peers', peers: PeersSnapshot }
@@ -26,6 +34,9 @@ export type EngineOptions = {
     clearTimeout: (timer: unknown) => void
     onEvent: (event: EngineEvent) => void
     now?: () => number
+    // The camera's placeholder while off (see PLACEHOLDER_BITRATE), made once per engine. Without it, a camera turned
+    // off is paused and unpublished after 25 s, like the mic.
+    createPlaceholder?: () => MediaStreamTrack | null
 }
 
 export interface MediaEngine {
@@ -56,6 +67,8 @@ type Publication = {
     live: boolean
     pausedAt: number
     idleTimer: unknown
+    // Off and sending the placeholder: the encoding limits to put back when it is turned on.
+    held: { maxBitrate?: number, maxFramerate?: number }[] | null
 }
 
 // Thrown when the connections were rebuilt (or the engine stopped) while some work awaited: it ends quietly.
@@ -199,6 +212,8 @@ export class CloudflareEngine implements MediaEngine {
         this.clearNotice()
         for (const publication of this.publications.values()) this.clearIdle(publication)
         this.publications.clear()
+        this.placeholder?.stop()
+        this.placeholder = null
         this.wakeSleepers()
         this.releaseWaiters()
         for (const [event, handler] of this.handlers) this.options.socket.off(event, handler)
@@ -221,6 +236,14 @@ export class CloudflareEngine implements MediaEngine {
             const transceiver = publication.transceiver
             if (!transceiver || !this.ready) return
             const epoch = this.epoch
+            const placeholder = kind === 'camera' ? this.placeholderTrack() : null
+            if (placeholder) {
+                // Told first: every tile shows the avatar before a black frame can arrive.
+                await this.socket.request('mediaTrackState', { kind, live: false }).catch(() => {})
+                if (epoch !== this.epoch || this.publications.get(kind) !== publication || publication.live) return
+                publication.held = await this.hold(transceiver.sender, placeholder)
+                return
+            }
             this.armIdle(kind, publication)
             await transceiver.sender.replaceTrack(null)
             if (epoch !== this.epoch) return
@@ -236,6 +259,20 @@ export class CloudflareEngine implements MediaEngine {
                 this.clearIdle(publication)
                 publication.track = track
                 publication.live = true
+                return
+            }
+            const held = publication.held
+            if (held && !publication.live && publication.transceiver) {
+                publication.held = null
+                publication.track = track
+                publication.live = true
+                const epoch = this.epoch
+                const sender = publication.transceiver.sender
+                await sender.replaceTrack(track)
+                await this.release(sender, held)
+                await this.framesOut(sender, epoch)
+                if (epoch !== this.epoch || !publication.live) return
+                await this.socket.request('mediaTrackState', { kind, live: true }).catch(() => {})
                 return
             }
             // Timers of a background tab may never have fired: past the idle limit Cloudflare dropped the track.
@@ -401,6 +438,53 @@ export class CloudflareEngine implements MediaEngine {
         this.noticeTimer = null
     }
 
+    private placeholder: MediaStreamTrack | null = null
+    private placeholderTrack(): MediaStreamTrack | null {
+        if (this.placeholder?.readyState === 'ended') this.placeholder = null
+        if (!this.placeholder) try { this.placeholder = this.options.createPlaceholder?.() ?? null } catch { this.placeholder = null }
+        return this.placeholder
+    }
+
+    // The placeholder at one frame a second and a few kbps per layer; returns the limits it replaced.
+    private async hold(sender: RTCRtpSender, placeholder: MediaStreamTrack): Promise<{ maxBitrate?: number, maxFramerate?: number }[]> {
+        const parameters = sender.getParameters()
+        const saved = (parameters.encodings ?? []).map(({ maxBitrate, maxFramerate }) => ({ maxBitrate, maxFramerate }))
+        for (const encoding of parameters.encodings ?? []) { encoding.maxBitrate = PLACEHOLDER_BITRATE; encoding.maxFramerate = 1 }
+        try { await sender.setParameters(parameters) } catch { /* sent at the camera's limits */ }
+        await sender.replaceTrack(placeholder)
+        return saved
+    }
+
+    private async release(sender: RTCRtpSender, held: { maxBitrate?: number, maxFramerate?: number }[]): Promise<void> {
+        const parameters = sender.getParameters()
+        ;(parameters.encodings ?? []).forEach((encoding, i) => {
+            const saved = held[i] ?? {}
+            if (saved.maxBitrate === undefined) delete encoding.maxBitrate
+            else encoding.maxBitrate = saved.maxBitrate
+            if (saved.maxFramerate === undefined) delete encoding.maxFramerate
+            else encoding.maxFramerate = saved.maxFramerate
+        })
+        try { await sender.setParameters(parameters) } catch { /* the placeholder limits stay */ }
+    }
+
+    // Waits until some layer sent RESUME_FRAMES real frames, at most RESUME_WAIT_MS.
+    private async framesOut(sender: RTCRtpSender, epoch: number): Promise<void> {
+        if (typeof sender.getStats !== 'function') return
+        const frames = async () => {
+            const counts = new Map<number, number>()
+            ;(await sender.getStats()).forEach((stat: { type: string, ssrc?: number, framesEncoded?: number }) => { if (stat.type === 'outbound-rtp' && stat.ssrc !== undefined) counts.set(stat.ssrc, stat.framesEncoded ?? 0) })
+            return counts
+        }
+        try {
+            const start = await frames()
+            const deadline = this.now() + RESUME_WAIT_MS
+            while (epoch === this.epoch && this.now() < deadline) {
+                await this.sleep(50)
+                for (const [ssrc, count] of await frames()) if (count - (start.get(ssrc) ?? 0) >= RESUME_FRAMES) return
+            }
+        } catch { /* told now */ }
+    }
+
     private armIdle(key: string, publication: Publication) {
         this.clearIdle(publication)
         publication.idleTimer = this.options.setTimeout(() => {
@@ -442,7 +526,7 @@ export class CloudflareEngine implements MediaEngine {
         if (this.stopped) return
         const older = this.publications.get(key)
         if (older) this.clearIdle(older)
-        const publication: Publication = { kind, ...(objectId ? { objectId } : {}), track, transceiver: null, mid: null, live: true, pausedAt: 0, idleTimer: null }
+        const publication: Publication = { kind, ...(objectId ? { objectId } : {}), track, transceiver: null, mid: null, live: true, pausedAt: 0, idleTimer: null, held: null }
         this.publications.set(key, publication)
         if (!this.ready) {
             older?.transceiver?.stop()

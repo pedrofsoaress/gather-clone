@@ -41,3 +41,6 @@ export const CONFIG_REFRESH_MS = 6 * 60 * 60 * 1000
 export const ICE_SERVERS_TIMEOUT_MS = 5000
 // A refused pull may race a fresh publish: it is retried once after this delay before the page is told.
 export const PULL_RETRY_MS = 2000
+// Cloudflare refuses a pull with `empty_track_error` while the published track has not sent media yet (a camera that
+// just came on): those are retried with this backoff, about 7.5 s in all, before the page is told.
+export const EMPTY_TRACK_RETRY_MS = [500, 1000, 2000, 4000]

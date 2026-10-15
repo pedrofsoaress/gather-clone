@@ -126,6 +126,27 @@ export class RemoteAudio {
     }
 }
 
+// The camera's stand-in while it is off (CloudflareEngine, PLACEHOLDER_BITRATE): black 1280x720 (all three simulcast
+// layers stay up) at one frame a second. Nobody sees it: tiles show the avatar while the camera is off.
+export function blackFrames(): MediaStreamTrack | null {
+    if (typeof document === 'undefined') return null
+    const canvas = document.createElement('canvas') as HTMLCanvasElement
+    if (typeof canvas.captureStream !== 'function') return null
+    canvas.width = 1280
+    canvas.height = 720
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    // A canvas yields a frame only when painted.
+    const paint = () => { context.fillStyle = '#000'; context.fillRect(0, 0, canvas.width, canvas.height) }
+    paint()
+    const track = canvas.captureStream(1).getVideoTracks()[0]
+    if (!track) return null
+    const timer = setInterval(paint, 1000)
+    const stop = track.stop.bind(track)
+    track.stop = () => { clearInterval(timer); stop() }
+    return track
+}
+
 // Your own camera (mirrored) or your own shared screen, played from the local track.
 export class LocalPreview {
     private video: HTMLVideoElement | null = null

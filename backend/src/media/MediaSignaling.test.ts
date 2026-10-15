@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { Session, type Room } from '../session'
 import { CloudflareError, type RealtimeApi } from './CloudflareRealtime'
 import { MediaSignaling } from './MediaSignaling'
-import { STUN_ONLY } from './protocol'
+import { EMPTY_TRACK_RETRY_MS, STUN_ONLY } from './protocol'
 
 type Client = ReturnType<typeof fakeClient>
 function fakeClient(uid: string) {
@@ -39,7 +39,7 @@ function harness(provider: 'agora' | 'cloudflare' = 'cloudflare', overrides: Par
     const room: Room = { name: 'A', tilemap, areas: { training: { label: 'Treinamento', meeting: { stage: { x1: 0, y1: 9, x2: 29, y2: 9 } } } } }
     const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [room, structuredClone(room)] })
     const logs: string[] = [], clients = new Map<string, Client>()
-    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line), pullRetryMs: 5 })
+    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line), pullRetryMs: 5, emptyTrackRetryMs: [1, 2, 3, 4] })
     const place = async (uid: string, x: number, y: number, floor = 0) => { session.changeRoom(uid, floor, x, y); media.changed(session); await media.idle() }
     const enter = async (uid: string, x: number, y: number, floor = 0) => {
         session.addPlayer(`socket-${uid}`, uid, uid, '009')
@@ -357,6 +357,34 @@ test('failures: a pull refused once and accepted on the retry is never reported'
     const bia = await h.enter('bia', 4, 0)
     assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
     assert.equal(bia.emitted.some(([event]) => event === 'mediaTrackError'), false)
+})
+
+test('failures: a track with no media yet (empty_track_error) is retried with a backoff before it is reported', async () => {
+    assert.deepEqual(EMPTY_TRACK_RETRY_MS, [500, 1000, 2000, 4000])
+    for (const [refusals, reported] of [[4, false], [9, true]] as const) {
+        const h = harness()
+        const pull = h.api.pull
+        let refused = 0
+        h.api.pull = async (sid, tracks) => {
+            const response = await pull(sid, tracks)
+            return { ...response, tracks: response.tracks!.map(track => track.trackName === 'camera-2' && refused++ < refusals ? { ...track, errorCode: 'empty_track_error' } : track) }
+        }
+        await h.enter('ana', 2, 0)
+        await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+        const bia = await h.enter('bia', 4, 0)
+        await h.media.idle()
+        const pullsOfCamera2 = callsOf(h.calls, 'pull').flatMap(call => call[2]).filter((track: any) => track.trackName === 'camera-2').length
+        const errors = bia.emitted.filter(([event]) => event === 'mediaTrackError')
+        if (reported) {
+            assert.equal(pullsOfCamera2, 5, 'asked, then retried four times')
+            assert.deepEqual(errors, [['mediaTrackError', { fromUid: 'ana', kind: 'camera' }]])
+            assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+        } else {
+            assert.equal(pullsOfCamera2, 5, 'accepted on the fourth retry')
+            assert.deepEqual(errors, [])
+            assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+        }
+    }
 })
 
 test('failures: a refusal is not reported when the track is no longer wanted', async () => {

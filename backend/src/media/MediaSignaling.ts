@@ -1,12 +1,12 @@
 import type { Session } from '../session'
 import { conversationChannelFor } from '../office/ConversationAuthorization'
 import { MAX_TRACKS_PER_REQUEST, type IceServer, type Layer, type RealtimeApi, type Simulcast } from './CloudflareRealtime'
-import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, PULL_RETRY_MS, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
+import { ICE_SERVERS_TIMEOUT_MS, MediaLayer, MediaOpen, MediaPublish, MediaTrackState, MediaUnpublish, NegotiatedSdp, EMPTY_TRACK_RETRY_MS, PULL_RETRY_MS, STUN_ONLY, type MediaConfig, type NegotiateStep } from './protocol'
 import { desiredPulls, diffPulls, indexPublications, mediaFingerprint, mediaView, peersFor, type MediaKind, type MediaView, type Publication, type PublicationIndex, type WantedPull } from './subscriptions'
 
 export type MediaClient = { socketId: string, emit(event: string, payload?: unknown): void, ask(event: string, payload: unknown): Promise<any> }
 export type MediaAck = { ok: true, answer?: string, config?: MediaConfig } | { ok: false, error: string }
-export type MediaSignalingOptions = { provider: 'agora' | 'cloudflare', api: RealtimeApi | null, iceServers: () => Promise<IceServer[]>, getSession: (uid: string) => Session | undefined, schedule?: (run: () => void) => void, log?: (line: string) => void, pullRetryMs?: number }
+export type MediaSignalingOptions = { provider: 'agora' | 'cloudflare', api: RealtimeApi | null, iceServers: () => Promise<IceServer[]>, getSession: (uid: string) => Session | undefined, schedule?: (run: () => void) => void, log?: (line: string) => void, pullRetryMs?: number, emptyTrackRetryMs?: number[] }
 
 const AGORA: MediaAck = { ok: false, error: 'O vídeo deste escritório usa a Agora.' }
 const INVALID: MediaAck = { ok: false, error: 'Pedido de vídeo inválido.' }
@@ -24,8 +24,8 @@ type Connection = {
     client: MediaClient,
     session: Session,
     pub: Lane,
-    // failed: refused pulls not to be asked again; retried: refused pulls that already had their one retry.
-    sub: Lane & { pulled: Map<string, Pulled>, failed: Set<string>, retried: Set<string>, syncing: boolean, again: boolean },
+    // failed: refused pulls not to be asked again; retried: how many retries each refused pull already had.
+    sub: Lane & { pulled: Map<string, Pulled>, failed: Set<string>, retried: Map<string, number>, syncing: boolean, again: boolean },
     // 'mic' | 'camera' | 'screen' | 'speaker:<objectId>'
     publications: Map<string, Publication>,
     layers: Map<string, Layer>,
@@ -59,6 +59,7 @@ export class MediaSignaling {
     private readonly schedule: (run: () => void) => void
     private readonly log: (line: string) => void
     private readonly pullRetryMs: number
+    private readonly emptyTrackRetryMs: number[]
     private trackCounter = 0
     private generations = 0
 
@@ -66,6 +67,7 @@ export class MediaSignaling {
         this.schedule = options.schedule ?? (run => { setImmediate(run) })
         this.log = options.log ?? console.error
         this.pullRetryMs = options.pullRetryMs ?? PULL_RETRY_MS
+        this.emptyTrackRetryMs = options.emptyTrackRetryMs ?? EMPTY_TRACK_RETRY_MS
     }
 
     private get cloudflare() { return this.options.provider === 'cloudflare' && this.options.api !== null }
@@ -276,7 +278,7 @@ export class MediaSignaling {
         return {
             uid, generation: ++this.generations, client, session,
             pub: { sessionId: null, chain: Promise.resolve() },
-            sub: { sessionId: null, chain: Promise.resolve(), pulled: new Map(), failed: new Set(), retried: new Set(), syncing: false, again: false },
+            sub: { sessionId: null, chain: Promise.resolve(), pulled: new Map(), failed: new Set(), retried: new Map(), syncing: false, again: false },
             publications: new Map(), layers: new Map(), lastPeers: null, awaitingReset: false,
         }
     }
@@ -439,7 +441,7 @@ export class MediaSignaling {
         const sub = connection.sub
         const wanted = this.wanted(this.snapshot(connection.session), connection.uid)
         for (const key of sub.failed) if (!wanted.has(key)) sub.failed.delete(key)
-        for (const key of sub.retried) if (!wanted.has(key)) sub.retried.delete(key)
+        for (const key of [...sub.retried.keys()]) if (!wanted.has(key)) sub.retried.delete(key)
         const { add, remove } = diffPulls(sub.pulled, wanted, sub.failed)
         // Additions first: walking straight from one group to another never empties the connection on the way,
         // so only a real "nothing left" takes the forced close.
@@ -482,10 +484,13 @@ export class MediaSignaling {
             const result = response.tracks?.find(track => track.sessionId === pull.sessionId && track.trackName === pull.trackName)
             if (result && !result.errorCode && result.mid) { sub.retried.delete(pull.key); working.push({ pull, mid: result.mid }); continue }
             sub.failed.add(pull.key)
-            if (!sub.retried.has(pull.key)) {
-                // It may have raced a fresh publish: one more try before telling the page.
-                sub.retried.add(pull.key)
-                this.retryLater(connection, pull.key)
+            // A track with no media yet is retried with a backoff; any other refusal once (it may have raced a
+            // fresh publish), before telling the page.
+            const delays = result?.errorCode === 'empty_track_error' ? this.emptyTrackRetryMs : [this.pullRetryMs]
+            const retries = sub.retried.get(pull.key) ?? 0
+            if (retries < delays.length) {
+                sub.retried.set(pull.key, retries + 1)
+                this.retryLater(connection, pull.key, delays[retries])
                 continue
             }
             this.log(`media: ${connection.uid} não recebeu ${pull.key}: ${result?.errorCode ?? 'sem resposta'}`)
@@ -516,13 +521,13 @@ export class MediaSignaling {
         }
     }
 
-    private retryLater(connection: Connection, key: string) {
+    private retryLater(connection: Connection, key: string, delayMs: number) {
         this.track(new Promise<void>(resolve => {
             setTimeout(() => {
                 resolve()
                 if (!this.alive(connection) || !connection.sub.failed.delete(key)) return
                 this.sync(connection)
-            }, this.pullRetryMs)
+            }, delayMs)
         }))
     }
 
