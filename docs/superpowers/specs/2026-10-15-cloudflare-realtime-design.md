@@ -18,7 +18,7 @@ Todo o áudio e vídeo do escritório (conversas por proximidade, salas fechadas
 | Chaves | Só no servidor (Render): `CLOUDFLARE_SFU_APP_ID`, `CLOUDFLARE_SFU_APP_SECRET`, `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN`. O site nunca vê o segredo. |
 | Quem recebe quem | Decidido pelo servidor, com as mesmas regras de hoje: grupo da conversa (área privada do quadradinho, senão grupo de proximidade), treinamento com plateia recebendo só o vídeo do palco e telas, ninguém recebe a própria tela, caixa de som para quem está no alcance dela. |
 | Qualidade | Simulcast em 3 camadas (`f`, `h`, `q`). Quadradinhos pequenos recebem `q`; reunião expandida e janela flutuante `h`; tela compartilhada e quadro ampliado `f`. O site pede a troca de camada; o servidor aplica. |
-| Câmera ou microfone desligado | Não envia nada (sem custo). O estado ligado/desligado continua indo para os outros pelo servidor, como hoje. |
+| Câmera ou microfone desligado | A câmera desligada envia um quadro preto por segundo (poucos kbps, luz da câmera apagada, os outros veem o avatar), para voltar na hora quando religada. O microfone desligado não envia nada. O estado ligado/desligado continua indo para os outros pelo servidor, como hoje. |
 | Troca segura | Chave `VIDEO_PROVIDER` no servidor (`agora` ou `cloudflare`), enviada ao site na entrada. Começa em `agora`; liga `cloudflare` num horário combinado; volta para `agora` trocando a chave no Render. A Agora sai do código depois de 1 a 2 semanas estável (fora deste trabalho). |
 
 ## Como funciona
@@ -69,6 +69,6 @@ Mapa, bonecos, escadas, salas, limites, chat, lista de online, seguir, controles
 4. Compartilhar tela funciona e quem compartilha não recebe a própria tela de volta.
 5. Caixa de som toca para quem está no alcance, com o volume certo.
 6. Trocar de andar encerra o que recebia no outro andar.
-7. Desligar a câmera ou o microfone para de enviar; religar volta.
+7. Desligar o microfone para de enviar. Desligar a câmera apaga a luz da câmera e passa a enviar só um quadro preto por segundo (poucos kbps), que ninguém vê: os outros veem o avatar. Religar volta, a câmera em menos de 1 s.
 8. O uso da Cloudflare (tráfego entregue) no painel bate com a estimativa e fica dentro de 1.000 GB/mês no uso normal.
 9. Testes automáticos cobrem: a função de quem recebe quem, a diferença entre o que recebe e o que deve receber, a escolha de camada, a troca de provedor e a autorização (ninguém pede faixa de fora da sua conversa).
