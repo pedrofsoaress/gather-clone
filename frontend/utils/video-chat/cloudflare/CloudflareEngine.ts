@@ -18,9 +18,10 @@ export const PLACEHOLDER_BITRATE = 30_000
 // shows a black frame.
 export const RESUME_FRAMES = 3
 export const RESUME_WAIT_MS = 400
-// While the camera is held, the sender's packet count is read this often. A canvas can stall (a frozen or background
-// tab, an off-page canvas in WebKit) and Cloudflare collects a track with no packets for 30 s: turning on a camera with
-// no packet seen in the last IDLE_UNPUBLISH_MS publishes it again instead of swapping the track.
+// While the camera is held, the sender's encoded frame count is read this often. A canvas can stall (a frozen or
+// background tab, an off-page canvas in WebKit) and Cloudflare collects a track with no media for 30 s: turning on a
+// camera with no frame seen in the last IDLE_UNPUBLISH_MS publishes it again instead of swapping the track. Frames, not
+// packets: a stalled sender still sends a few padding packets.
 export const HELD_CHECK_MS = 10_000
 
 export type EngineEvent =
@@ -73,9 +74,9 @@ type Publication = {
     live: boolean
     pausedAt: number
     idleTimer: unknown
-    // Off and sending the placeholder: the encoding limits to put back when it is turned on, the last packet count
-    // read and when, and the latest time a packet is known to have gone out after.
-    held: { limits: { maxBitrate?: number, maxFramerate?: number }[], read: { packets: number | null, at: number }, progressAt: number } | null
+    // Off and sending the placeholder: the encoding limits to put back when it is turned on, the last frame count
+    // read and when, and the latest time a frame is known to have gone out after.
+    held: { limits: { maxBitrate?: number, maxFramerate?: number }[], read: { frames: number | null, at: number }, progressAt: number } | null
 }
 
 // Thrown when the connections were rebuilt (or the engine stopped) while some work awaited: it ends quietly.
@@ -251,7 +252,7 @@ export class CloudflareEngine implements MediaEngine {
                 if (epoch !== this.epoch || this.publications.get(kind) !== publication || publication.live) return
                 const limits = await this.hold(transceiver.sender, placeholder)
                 const at = this.now()
-                publication.held = { limits, read: { packets: await this.sentPackets(transceiver.sender), at }, progressAt: at }
+                publication.held = { limits, read: { frames: await this.encodedFrames(transceiver.sender), at }, progressAt: at }
                 this.armHeldCheck(publication)
                 return
             }
@@ -277,7 +278,7 @@ export class CloudflareEngine implements MediaEngine {
                 this.clearIdle(publication)
                 await this.checkHeld(publication)
                 publication.held = null
-                // No packet known in the last 25 s: Cloudflare may have collected the track, so it goes out again.
+                // No frame known in the last 25 s: Cloudflare may have collected the track, so it goes out again.
                 if (this.now() - held.progressAt >= IDLE_UNPUBLISH_MS) {
                     try { await this.doUnpublish(kind) } catch { /* the republish closes the older track on the server */ }
                     return this.doPublish(kind, kind, track)
@@ -487,26 +488,26 @@ export class CloudflareEngine implements MediaEngine {
         try { await sender.setParameters(parameters) } catch { /* the placeholder limits stay */ }
     }
 
-    // Packets sent by every layer of the sender, or null when the browser does not say.
-    private async sentPackets(sender: RTCRtpSender): Promise<number | null> {
+    // Frames encoded by every layer of the sender, or null when the browser does not say.
+    private async encodedFrames(sender: RTCRtpSender): Promise<number | null> {
         if (typeof sender.getStats !== 'function') return null
         try {
-            let packets = 0
-            ;(await sender.getStats()).forEach((stat: { type: string, packetsSent?: number }) => { if (stat.type === 'outbound-rtp') packets += stat.packetsSent ?? 0 })
-            return packets
+            let frames = 0
+            ;(await sender.getStats()).forEach((stat: { type: string, framesEncoded?: number }) => { if (stat.type === 'outbound-rtp') frames += stat.framesEncoded ?? 0 })
+            return frames
         } catch { return null }
     }
 
-    // Reads the held camera's packet count: a count that grew means a packet went out after the previous read.
+    // Reads the held camera's frame count: a count that grew means a frame went out after the previous read.
     private async checkHeld(publication: Publication): Promise<void> {
         const held = publication.held
         const sender = publication.transceiver?.sender
         if (!held || !sender) return
-        const packets = await this.sentPackets(sender)
+        const frames = await this.encodedFrames(sender)
         const at = this.now()
-        if (packets === null || held.read.packets === null) held.progressAt = at
-        else if (packets > held.read.packets) held.progressAt = held.read.at
-        held.read = { packets, at }
+        if (frames === null || held.read.frames === null) held.progressAt = at
+        else if (frames > held.read.frames) held.progressAt = held.read.at
+        held.read = { frames, at }
     }
 
     private armHeldCheck(publication: Publication) {

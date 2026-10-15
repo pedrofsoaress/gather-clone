@@ -869,10 +869,12 @@ test('a reset that keeps failing is retried after 2, 4, 8, 16 s, then every 30 s
     assert.deepEqual([RESTART_RETRY_MAX_MS, HELD_CHECK_MS], [30_000, 10_000])
 })
 
-test('held camera: no packet seen in the last 25 s means it is published again on resume, not swapped', async () => {
+test('held camera: no frame seen in the last 25 s means it is published again on resume, not swapped', async () => {
     const placeholder = { id: 'black', readyState: 'live', stop() {} }
-    let packets = 100, frames = 0
-    const stats = () => { frames += 5; return new Map([['o', { type: 'outbound-rtp', ssrc: 1, packetsSent: packets, framesEncoded: frames }]]) }
+    // `packets` here is the encoded frame count; it also grows while the resume waits for real frames.
+    // The first read of a resume is the held check; later reads (waiting for real frames) see new frames.
+    let packets = 100, resuming = false, reads = 0
+    const stats = () => { if (resuming && reads++ > 0) packets += 5; return new Map([['o', { type: 'outbound-rtp', ssrc: 1, packetsSent: 0, framesEncoded: packets }]]) }
     const make = async () => {
         const h = harness({ placeholder, world: { senderStats: stats } })
         await h.engine.start(cfg())
@@ -881,7 +883,7 @@ test('held camera: no packet seen in the last 25 s means it is published again o
         await h.engine.pause('camera')
         return h
     }
-    const drive = async (h, promise) => { let done = false; promise.then(() => { done = true }, () => { done = true }); for (let i = 0; i < 40 && !done; i++) { await tick(); h.fire(50) } return promise }
+    const drive = async (h, promise) => { resuming = true; reads = 0; let done = false; promise.then(() => { done = true }, () => { done = true }); for (let i = 0; i < 40 && !done; i++) { await tick(); h.fire(50) } await promise.finally(() => { resuming = false }); return promise }
     const check = async h => { h.advance(10_000); h.fire(10_000); await tick() }
 
     // The placeholder kept sending: the checks see the count grow, and on is a swap.
