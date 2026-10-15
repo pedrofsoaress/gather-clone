@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Session, type Room } from '../session'
-import { desiredPulls, diffPulls, mediaFingerprint, mediaView, peersFor, PREFETCH_RADIUS, SEATED_PREFETCH_RADIUS, type MediaView, type Publication, type ViewPlayer } from './subscriptions'
+import { desiredPulls, diffPulls, mediaFingerprint, mediaView, peersFor, PREFETCH_LIMIT, PREFETCH_RADIUS, type MediaView, type Publication, type ViewPlayer } from './subscriptions'
 
 const pub = (uid: string, kind: Publication['kind'], extra: Partial<Publication> = {}): Publication => ({ uid, kind, sessionId: `s-${uid}`, trackName: `${kind}-1`, mid: '0', live: true, simulcast: kind === 'camera', ...extra })
 const view = (players: Record<string, Partial<ViewPlayer>>): MediaView => new Map(Object.entries(players).map(([uid, p]) => [uid, { conversation: null, moderators: null, speakers: {}, open: null, nearby: [], ...p }]))
@@ -92,7 +92,7 @@ test('prefetch: the server view, closed rooms, meeting rooms, floors and the sea
     const tilemap: Room['tilemap'] = {}
     for (let x = 0; x < 40; x++) for (let y = 0; y < 12; y++) tilemap[`${x}, ${y}`] = x >= 30 ? { privateAreaId: 'room' } : x >= 20 && y >= 6 ? { areaId: 'training' } : {}
     const desk = (id: string, x: number, y: number) => ({ id, kind: 'desk' as const, label: id, bounds: { x, y: y - 1, width: 1, height: 1 }, approach: { x, y } })
-    const room: Room = { name: 'A', tilemap, areas: { training: { label: 'Treinamento', conversation: 'stage', meeting: { stage: { x1: 20, y1: 11, x2: 29, y2: 11 } } } }, interactions: [desk('d1', 2, 1), desk('d2', 2, 6), desk('d3', 2, 7)] }
+    const room: Room = { name: 'A', tilemap, areas: { training: { label: 'Treinamento', conversation: 'stage', meeting: { stage: { x1: 20, y1: 11, x2: 29, y2: 11 } } } }, interactions: [desk('d1', 2, 1), desk('d2', 2, 5)] }
     const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [room, structuredClone(room)] })
     const office = session.roomFeatures[0].office
     const add = (uid: string, x: number, y: number, floor = 0) => { if (!session.getPlayer(uid)) session.addPlayer(`socket-${uid}`, uid, uid, '009'); session.changeRoom(uid, floor, x, y) }
@@ -110,15 +110,16 @@ test('prefetch: the server view, closed rooms, meeting rooms, floors and the sea
     assert.equal(mediaView(session).get('bia')!.open, null, 'inside a meeting room')
     assert.deepEqual(mediaView(session).get('ana')!.nearby, [])
 
-    // Two seated people: SEATED_PREFETCH_RADIUS (5.5). Seated 6 tiles apart: nothing; one standing: 6.5 applies.
-    add('ana', 2, 1); add('bia', 2, 7)
-    assert.ok(office.occupy('ana', 'd1').ok); assert.ok(office.occupy('bia', 'd3').ok)
-    assert.deepEqual(mediaView(session).get('ana')!.nearby, [])
+    // Two seated people never prefetch each other (4 tiles apart: no conversation either); one standing: 6.5 applies.
+    add('ana', 2, 1); add('bia', 2, 5)
+    assert.ok(office.occupy('ana', 'd1').ok); assert.ok(office.occupy('bia', 'd2').ok)
+    assert.equal(mediaView(session).get('ana')!.conversation, null)
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, [], 'both seated')
+    assert.deepEqual(mediaView(session).get('bia')!.nearby, [])
     office.release('bia')
-    assert.deepEqual(mediaView(session).get('ana')!.nearby, ['bia'])
-    add('bia', 2, 6); assert.ok(office.occupy('bia', 'd2').ok)
-    assert.deepEqual(mediaView(session).get('ana')!.nearby, ['bia'], 'seated 5 tiles apart')
-    assert.equal(PREFETCH_RADIUS, 6.5); assert.equal(SEATED_PREFETCH_RADIUS, 5.5)
+    assert.deepEqual(mediaView(session).get('ana')!.nearby, ['bia'], 'seated and standing, 4 tiles')
+    assert.deepEqual(mediaView(session).get('bia')!.nearby, ['ana'])
+    assert.equal(PREFETCH_RADIUS, 6.5); assert.equal(PREFETCH_LIMIT, 6)
 })
 
 test('prefetch: the same track turning active (or back) is a flip, not a close and a pull', () => {
@@ -146,4 +147,26 @@ test('prefetch: the fingerprint moves when someone comes within reach or leaves 
     assert.notEqual(near, far, 'within PREFETCH_RADIUS')
     add('bia', 5)
     assert.equal(mediaFingerprint(session), near, 'a step inside the reach, still no conversation')
+})
+
+test('prefetch: at most the 6 nearest, ties by uid, never someone already in the conversation', () => {
+    const tilemap: Room['tilemap'] = {}
+    for (let x = 0; x < 40; x++) for (let y = 0; y < 14; y++) tilemap[`${x}, ${y}`] = {}
+    const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [{ name: 'A', tilemap }] })
+    const add = (uid: string, x: number, y: number) => { if (!session.getPlayer(uid)) session.addPlayer(`socket-${uid}`, uid, uid, '009'); session.changeRoom(uid, 0, x, y) }
+    // A crowded reception around ana, everyone out of her conversation reach: four at 4 tiles, three at 5, one at 6.
+    add('ana', 20, 6)
+    add('a1', 24, 6); add('a2', 16, 6); add('a3', 20, 2); add('a4', 20, 10)
+    add('c', 25, 6); add('b', 15, 6); add('d', 20, 1); add('e', 26, 6)
+    const view = mediaView(session)
+    assert.equal(view.get('ana')!.conversation, null)
+    assert.deepEqual(view.get('ana')!.nearby, ['a1', 'a2', 'a3', 'a4', 'b', 'c'])
+    assert.ok(view.get('d')!.nearby.length <= PREFETCH_LIMIT)
+
+    const pair = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [{ name: 'A', tilemap }] })
+    for (const [uid, x] of [['ana', 0], ['bia', 3]] as const) { pair.addPlayer(`socket-${uid}`, uid, uid, '009'); pair.changeRoom(uid, 0, x, 0) }
+    assert.ok(mediaView(pair).get('ana')!.conversation)
+    assert.deepEqual(mediaView(pair).get('ana')!.nearby, [], 'in the conversation: pulled as active, not counted')
+    pair.changeRoom('bia', 0, 6, 0)
+    assert.deepEqual(mediaView(pair).get('ana')!.nearby, ['bia'])
 })

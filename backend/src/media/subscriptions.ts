@@ -1,4 +1,4 @@
-import { PROXIMITY_RADIUS, SEATED_PROXIMITY_RADIUS, type Session } from '../session'
+import { PROXIMITY_RADIUS, type Session } from '../session'
 import { conversationChannelFor, conversationGroupFor } from '../office/ConversationAuthorization'
 import { areaAt, areaConfig, meetingStage } from '../office/areas'
 
@@ -22,9 +22,10 @@ export const pullKey = (publication: Pick<Publication, 'uid' | 'trackName'>) => 
 
 // Prefetch: the microphone, camera and screen of someone this close are pulled before the conversation starts
 // (camera at the lowest layer, nothing shown or played), so joining it only shows what is already arriving. Three
-// tiles past the conversation reach, also between two seated people (SEATED_PROXIMITY_RADIUS + 3).
+// tiles past the conversation reach. Never between two seated people: they cannot walk into each other, and within
+// SEATED_PROXIMITY_RADIUS they already talk. At most PREFETCH_LIMIT people per person, the nearest.
 export const PREFETCH_RADIUS = PROXIMITY_RADIUS + 3
-export const SEATED_PREFETCH_RADIUS = SEATED_PROXIMITY_RADIUS + 3
+export const PREFETCH_LIMIT = 6
 
 // The floor of someone standing in the open office: outside every private area (their tile and their verified
 // tile), meeting room and stage area, and not at a focus desk or in a focus call. Null anywhere else: nothing is
@@ -44,29 +45,29 @@ export function openFloor(session: Session, uid: string): number | null {
     return player.room
 }
 
-// Per person, everyone in the open office of the same floor within PREFETCH_RADIUS (SEATED_PREFETCH_RADIUS when
-// both are seated), sorted. Symmetric.
+// Per person, the PREFETCH_LIMIT nearest people (ties by uid) outside their conversation, in the open office of the
+// same floor within PREFETCH_RADIUS, at least one of the two standing; sorted by uid. Not always symmetric once the limit applies.
 export function prefetchCandidates(session: Session, open: Map<string, number | null> = openFloors(session)): Map<string, string[]> {
-    const spots: { uid: string, room: number, x: number, y: number, seated: boolean }[] = []
+    const spots: { uid: string, room: number, x: number, y: number, seated: boolean, group: string | null }[] = []
     for (const [uid, room] of open) {
         if (room === null) continue
         const player = session.getPlayer(uid)
-        spots.push({ uid, room, x: player.x, y: player.y, seated: Boolean(session.roomFeatures[room].office.seatOf(uid)) })
+        const group = conversationGroupFor(session, uid)
+        spots.push({ uid, room, x: player.x, y: player.y, seated: Boolean(session.roomFeatures[room].office.seatOf(uid)), group: group ? group.group : null })
     }
-    spots.sort((a, b) => a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0)
+    const byUid = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
     const nearby = new Map<string, string[]>()
-    for (let i = 0; i < spots.length; i++) {
-        const a = spots[i]
-        for (let j = i + 1; j < spots.length; j++) {
-            const b = spots[j]
-            if (a.room !== b.room) continue
-            const radius = a.seated && b.seated ? SEATED_PREFETCH_RADIUS : PREFETCH_RADIUS
-            if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 > radius ** 2) continue
-            nearby.set(a.uid, [...(nearby.get(a.uid) ?? []), b.uid])
-            nearby.set(b.uid, [...(nearby.get(b.uid) ?? []), a.uid])
+    for (const a of spots) {
+        const around: { uid: string, distance: number }[] = []
+        for (const b of spots) {
+            if (b === a || b.room !== a.room || (a.seated && b.seated) || (a.group !== null && a.group === b.group)) continue
+            const distance = (a.x - b.x) ** 2 + (a.y - b.y) ** 2
+            if (distance <= PREFETCH_RADIUS ** 2) around.push({ uid: b.uid, distance })
         }
+        if (!around.length) continue
+        around.sort((p, q) => p.distance - q.distance || byUid(p.uid, q.uid))
+        nearby.set(a.uid, around.slice(0, PREFETCH_LIMIT).map(other => other.uid).sort(byUid))
     }
-    for (const list of nearby.values()) list.sort()
     return nearby
 }
 
