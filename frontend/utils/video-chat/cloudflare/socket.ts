@@ -15,3 +15,6 @@ export function officeSocket(): SignalingSocket {
         },
     }
 }
+
+// Which socket.io socket `officeSocket()` talks to right now; a new value means the office socket was replaced.
+export function currentOfficeSocket(): unknown { return server.socket }
