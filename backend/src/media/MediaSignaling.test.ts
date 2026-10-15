@@ -38,7 +38,7 @@ function harness(provider: 'agora' | 'cloudflare' = 'cloudflare', overrides: Par
     const room: Room = { name: 'A', tilemap, areas: { training: { label: 'Treinamento', meeting: { stage: { x1: 0, y1: 9, x2: 29, y2: 9 } } } } }
     const session = new Session('realm', { spawnpoint: { roomIndex: 0, x: 0, y: 0 }, rooms: [room, structuredClone(room)] })
     const logs: string[] = [], clients = new Map<string, Client>()
-    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line) })
+    const media = new MediaSignaling({ provider, api: provider === 'cloudflare' ? api : null, iceServers: () => api.iceServers(60), getSession: () => session, schedule: run => queueMicrotask(run), log: line => logs.push(line), pullRetryMs: 5 })
     const place = async (uid: string, x: number, y: number, floor = 0) => { session.changeRoom(uid, floor, x, y); media.changed(session); await media.idle() }
     const enter = async (uid: string, x: number, y: number, floor = 0) => {
         session.addPlayer(`socket-${uid}`, uid, uid, '009')
@@ -61,6 +61,10 @@ function openPulls(client: Client) {
     }
     return open
 }
+// Negotiation steps without their generation (checked on its own in the generation test).
+const stepsOf = (client: Client, from = 0) => client.steps.slice(from).map(({ generation, ...step }) => step)
+const configOf = (client: Client) => { const [event, { generation, ...config }] = client.emitted.find(([name]) => name === 'mediaConfig')!; assert.equal(typeof generation, 'number'); return [event, config] }
+const TURN = [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }]
 const pulledKinds = (client: Client) => [...openPulls(client).values()].sort()
 const lastPeers = (client: Client) => [...client.emitted].reverse().find(([event]) => event === 'mediaPeers')?.[1]
 const callsOf = (calls: any[][], name: string) => calls.filter(call => call[0] === name)
@@ -90,11 +94,11 @@ test('agora: the page is told to use Agora and every media request is refused', 
 test('config: TURN servers on join, STUN only with a log line when TURN fails', async () => {
     const h = harness()
     const ana = await h.enter('ana', 2, 0)
-    assert.deepEqual(ana.emitted[0], ['mediaConfig', { provider: 'cloudflare', iceServers: [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }], bootstrap: true }])
+    assert.deepEqual(configOf(ana), ['mediaConfig', { provider: 'cloudflare', iceServers: TURN, bootstrap: true }])
 
     const broken = harness('cloudflare', { async iceServers() { throw new Error('sem rede') } })
     const bia = await broken.enter('bia', 2, 0)
-    assert.deepEqual(bia.emitted[0], ['mediaConfig', { provider: 'cloudflare', iceServers: STUN_ONLY, bootstrap: true }])
+    assert.deepEqual(configOf(bia), ['mediaConfig', { provider: 'cloudflare', iceServers: STUN_ONLY, bootstrap: true }])
     assert.ok(broken.logs.some(line => line.includes('TURN indisponível') && line.includes('usando só STUN')), broken.logs.join('\n'))
 })
 
@@ -112,7 +116,7 @@ test('publish: one send session, unique track names, and the neighbour pulls mic
 
     const bia = await h.enter('bia', 4, 0)
     await h.media.idle()
-    const pulls = bia.steps.filter(step => step.type === 'pull')
+    const pulls = stepsOf(bia).filter(step => step.type === 'pull')
     assert.equal(pulls.length, 1)
     assert.deepEqual(pulls[0], { type: 'pull', offer: 'pull-offer', tracks: [{ mid: '101', fromUid: 'ana', kind: 'mic' }, { mid: '102', fromUid: 'ana', kind: 'camera' }] })
     assert.deepEqual(callsOf(h.calls, 'pull'), [['pull', 's2', [
@@ -139,7 +143,7 @@ test('walking away closes the pulls with a renegotiation, coming back pulls them
     // Ana leaves the group; bia keeps caio's mic, so this is a normal negotiated close.
     const before = bia.steps.length
     await h.place('ana', 14, 0)
-    assert.deepEqual(bia.steps.slice(before), [{ type: 'close', mids: anaMids }, { type: 'answer', answer: 'close-answer' }])
+    assert.deepEqual(stepsOf(bia, before), [{ type: 'close', mids: anaMids }, { type: 'answer', answer: 'close-answer' }])
     assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === sub), [['close', sub, anaMids, 'offer-bia']])
     assert.deepEqual(pulledKinds(bia), ['caio|mic'])
 
@@ -160,7 +164,7 @@ test('closing the last pulled track is forced, with no offer and no answer step'
 
     const before = bia.steps.length
     await h.place('bia', 14, 0)
-    assert.deepEqual(bia.steps.slice(before), [{ type: 'close', mids, force: true }])
+    assert.deepEqual(stepsOf(bia, before), [{ type: 'close', mids, force: true }])
     assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === sub), [['close', sub, mids, undefined]])
     assert.deepEqual(pulledKinds(bia), [])
     assert.equal(bia.emitted.some(([event]) => event === 'mediaRestart'), false)
@@ -288,7 +292,7 @@ test('never two negotiations at once per person, and the send side never waits f
     assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|screen', 'caio|mic'])
 })
 
-test('failures: a refused track is reported once and retried only after a republish', async () => {
+test('failures: a refused track is retried once, then reported once, and pulled again after a republish', async () => {
     const h = harness()
     const pull = h.api.pull
     h.api.pull = async (sid, tracks) => {
@@ -299,19 +303,59 @@ test('failures: a refused track is reported once and retried only after a republ
     await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
     const bia = await h.enter('bia', 4, 0)
     const errors = () => bia.emitted.filter(([event]) => event === 'mediaTrackError')
+    const pullsOfCamera2 = () => callsOf(h.calls, 'pull').flatMap(call => call[2]).filter((track: any) => track.trackName === 'camera-2').length
+    assert.equal(pullsOfCamera2(), 2, 'asked, then retried once')
     assert.deepEqual(errors(), [['mediaTrackError', { fromUid: 'ana', kind: 'camera' }]])
     assert.deepEqual(pulledKinds(bia), ['ana|mic'])
-    assert.deepEqual(bia.steps.filter(step => step.type === 'pull')[0].tracks.map((track: any) => track.kind), ['mic'])
+    assert.deepEqual(stepsOf(bia).filter(step => step.type === 'pull').flatMap((step: any) => step.tracks.map((track: any) => track.kind)), ['mic'])
 
-    h.media.changed(h.session); await h.media.idle()
-    const pullsOfCamera2 = () => callsOf(h.calls, 'pull').flatMap(call => call[2]).filter((track: any) => track.trackName === 'camera-2').length
-    assert.equal(pullsOfCamera2(), 1)
+    // Someone arriving makes everyone resync; the refused key is not asked again.
+    await h.enter('caio', 22, 3)
+    assert.equal(pullsOfCamera2(), 2)
 
+    // The republish closes the older camera on Cloudflare first (forced, the page renegotiates the new one).
+    const closes = callsOf(h.calls, 'close').length
     await h.publish('ana', 'camera')
+    const publishes = callsOf(h.calls, 'publish')
+    assert.deepEqual(callsOf(h.calls, 'close').slice(closes), [['close', 's1', ['camera'], undefined]])
+    assert.ok(h.calls.indexOf(callsOf(h.calls, 'close').at(-1)!) < h.calls.indexOf(publishes.at(-1)!))
     await h.media.idle()
     assert.equal(errors().length, 1)
     assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
     assert.equal(bia.emitted.some(([event]) => event === 'mediaRestart'), false)
+})
+
+test('failures: a pull refused once and accepted on the retry is never reported', async () => {
+    const h = harness()
+    const pull = h.api.pull
+    let refusals = 0
+    h.api.pull = async (sid, tracks) => {
+        const response = await pull(sid, tracks)
+        return { ...response, tracks: response.tracks!.map(track => track.trackName === 'camera-2' && refusals++ === 0 ? { ...track, errorCode: 'not_found' } : track) }
+    }
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 4, 0)
+    assert.deepEqual(pulledKinds(bia), ['ana|camera', 'ana|mic'])
+    assert.equal(bia.emitted.some(([event]) => event === 'mediaTrackError'), false)
+})
+
+test('failures: a refusal is not reported when the track is no longer wanted', async () => {
+    const h = harness()
+    const pull = h.api.pull
+    let refusals = 0
+    h.api.pull = async (sid, tracks) => {
+        const response = await pull(sid, tracks)
+        if (tracks.some(track => track.trackName === 'camera-2') && ++refusals === 2) { h.session.changeRoom('bia', 0, 14, 0); h.media.changed(h.session) }
+        return { ...response, tracks: response.tracks!.map(track => track.trackName === 'camera-2' ? { ...track, errorCode: 'not_found' } : track) }
+    }
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 4, 0)
+    await h.media.idle()
+    assert.equal(refusals, 2)
+    assert.equal(bia.emitted.some(([event]) => event === 'mediaTrackError'), false)
+    assert.deepEqual(pulledKinds(bia), [])
 })
 
 test('failures: a Cloudflare error or a failed ask restarts that person only', async () => {
@@ -333,16 +377,21 @@ test('failures: a Cloudflare error or a failed ask restarts that person only', a
     assert.deepEqual(lastPeers(ana).peers, [{ uid: 'bia', mic: false, camera: false, screen: false }])
     assert.equal(ana.emitted.some(([event]) => event === 'mediaRestart'), false)
 
-    // Until the page resets, the restarted person is not negotiated with.
-    const steps = bia.steps.length
-    h.media.changed(h.session); await h.media.idle()
-    assert.equal(bia.steps.length, steps)
-
+    // Until the page resets, the restarted person is not negotiated with, and cannot publish or change layers.
     h.api.pull = pull
+    const steps = bia.steps.length
+    await h.enter('caio', 3, 1)
+    assert.deepEqual(await h.publish('caio', 'mic'), { ok: true, answer: 'answer-offer-mic' })
+    assert.equal(bia.steps.length, steps)
+    const refused = { ok: false, error: 'Não foi possível conectar o vídeo. Tente novamente.' }
+    assert.deepEqual(await h.publish('bia', 'camera'), refused)
+    assert.deepEqual(await h.media.unpublish('bia', 'socket-bia', { kind: 'mic', mid: 'mic', offer: 'o' }), refused)
+    assert.deepEqual(await h.media.layer('bia', 'socket-bia', { fromUid: 'ana', layer: 'h' }), refused)
+
     const reset = await h.media.reset('bia', 'socket-bia', {})
     assert.equal(reset.ok && reset.config?.provider === 'cloudflare' && reset.config.bootstrap, true)
     await h.media.idle()
-    assert.deepEqual(pulledKinds(bia), ['ana|mic'])
+    assert.deepEqual(pulledKinds(bia), ['ana|mic', 'caio|mic'])
 
     // A page that does not answer, or refuses, gets the same restart.
     for (const failure of ['throw', 'refuse'] as const) {
@@ -374,7 +423,7 @@ test('idle unpublish: a paused track keeps its pull, an unpublished one is close
     assert.deepEqual(await h.media.unpublish('ana', 'socket-ana', { kind: 'camera', mid: 'camera', offer: 'off' }), { ok: true, answer: 'close-answer' })
     assert.deepEqual(h.calls.find(call => call[0] === 'close'), ['close', 's1', ['camera'], 'off'])
     await h.media.idle()
-    assert.deepEqual(bia.steps.slice(steps), [{ type: 'close', mids: [cameraMid] }, { type: 'answer', answer: 'close-answer' }])
+    assert.deepEqual(stepsOf(bia, steps), [{ type: 'close', mids: [cameraMid] }, { type: 'answer', answer: 'close-answer' }])
     assert.deepEqual(pulledKinds(bia), ['ana|mic'])
     assert.ok(ana)
 })
@@ -388,7 +437,10 @@ test('leave, reset and the config refresh', async () => {
 
     const sessions = callsOf(h.calls, 'newSession').length
     const reset = await h.media.reset('ana', 'socket-ana', {})
-    assert.deepEqual(reset, { ok: true, config: { provider: 'cloudflare', iceServers: [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }], bootstrap: true } })
+    assert.ok(reset.ok && reset.config?.provider === 'cloudflare')
+    const { generation, ...config } = reset.config as any
+    assert.deepEqual(config, { provider: 'cloudflare', iceServers: TURN, bootstrap: true })
+    assert.notEqual(generation, ana.emitted.find(([name]) => name === 'mediaConfig')![1].generation, 'a reset starts a new generation')
     await h.media.idle()
     assert.deepEqual(pulledKinds(bia), [])
     await h.publish('ana', 'mic')
@@ -398,7 +450,12 @@ test('leave, reset and the config refresh', async () => {
     assert.deepEqual(pulledKinds(bia), ['ana|mic'])
 
     await h.media.refreshConfig()
-    for (const client of [ana, bia]) assert.deepEqual(client.emitted.at(-1), ['mediaConfig', { provider: 'cloudflare', iceServers: [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }], bootstrap: false }])
+    for (const client of [ana, bia]) {
+        const [event, { generation: refreshed, ...refresh }] = client.emitted.at(-1)!
+        assert.deepEqual([event, refresh], ['mediaConfig', { provider: 'cloudflare', iceServers: TURN, bootstrap: false }])
+        assert.equal(typeof refreshed, 'number')
+    }
+    assert.equal(ana.emitted.at(-1)![1].generation, generation, 'the refresh keeps the current generation')
 
     const steps = bia.steps.length
     h.media.leave('ana', 'socket-stale')
@@ -408,4 +465,75 @@ test('leave, reset and the config refresh', async () => {
     await h.media.idle()
     assert.deepEqual(pulledKinds(bia), [])
     assert.deepEqual(await h.publish('ana', 'mic'), { ok: false, error: 'Fora do escritório.' })
+})
+
+test('unpublishing the last publication: no offer, closed forced, ack without an answer', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
+    const bia = await h.enter('bia', 4, 0)
+    const invalid = { ok: false, error: 'Pedido de vídeo inválido.' }
+    assert.deepEqual(await h.media.unpublish('ana', 'socket-ana', { kind: 'camera', mid: 'camera' }), invalid, 'the mic is still published')
+    assert.deepEqual(await h.media.unpublish('ana', 'socket-ana', { kind: 'camera', mid: 'camera', offer: 'off' }), { ok: true, answer: 'close-answer' })
+    assert.deepEqual(await h.media.unpublish('ana', 'socket-ana', { kind: 'mic', mid: 'mic' }), { ok: true })
+    assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === 's1'), [['close', 's1', ['camera'], 'off'], ['close', 's1', ['mic'], undefined]])
+    await h.media.idle()
+    assert.deepEqual(pulledKinds(bia), [])
+    assert.deepEqual(stepsOf(bia).at(-1), { type: 'close', mids: [[...openPulls({ ...bia, steps: bia.steps.slice(0, -1) } as Client).keys()][0]], force: true })
+    assert.deepEqual(lastPeers(bia).peers, [{ uid: 'ana', mic: false, camera: false, screen: false }])
+})
+
+test('walking straight from one group to another pulls first, then closes with a renegotiation', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    await h.enter('caio', 12, 0)
+    await h.publish('ana', 'mic'); await h.publish('caio', 'mic')
+    const bia = await h.enter('bia', 4, 0)
+    const anaMid = [...openPulls(bia).keys()][0]
+    const before = bia.steps.length
+    await h.place('bia', 10, 0)
+    const steps = stepsOf(bia, before)
+    assert.deepEqual(steps.map(step => step.type), ['pull', 'close', 'answer'])
+    assert.deepEqual((steps[0] as any).tracks.map((track: any) => track.fromUid), ['caio'])
+    assert.deepEqual(steps[1], { type: 'close', mids: [anaMid] })
+    assert.deepEqual(pulledKinds(bia), ['caio|mic'])
+})
+
+test('every negotiation step carries the generation of the config the page holds', async () => {
+    const h = harness()
+    await h.enter('ana', 2, 0)
+    await h.publish('ana', 'mic')
+    const bia = await h.enter('bia', 4, 0)
+    const joined = bia.emitted.find(([event]) => event === 'mediaConfig')![1].generation
+    assert.ok(bia.steps.length > 0)
+    assert.ok(bia.steps.every(step => step.generation === joined))
+
+    const before = bia.steps.length
+    const reset = await h.media.reset('bia', 'socket-bia', {})
+    await h.media.idle()
+    const current = reset.ok && reset.config?.provider === 'cloudflare' ? reset.config.generation : -1
+    assert.notEqual(current, joined)
+    assert.ok(bia.steps.length > before)
+    assert.ok(bia.steps.slice(before).every(step => step.generation === current))
+})
+
+test('a change that does not touch media costs no reconcile work', async () => {
+    const h = harness()
+    await h.enter('ana', 21, 1)
+    await h.enter('bia', 22, 1)
+    await h.publish('ana', 'mic')
+    await h.media.idle()
+    const bia = h.clients.get('bia')!
+    const emitted = bia.emitted.length, steps = bia.steps.length, calls = h.calls.length
+    // Moving inside the closed room keeps the same conversation: nothing is sent and nothing is negotiated.
+    await h.place('bia', 23, 2)
+    await h.place('ana', 20, 3)
+    assert.equal(bia.emitted.length, emitted)
+    assert.equal(bia.steps.length, steps)
+    assert.equal(h.calls.length, calls)
+    // A live flag only refreshes the tiles.
+    await h.media.trackState('ana', 'socket-ana', { kind: 'mic', live: false })
+    await h.media.idle()
+    assert.deepEqual(lastPeers(bia).peers, [{ uid: 'ana', mic: false, camera: false, screen: false }])
+    assert.equal(bia.steps.length, steps)
 })
