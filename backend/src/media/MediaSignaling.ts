@@ -499,7 +499,8 @@ export class MediaSignaling {
                 const started = { timer: null as unknown, expired: false }
                 started.timer = this.timers.setTimeout(() => {
                     started.expired = true
-                    if (this.alive(connection) && connection.sub.grace.get(key) === started) this.sync(connection)
+                    // Scheduled, so the timers of the same sender that expire together close in one step.
+                    if (this.alive(connection) && connection.sub.grace.get(key) === started) this.track(new Promise<void>(resolve => this.schedule(() => { resolve(); this.sync(connection) })))
                 }, this.prefetchGraceMs)
                 sub.grace.set(key, entry = started)
             }

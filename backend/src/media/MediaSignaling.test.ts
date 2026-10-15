@@ -709,7 +709,8 @@ function fakeTimers() {
     return {
         pending,
         timers: { setTimeout(run: () => void, ms: number) { pending.set(++id, { run, ms }); return id }, clearTimeout(timer: unknown) { pending.delete(timer as number) } },
-        fire() { const due = [...pending.values()]; pending.clear(); for (const { run } of due) run() },
+        // Like Node: the microtasks queued by one timer run before the next timer of the same tick.
+        async fire() { const due = [...pending.values()]; pending.clear(); for (const { run } of due) { run(); for (let i = 0; i < 20; i++) await Promise.resolve() } },
     }
 }
 const pullSteps = (client: Client, from = 0) => stepsOf(client, from).filter(step => step.type === 'pull')
@@ -751,7 +752,7 @@ test('prefetch: someone around is pulled at q and not shown; joining the convers
 
 test('prefetch grace: walking out of reach keeps the pulls 3 s, coming back first cancels the close', async () => {
     const clock = fakeTimers()
-    const h = harness('cloudflare', {}, { prefetchGraceMs: 3000, timers: clock.timers })
+    const h = harness('cloudflare', {}, { prefetchGraceMs: 3000, timers: clock.timers, schedule: run => { setImmediate(run) } })
     await h.enter('ana', 2, 0)
     await h.publish('ana', 'mic'); await h.publish('ana', 'camera')
     const bia = await h.enter('bia', 8, 0)
@@ -770,7 +771,7 @@ test('prefetch grace: walking out of reach keeps the pulls 3 s, coming back firs
     assert.deepEqual(stepsOf(bia, steps), [], 'back and forth at the edge: nothing closed, nothing pulled again')
     assert.equal(callsOf(h.calls, 'pull').length, pulls)
 
-    clock.fire()
+    await clock.fire()
     await h.media.idle()
     assert.deepEqual(stepsOf(bia, steps), [{ type: 'close', mids: ['101', '102'], force: true }])
     assert.deepEqual(pulledKinds(bia), [])
@@ -787,7 +788,7 @@ test('prefetch grace: walking out of reach keeps the pulls 3 s, coming back firs
     assert.deepEqual(stepsOf(bia, before), [])
     assert.equal(callsOf(h.calls, 'update').at(-1)![2][0].simulcast.preferredRid, 'q')
     assert.equal(callsOf(h.calls, 'update').at(-1)![1], sub)
-    clock.fire()
+    await clock.fire()
     await h.media.idle()
     assert.deepEqual(pulledKinds(bia), [])
 })
