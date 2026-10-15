@@ -3,6 +3,7 @@ import { server } from '../backend/server'
 import signal from '../signal'
 import { generateSpeakerToken } from './generateToken'
 import { videoChat } from './video-chat'
+import type { MediaProvider } from './media-chat'
 
 export type SpeakerSnapshot = Record<string, { ownerUid: string, channel: string, volume: number }>
 type Listener = { client: IAgoraRTCClient, channel: string, track?: IRemoteAudioTrack, cancelled: boolean }
@@ -33,8 +34,8 @@ class SpatialAudio {
             const publication = this.publication
             if (publication?.cloudflare && publication.objectId === objectId) void this.stopPublication(publication, true)
         })
-        // The router has already switched (it listens first): nothing of the other provider stays running.
-        signal.on('mediaConfig', () => this.onProviderChanged())
+        // Told by the router after a real switch, with the new chat in place: nothing of the other provider stays running.
+        signal.on('video-provider-changed', ({ provider }: { provider: MediaProvider }) => this.onProviderChanged(provider))
     }
 
     private applyCloudflareVolumes() {
@@ -42,13 +43,15 @@ class SpatialAudio {
         for (const [id, state] of Object.entries(this.snapshot)) {
             const audio = videoChat.speakerAudio(id)
             if (!audio) continue
+            // Your own speaker stays silent, as with Agora (which never listens to it): the server does not pull it
+            // back to you, and if it ever did you would hear yourself late, echoing what you are sending.
             audio.setVolume(this.muted || state.ownerUid === this.uid ? 0 : state.volume)
             audio.play()
         }
     }
 
-    private onProviderChanged() {
-        const cloudflare = videoChat.provider === 'cloudflare'
+    private onProviderChanged(provider: MediaProvider) {
+        const cloudflare = provider === 'cloudflare'
         if (this.publication && this.publication.cloudflare !== cloudflare) void this.stopPublication(this.publication, true)
         if (this.uid !== null) this.listenAll(this.uid)
     }

@@ -59,6 +59,7 @@ export class VideoChatRouter implements MediaChat {
         if (config.provider === 'cloudflare') this.lastConfig = config
         this.awaitingConfig = false
         if (config.provider === this.current && this.impl) { this.impl.configure(config); return }
+        const switched = config.provider !== this.current
         // The old provider is fully stopped before the new one exists: the office never runs both.
         const previous = this.impl
         this.impl = null
@@ -76,6 +77,9 @@ export class VideoChatRouter implements MediaChat {
         // People stay in their conversation through a switch (a rollback to Agora mid-session included): the Player
         // only joins when the channel changes, so the router joins the new chat itself.
         if (previous && this.joined) void next.joinChannel(...this.joined).catch(() => {})
+        // Told only on a real switch, once the new chat answers: what lives outside the chat (the speakers in
+        // SpatialAudio) moves to the new provider without depending on the order of mediaConfig handlers.
+        if (switched) signal.emit('video-provider-changed', { provider: this.current })
     }
 
     toggleCamera(): Promise<boolean> { return this.chat.toggleCamera() }

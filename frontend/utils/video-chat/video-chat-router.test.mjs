@@ -28,7 +28,7 @@ function load() {
     }
     const exports = {}
     vm.runInNewContext(transpile('./video-chat.ts'), { exports, require: name => {
-        if (name === '../signal') return { __esModule: true, default: { on: (event, fn) => listeners.set(event, fn), off() {}, emit: (event, data) => signals.push([event, data]) } }
+        if (name === '../signal') return { __esModule: true, default: { on: (event, fn) => listeners.set(event, fn), off() {}, emit: (event, data) => signals.push([event, data && typeof data === 'object' ? { ...data } : data]) } }
         if (name === './agora-video-chat') return { AgoraVideoChat: function () { return fake('agora') } }
         if (name === './cloudflare/CloudflareVideoChat') return { CloudflareVideoChat: function (config) { return fake('cloudflare', config) } }
         if (name === './AudioPreference') return { readMediaPreferences: () => ({ microphoneId: 'saved', cameraId: '', outputId: '' }) }
@@ -57,7 +57,7 @@ test('switching to Cloudflare turns the old devices off and moves preview and mo
     assert.equal(next.provider, 'cloudflare')
     assert.deepEqual(next.config, cloudflare)
     assert.deepEqual(next.calls, [['play', 'local-meeting-video'], ['monitor']])
-    assert.deepEqual(env.signals, [['local-camera-changed', true], ['local-microphone-changed', true]])
+    assert.deepEqual(env.signals, [['local-camera-changed', true], ['local-microphone-changed', true], ['video-provider-changed', { provider: 'cloudflare' }]])
     env.config(cloudflare)
     assert.equal(env.made.length, 2, 'same provider: reconfigured, not recreated')
     assert.deepEqual(next.calls.at(-1), ['configure', 'cloudflare'])
@@ -102,7 +102,7 @@ test('the Cloudflare chat is made inside the mediaConfig handler, with the newes
     assert.equal(env.made.length, 3)
     assert.deepEqual(env.made[2].config, fresh, 'started with the config of this visit, not the previous one')
     assert.equal(env.made[2].aliveAtCreation, 0)
-    assert.deepEqual(env.signals, [['local-camera-changed', true], ['local-microphone-changed', true]], 'nothing was on after destroy: no extra reset')
+    assert.deepEqual(env.signals, [['local-camera-changed', true], ['local-microphone-changed', true], ['video-provider-changed', { provider: 'cloudflare' }]], 'nothing was on after destroy: no extra reset')
     env.config({ provider: 'agora' })
     assert.equal(env.made.length, 3, 'the Agora chat of this page is reused')
     assert.deepEqual(env.log.slice(-2), ['destroy:2', 'play:0'], 'Cloudflare is stopped before Agora takes over')
@@ -198,7 +198,7 @@ test('after destroy in Cloudflare mode nothing is made until the fresh config, u
     assert.deepEqual(env.made[2].calls, [['play', 'local-video'], ['monitor']])
     stop()
     assert.deepEqual(env.made[2].calls.at(-1), ['unmonitor'])
-    assert.deepEqual(env.signals, [['local-camera-changed', true], ['local-microphone-changed', true]])
+    assert.deepEqual(env.signals, [['local-camera-changed', true], ['local-microphone-changed', true], ['video-provider-changed', { provider: 'cloudflare' }]])
 })
 
 test('an action after destroy, before the fresh config, makes the chat with what the page asked for meanwhile', async () => {
@@ -214,4 +214,27 @@ test('an action after destroy, before the fresh config, makes the chat with what
     env.config({ ...cloudflare, generation: 3 })
     assert.equal(env.made.length, 2, 'the fresh config reconfigures it')
     assert.deepEqual(env.made[1].calls.at(-1), ['configure', 'cloudflare'])
+})
+
+test('video-provider-changed is told once per real switch, after the new chat exists and the conversation is joined again', async () => {
+    const env = load()
+    env.config({ provider: 'agora' })
+    env.config({ provider: 'agora' })
+    assert.deepEqual(env.signals, [], 'same provider: nothing to tell')
+    await env.chat.joinChannel('sala', 'uid-1', 'realm', 0, null)
+    env.config(cloudflare)
+    const changed = env.signals.filter(([event]) => event === 'video-provider-changed')
+    assert.deepEqual(changed, [['video-provider-changed', { provider: 'cloudflare' }]])
+    assert.equal(env.chat.provider, 'cloudflare', 'the router already answers with the new provider')
+    assert.deepEqual(env.made[1].calls.find(call => call[0] === 'join'), ['join', 'sala', 'uid-1', 'realm', 0, null])
+    env.config({ ...cloudflare, generation: 2 })
+    assert.equal(env.signals.filter(([event]) => event === 'video-provider-changed').length, 1, 'a reconfigure is not a switch')
+    env.config({ provider: 'agora' })
+    assert.deepEqual(env.signals.at(-1), ['video-provider-changed', { provider: 'agora' }])
+})
+
+test('a switch before any chat was made is still told, so the speakers follow it', () => {
+    const env = load()
+    env.config(cloudflare)
+    assert.deepEqual(env.signals, [['video-provider-changed', { provider: 'cloudflare' }]])
 })
