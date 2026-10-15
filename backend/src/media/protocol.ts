@@ -21,10 +21,11 @@ export const NegotiatedSdp = sdp
 // `generation` names the server's media state for this page. It changes on every join, reset and restart; every
 // negotiation step carries the generation it belongs to, and the page drops steps of any other generation.
 export type MediaConfig = { provider: 'agora' } | { provider: 'cloudflare', iceServers: IceServer[], bootstrap: boolean, generation: number }
-// `close` with `force: true` closes the last tracks of the receive connection. The page stops those
-// transceivers locally WITHOUT creating an offer (a max-bundle connection with every m-line rejected has no
-// BUNDLE group and setLocalDescription throws) and acks `{ ok: true }`. The server then closes them on
-// Cloudflare with `force: true` and no SDP; no `answer` step follows. The next pull offer renegotiates as usual.
+// The server sends every `close` with `force: true`: the page stops those transceivers locally WITHOUT creating an
+// offer and acks `{ ok: true }`; the server then closes them on Cloudflare with `force: true` and no SDP, and no
+// `answer` step follows. (A page offer on this Cloudflare-offered session leaves it "disconnected" for Cloudflare,
+// and an offer with every m-line stopped has no BUNDLE group.) The next pull offer renegotiates as usual. A `close`
+// without `force` (page offer, then an `answer` step) is still understood by the page but no longer sent.
 export type NegotiateStep = { generation: number } & (
     | { type: 'pull', offer: string, tracks: { mid: string, fromUid: string, kind: MediaKind, objectId?: string }[] }
     | { type: 'close', mids: string[], force?: true }

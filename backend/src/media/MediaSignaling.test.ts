@@ -130,7 +130,7 @@ test('publish: one send session, unique track names, and the neighbour pulls mic
     assert.deepEqual(lastPeers(ana).peers, [{ uid: 'bia', mic: false, camera: false, screen: false }])
 })
 
-test('walking away closes the pulls with a renegotiation, coming back pulls them again', async () => {
+test('walking away closes the pulls forced, without a renegotiation, coming back pulls them again', async () => {
     const h = harness()
     await h.enter('ana', 2, 0)
     await h.enter('caio', 6, 0)
@@ -140,11 +140,12 @@ test('walking away closes the pulls with a renegotiation, coming back pulls them
     const sub = receiveSessionOf(h.calls, 'bia')
     const anaMids = [...openPulls(bia)].filter(([, who]) => who.startsWith('ana|')).map(([mid]) => mid)
 
-    // Ana leaves the group; bia keeps caio's mic, so this is a normal negotiated close.
+    // Ana leaves the group while bia keeps caio's mic: still forced. A page-offered renegotiation on a receive
+    // session that Cloudflare offered leaves it "disconnected" for Cloudflare (every later call there fails with 410).
     const before = bia.steps.length
     await h.place('ana', 14, 0)
-    assert.deepEqual(stepsOf(bia, before), [{ type: 'close', mids: anaMids }, { type: 'answer', answer: 'close-answer' }])
-    assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === sub), [['close', sub, anaMids, 'offer-bia']])
+    assert.deepEqual(stepsOf(bia, before), [{ type: 'close', mids: anaMids, force: true }])
+    assert.deepEqual(callsOf(h.calls, 'close').filter(call => call[1] === sub), [['close', sub, anaMids, undefined]])
     assert.deepEqual(pulledKinds(bia), ['caio|mic'])
 
     await h.place('ana', 2, 0)
@@ -423,7 +424,7 @@ test('idle unpublish: a paused track keeps its pull, an unpublished one is close
     assert.deepEqual(await h.media.unpublish('ana', 'socket-ana', { kind: 'camera', mid: 'camera', offer: 'off' }), { ok: true, answer: 'close-answer' })
     assert.deepEqual(h.calls.find(call => call[0] === 'close'), ['close', 's1', ['camera'], 'off'])
     await h.media.idle()
-    assert.deepEqual(stepsOf(bia, steps), [{ type: 'close', mids: [cameraMid] }, { type: 'answer', answer: 'close-answer' }])
+    assert.deepEqual(stepsOf(bia, steps), [{ type: 'close', mids: [cameraMid], force: true }])
     assert.deepEqual(pulledKinds(bia), ['ana|mic'])
     assert.ok(ana)
 })
@@ -483,7 +484,7 @@ test('unpublishing the last publication: no offer, closed forced, ack without an
     assert.deepEqual(lastPeers(bia).peers, [{ uid: 'ana', mic: false, camera: false, screen: false }])
 })
 
-test('walking straight from one group to another pulls first, then closes with a renegotiation', async () => {
+test('walking straight from one group to another pulls first, then closes forced', async () => {
     const h = harness()
     await h.enter('ana', 2, 0)
     await h.enter('caio', 12, 0)
@@ -493,9 +494,9 @@ test('walking straight from one group to another pulls first, then closes with a
     const before = bia.steps.length
     await h.place('bia', 10, 0)
     const steps = stepsOf(bia, before)
-    assert.deepEqual(steps.map(step => step.type), ['pull', 'close', 'answer'])
+    assert.deepEqual(steps.map(step => step.type), ['pull', 'close'])
     assert.deepEqual((steps[0] as any).tracks.map((track: any) => track.fromUid), ['caio'])
-    assert.deepEqual(steps[1], { type: 'close', mids: [anaMid] })
+    assert.deepEqual(steps[1], { type: 'close', mids: [anaMid], force: true })
     assert.deepEqual(pulledKinds(bia), ['caio|mic'])
 })
 

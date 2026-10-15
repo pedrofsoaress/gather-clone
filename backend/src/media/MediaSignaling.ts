@@ -436,24 +436,15 @@ export class MediaSignaling {
         const sessionId = sub.sessionId!
         const generation = connection.generation
         const mids = keys.map(key => sub.pulled.get(key)!.mid)
-        // Closing every remaining pulled track: a renegotiation offer from a max-bundle page would have no
-        // BUNDLE group and fail in the browser, so the page drops them locally and Cloudflare closes them forced.
-        if (keys.length === sub.pulled.size) {
-            await this.ask(connection, { generation, type: 'close', mids, force: true })
-            for (const key of keys) sub.pulled.delete(key)
-            await this.api.close(sessionId, mids)
-            this.check(connection)
-            return
-        }
-        const reply = await this.ask(connection, { generation, type: 'close', mids })
-        const offer = NegotiatedSdp.safeParse(reply.offer)
-        if (!offer.success) throw new Error('fechamento sem oferta')
+        // Always forced: the page stops those transceivers without an offer and Cloudflare closes them with no SDP.
+        // A page-offered renegotiation on this session (which Cloudflare offered so far) leaves it "disconnected"
+        // for Cloudflare: media keeps flowing, but every later call on it waits 5 s and fails with 410. Closing the
+        // last tracks this way also avoids the max-bundle offer with no BUNDLE group. The next pull offer from
+        // Cloudflare renegotiates the stopped m-lines.
+        await this.ask(connection, { generation, type: 'close', mids, force: true })
         for (const key of keys) sub.pulled.delete(key)
-        const response = await this.api.close(sessionId, mids, offer.data)
+        await this.api.close(sessionId, mids)
         this.check(connection)
-        const answer = response.sessionDescription?.sdp
-        if (!answer) throw new Error('close sem SDP de resposta')
-        await this.ask(connection, { generation, type: 'answer', answer })
     }
 
     private async pullTracks(connection: Connection, pulls: WantedPull[]) {
