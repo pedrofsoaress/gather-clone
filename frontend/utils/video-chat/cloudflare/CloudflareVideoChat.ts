@@ -5,7 +5,7 @@ import type { CloudflareMediaConfig, MediaKind, PeersSnapshot, SignalingSocket }
 import { CloudflareEngine, type EngineEvent, type EngineOptions, type MediaEngine } from './CloudflareEngine'
 import { LayerRequests, LAYER_DEBOUNCE_MS } from './layers'
 import { CloudflareRemoteUser, LocalPreview, RemoteAudio, RemoteVideo, SPEAKING_AUDIO_LEVEL, signature } from './remote-media'
-import { currentOfficeSocket, officeSocket } from './socket'
+import { currentOfficeSocket, officeSocket, pinnedOfficeSocket } from './socket'
 
 const RECEIVE_ERROR = 'Não foi possível receber a mídia de um participante.'
 // A track this page was sending could not go out again after a reconnect: that toggle is turned off.
@@ -24,6 +24,9 @@ export type ChatDeps = {
     socket: SignalingSocket
     // Identity of the socket `socket` talks to now; a change means the office socket was replaced. Optional.
     socketTarget?: () => unknown
+    // `socket` bound to the office socket of now, never following a replacement: each engine gets one, so its
+    // handlers are removed from the socket they were added to. Without it, `socket` is used.
+    pinSocket?: () => SignalingSocket
     createEngine: (options: EngineOptions) => MediaEngine
     setTimeout: (callback: () => void, ms: number) => unknown
     clearTimeout: (timer: unknown) => void
@@ -34,6 +37,7 @@ function browserDeps(): ChatDeps {
     return {
         socket: officeSocket(),
         socketTarget: currentOfficeSocket,
+        pinSocket: pinnedOfficeSocket,
         createEngine: options => new CloudflareEngine(options),
         setTimeout: (callback, ms) => window.setTimeout(callback, ms),
         clearTimeout: timer => window.clearTimeout(timer as number),
@@ -72,6 +76,8 @@ export class CloudflareVideoChat implements MediaChat {
     // The engine was stopped with its office socket; the next configure opens a new one.
     private detached = false
     private socketTarget: unknown = undefined
+    // The office socket the current engine and its disconnect handler are on.
+    private engineSocket!: SignalingSocket
     private onSocketDisconnect: (reason?: string) => void = () => {}
 
     constructor(config: CloudflareMediaConfig, deps: ChatDeps = browserDeps()) {
@@ -91,8 +97,9 @@ export class CloudflareVideoChat implements MediaChat {
 
     // An engine bound to the office socket of now, with its own disconnect handler.
     private openEngine(): MediaEngine {
+        const socket = this.deps.pinSocket?.() ?? this.deps.socket
         const engine: MediaEngine = this.deps.createEngine({
-            socket: this.deps.socket,
+            socket,
             createPeerConnection: rtcConfig => new RTCPeerConnection(rtcConfig),
             setTimeout: this.deps.setTimeout,
             clearTimeout: this.deps.clearTimeout,
@@ -100,12 +107,13 @@ export class CloudflareVideoChat implements MediaChat {
             onEvent: event => { if (engine === this.engine) this.onEngineEvent(event) },
         })
         this.socketTarget = this.deps.socketTarget?.()
+        this.engineSocket = socket
         this.onSocketDisconnect = (reason?: string) => {
             if (engine !== this.engine) return
             if (reason && FINAL_DISCONNECTS.includes(reason)) this.retire()
             else engine.suspend()
         }
-        this.deps.socket.on('disconnect', this.onSocketDisconnect)
+        socket.on('disconnect', this.onSocketDisconnect)
         return engine
     }
 
@@ -115,15 +123,16 @@ export class CloudflareVideoChat implements MediaChat {
         if (this.detached) return
         this.detached = true
         this.engine.stop()
-        this.deps.socket.off('disconnect', this.onSocketDisconnect)
+        this.engineSocket.off('disconnect', this.onSocketDisconnect)
         this.dropScreen()
         this.applyPeers(null)
         for (const timer of this.layerTimers.values()) this.deps.clearTimeout(timer)
         this.layerTimers.clear()
         this.sentLayers.clear()
         this.syncSpeakers()
-        for (const objectId of [...this.speakerTracks.keys()]) {
+        for (const [objectId, track] of [...this.speakerTracks]) {
             this.speakerTracks.delete(objectId)
+            track.stop()
             signal.emit('speaker-publish-failed', { objectId })
         }
     }
@@ -288,7 +297,7 @@ export class CloudflareVideoChat implements MediaChat {
             this.layerTimers.delete(uid)
             if ((this.sentLayers.get(uid) ?? 'q') === layer) return
             this.sentLayers.set(uid, layer)
-            void this.deps.socket.request('mediaLayer', { fromUid: uid, layer }).catch(() => {})
+            void this.engineSocket.request('mediaLayer', { fromUid: uid, layer }).catch(() => {})
         }, LAYER_DEBOUNCE_MS))
     }
 
@@ -304,8 +313,10 @@ export class CloudflareVideoChat implements MediaChat {
     public isVideoSubscribed(uid: string): boolean { return Boolean(this.users.get(uid)?.videoTrack) }
 
     public getRemoteAudio(uid: string): { muted: boolean, volume: number, speaking: boolean } {
-        const audio = this.users.get(uid)?.audioTrack
-        return { muted: this.remoteMuted.has(uid), volume: this.remoteVolumes.get(uid) ?? 100, speaking: Boolean(audio && audio.getVolumeLevel() > SPEAKING_AUDIO_LEVEL) }
+        const user = this.users.get(uid)
+        const audio = user?.audioTrack
+        // A muted person is never speaking, whatever level the browser still reports.
+        return { muted: this.remoteMuted.has(uid), volume: this.remoteVolumes.get(uid) ?? 100, speaking: Boolean(user?.hasAudio && audio && audio.getVolumeLevel() > SPEAKING_AUDIO_LEVEL) }
     }
 
     public setRemoteMuted(uid: string, muted: boolean): void {
@@ -496,21 +507,24 @@ export class CloudflareVideoChat implements MediaChat {
         return devices
     }
 
-    // Captures `deviceId` and swaps it into the publication without renegotiating.
+    // Captures `deviceId` and swaps it into the publication without renegotiating. If, while the device opened, the
+    // call ended, that kind was turned off or its track was replaced, the new track is closed and nothing changes.
     private async switchDevice(kind: 'audioinput' | 'videoinput', deviceId: string): Promise<void> {
+        const lifecycle = this.lifecycle
+        const current = () => kind === 'audioinput' ? this.microphone : this.camera
+        const old = current()
         const track = await this.capture(kind, deviceId)
-        if (kind === 'audioinput') {
-            const old = this.microphone
-            this.microphone = track
-            await this.engine.replaceTrack('mic', track)
-            old?.stop()
-        } else {
-            const old = this.camera
-            this.camera = track
-            this.preview.play(this.cameraElement, track)
-            await this.engine.replaceTrack('camera', track)
-            old?.stop()
-        }
+        if (lifecycle !== this.lifecycle || !old || current() !== old) { track.stop(); return }
+        try {
+            if (kind === 'audioinput') {
+                this.microphone = track
+                await this.engine.replaceTrack('mic', track)
+            } else {
+                this.camera = track
+                this.preview.play(this.cameraElement, track)
+                await this.engine.replaceTrack('camera', track)
+            }
+        } finally { old.stop() }
     }
 
     public async selectMicrophone(deviceId: string): Promise<void> {
@@ -539,9 +553,10 @@ export class CloudflareVideoChat implements MediaChat {
         if (!this.outputSupported) throw new Error('Seu navegador não oferece seleção de saída de áudio.')
         const devices = await this.listDevices()
         if (deviceId && resolveDevicePreference(deviceId, 'audiooutput', devices) !== deviceId) throw new Error('Saída de áudio indisponível.')
-        this.savePreferences({ outputId: deviceId })
+        // Saved only once the audio really moved there.
         for (const user of this.users.values()) if (user.audioTrack) await user.audioTrack.setPlaybackDevice(deviceId || 'default')
         for (const audio of this.speakers.values()) await audio.setPlaybackDevice(deviceId || 'default')
+        this.savePreferences({ outputId: deviceId })
     }
 
     public playVideoTrackAtElementId(elementId: string | HTMLElement): void {
@@ -569,6 +584,7 @@ export class CloudflareVideoChat implements MediaChat {
         const lifecycle = this.lifecycle
         const engine = this.engine
         let stream: MediaStream | undefined
+        let published = false
         try {
             const Controller = (window as Window & { CaptureController?: new () => { setFocusBehavior: (behavior: 'no-focus-change') => void } }).CaptureController
             const controller = Controller ? new Controller() : undefined
@@ -580,12 +596,15 @@ export class CloudflareVideoChat implements MediaChat {
             if (!track) throw new Error('Nenhuma tela foi selecionada para compartilhar.')
             track.contentHint = 'detail'
             await engine.publish('screen', track)
-            if (lifecycle !== this.lifecycle || engine !== this.engine) throw new Error('Compartilhamento cancelado.')
+            published = true
+            // The call ended, the engine was replaced or the conversation ended while the server accepted it.
+            if (lifecycle !== this.lifecycle || engine !== this.engine || !this.isConnected) throw new Error('Compartilhamento cancelado.')
             this.screen = track
             track.addEventListener('ended', () => { if (this.screen === track) void this.stopScreenShare() }, { once: true })
             signal.emit('screen-share-changed', true)
         } catch (error) {
             stream?.getTracks().forEach(track => track.stop())
+            if (published) await engine.unpublish('screen').catch(() => {})
             throw error
         } finally { this.screenStarting = false }
     }
@@ -624,7 +643,7 @@ export class CloudflareVideoChat implements MediaChat {
         this.destroyed = true
         this.lifecycle++
         this.engine.stop()
-        this.deps.socket.off('disconnect', this.onSocketDisconnect)
+        this.engineSocket.off('disconnect', this.onSocketDisconnect)
         this.stopMonitoring?.()
         this.layers.clear()
         for (const timer of this.layerTimers.values()) this.deps.clearTimeout(timer)

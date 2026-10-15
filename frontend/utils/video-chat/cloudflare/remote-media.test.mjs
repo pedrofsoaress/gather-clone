@@ -1,61 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
-import ts from 'typescript'
-import { pathToFileURL } from 'node:url'
+import { fakeDocument, loadRemoteMedia, tracksOf } from './test-dom.mjs'
 
-const transpile = file => ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText
+// Kept here as well for callers of the brief's helper.
+export { fakeDocument }
 
-// Also a helper of CloudflareVideoChat.test.mjs: its own tests run only when this file is the one being run.
-const main = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href
-const it = main ? test : () => {}
-
-// A document whose elements record what the page does to them. `add(id)` puts a container on the page.
-export function fakeDocument(name) {
-    const registry = new Map()
-    const doc = {
-        name,
-        createElement: tag => element(tag),
-        getElementById: id => registry.get(id) ?? null,
-        add(id, tag = 'div') { const box = element(tag); box.id = id; registry.set(id, box); return box },
-    }
-    function element(tag) {
-        const el = {
-            tag, ownerDocument: doc, parent: null, children: [], style: {}, srcObject: null, volume: 1, sinkId: undefined, played: 0, paused: false, removed: false,
-            autoplay: false, muted: false, playsInline: false,
-            replaceChildren(...children) {
-                for (const child of el.children) child.parent = null
-                el.children = children
-                for (const child of children) child.parent = el
-            },
-            remove() {
-                el.removed = true
-                if (el.parent) el.parent.children = el.parent.children.filter(child => child !== el)
-                el.parent = null
-            },
-            play() { el.played++; el.paused = false; return Promise.resolve() },
-            pause() { el.paused = true },
-            setSinkId(id) { el.sinkId = id; return Promise.resolve() },
-        }
-        return el
-    }
-    return doc
-}
-
-// Arrays made inside the vm have another prototype: copy them before comparing.
-export const tracksOf = element => [...element.srcObject.tracks]
-
-export class FakeMediaStream { constructor(tracks) { this.tracks = tracks } }
-
-// The module running on `document`; MediaStream records the tracks it was made with.
-export function loadRemoteMedia(document) {
-    const exports = {}
-    vm.runInNewContext(transpile('./remote-media.ts'), { exports, document, MediaStream: FakeMediaStream, HTMLMediaElement: class { setSinkId() {} } })
-    return exports
-}
-
-it('a remote video plays muted and inline in the tile, moves to another document and swaps its track', () => {
+test('a remote video plays muted and inline in the tile, moves to another document and swaps its track', () => {
     const page = fakeDocument('page'), floating = fakeDocument('floating')
     const tile = page.add('remote-user-ana'), bubble = floating.add('bubble')
     const { RemoteVideo } = loadRemoteMedia(page)
@@ -82,14 +32,20 @@ it('a remote video plays muted and inline in the tile, moves to another document
 
     video.setTrack(next)
     assert.deepEqual(tracksOf(moved), [next])
+    // The same track again leaves the playing element alone (no blink).
+    const playing = moved.srcObject
+    video.setTrack(next)
+    assert.equal(moved.srcObject, playing)
     video.stop()
     assert.equal(moved.removed, true)
     assert.equal(bubble.children.length, 0)
 })
 
-it('remote audio: volume in percent, the default output, the RTP level and stop', async () => {
+test('remote audio: volume in percent, the default output, the RTP level and stop', async () => {
     const page = fakeDocument('page')
-    const { RemoteAudio } = loadRemoteMedia(page)
+    const clock = { now: 10_000 }
+    const { RemoteAudio, AUDIO_LEVEL_FRESH_MS } = loadRemoteMedia(page, clock)
+    assert.equal(AUDIO_LEVEL_FRESH_MS, 500)
     const track = { id: 'mic' }
     let level = 0.4
     const audio = new RemoteAudio(track, { getSynchronizationSources: () => [{ audioLevel: level }] })
@@ -112,6 +68,12 @@ it('remote audio: volume in percent, the default output, the RTP level and stop'
     assert.equal(audio.getVolumeLevel(), 0.01)
     assert.equal(new RemoteAudio(track, null).getVolumeLevel(), 0)
     assert.equal(new RemoteAudio(track, { getSynchronizationSources: () => [] }).getVolumeLevel(), 0)
+    // The browser keeps the last level of a source that went silent (a remote mute): only a recent packet counts.
+    const sourced = timestamp => new RemoteAudio(track, { getSynchronizationSources: () => [{ audioLevel: 0.4, timestamp }] }).getVolumeLevel()
+    assert.equal(sourced(9_800), 0.4)
+    assert.equal(sourced(9_000), 0)
+    assert.equal(sourced(Date.now() - 100), 0.4, 'epoch timestamps are compared with the wall clock')
+    assert.equal(sourced(Date.now() - 5_000), 0)
     audio.play()
     assert.equal(element.played, 1)
     audio.stop()
@@ -119,7 +81,7 @@ it('remote audio: volume in percent, the default output, the RTP level and stop'
     assert.equal(element.paused, true)
 })
 
-it('the local preview is mirrored by default, plain for a shared screen, and skips a missing container', () => {
+test('the local preview is mirrored by default, plain for a shared screen, and skips a missing container', () => {
     const page = fakeDocument('page')
     const box = page.add('local-video')
     const { LocalPreview } = loadRemoteMedia(page)
@@ -143,4 +105,32 @@ it('the local preview is mirrored by default, plain for a shared screen, and ski
     preview.play('nowhere', camera)
     preview.stop()
     assert.equal(box.children.length, 0)
+})
+
+test('remote audio blocked by autoplay plays on the next click or key press, once', async () => {
+    const page = fakeDocument('page')
+    const { RemoteAudio } = loadRemoteMedia(page)
+    page.autoplayBlocked = true
+    const audio = new RemoteAudio({ id: 'mic' }, null)
+    audio.play()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(audio.element.played, 0)
+    assert.equal(page.listenerCount('pointerdown'), 1)
+    assert.equal(page.listenerCount('keydown'), 1)
+    page.autoplayBlocked = false
+    page.gesture('keydown')
+    assert.equal(audio.element.played, 1)
+    assert.equal(page.listenerCount('pointerdown'), 0)
+    assert.equal(page.listenerCount('keydown'), 0)
+
+    // Stopped before any gesture: nothing is left waiting.
+    page.autoplayBlocked = true
+    const other = new RemoteAudio({ id: 'mic-2' }, null)
+    other.play()
+    await new Promise(resolve => setImmediate(resolve))
+    other.stop()
+    assert.equal(page.listenerCount('pointerdown'), 0)
+    page.autoplayBlocked = false
+    page.gesture('pointerdown')
+    assert.equal(other.element.played, 0)
 })

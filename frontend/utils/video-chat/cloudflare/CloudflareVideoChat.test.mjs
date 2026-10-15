@@ -5,7 +5,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import * as preferences from '../AudioPreference.ts'
 import * as layers from './layers.ts'
-import { fakeDocument, loadRemoteMedia, tracksOf } from './remote-media.test.mjs'
+import { fakeDocument, loadRemoteMedia, tracksOf } from './test-dom.mjs'
 
 const tick = async (rounds = 20) => { for (let i = 0; i < rounds; i++) await new Promise(resolve => setImmediate(resolve)) }
 const transpile = file => ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText
@@ -35,11 +35,11 @@ function fakeEngine(env) {
             start(value) { engine.calls.push(['start', value.generation]); return Promise.resolve() },
             suspend() { engine.calls.push(['suspend']) },
             stop() { engine.calls.push(['stop']); engine.connected = false },
-            async publish(kind, track, objectId) { engine.calls.push(['publish', kind, track, objectId]); if (engine.fail) throw new Error(engine.fail) },
+            async publish(kind, track, objectId) { engine.calls.push(['publish', kind, track, objectId]); await env.publishGate?.(); if (engine.fail) throw new Error(engine.fail) },
             async unpublish(kind, objectId) { engine.calls.push(['unpublish', kind, objectId]) },
             async pause(kind) { engine.calls.push(['pause', kind]) },
             async resume(kind, track) { engine.calls.push(['resume', kind, track]); if (engine.fail) throw new Error(engine.fail) },
-            async replaceTrack(kind, track) { engine.calls.push(['replaceTrack', kind, track]) },
+            async replaceTrack(kind, track) { engine.calls.push(['replaceTrack', kind, track]); if (env.failReplace) throw new Error(env.failReplace) },
             remoteTrack: (fromUid, kind, objectId) => engine.tracks.get(key(fromUid, kind, objectId)) ?? null,
             receiver: (fromUid, kind, objectId) => engine.receivers.get(key(fromUid, kind, objectId)) ?? null,
             remoteSpeakers: () => engine.speakers,
@@ -51,18 +51,25 @@ function fakeEngine(env) {
     }
 }
 
+// One fake per office socket: what the page registers on it and asks through it.
+function fakeSocket(name) {
+    const socket = {
+        name, handlers: new Map(), requests: [],
+        on(event, fn) { socket.handlers.set(event, fn) },
+        off(event, fn) { if (socket.handlers.get(event) === fn) socket.handlers.delete(event) },
+        request(event, payload) { socket.requests.push([event, payload]); return Promise.resolve({}) },
+    }
+    return socket
+}
+
 function load({ capture } = {}) {
     const page = fakeDocument('page')
     const signals = []
     const engines = []
     const timers = new Map()
     let timerId = 0
-    const socket = {
-        handlers: new Map(), requests: [],
-        on(event, fn) { socket.handlers.set(event, fn) },
-        off(event, fn) { if (socket.handlers.get(event) === fn) socket.handlers.delete(event) },
-        request(event, payload) { socket.requests.push([event, payload]); return Promise.resolve({}) },
-    }
+    const gates = { publish: null, capture: null, replace: null }
+    let socket = fakeSocket('socket-1')
     let devices = [{ kind: 'audioinput', deviceId: 'default' }, { kind: 'videoinput', deviceId: 'cam' }, { kind: 'audiooutput', deviceId: 'default' }]
     const captured = []
     const mediaDevices = {
@@ -71,6 +78,7 @@ function load({ capture } = {}) {
         getUserMedia: async constraints => {
             const kind = constraints.video ? 'video' : 'audio'
             if (capture) await capture(kind)
+            if (gates.capture) await gates.capture.promise
             const track = fakeTrack(kind, constraints[kind]?.deviceId?.exact ?? '')
             captured.push(track)
             return { getVideoTracks: () => kind === 'video' ? [track] : [], getAudioTracks: () => kind === 'audio' ? [track] : [] }
@@ -83,11 +91,12 @@ function load({ capture } = {}) {
         addEventListener(name, fn) { mediaDevices.listeners.set(name, fn) },
         removeEventListener(name, fn) { if (mediaDevices.listeners.get(name) === fn) mediaDevices.listeners.delete(name) },
     }
-    let target = { id: 'socket-1' }
+    // `socket` follows the current office socket, like officeSocket(); pinSocket() keeps the one of now.
     const deps = {
-        socket,
-        socketTarget: () => target,
-        createEngine: fakeEngine({ engines }),
+        socket: { on: (...args) => socket.on(...args), off: (...args) => socket.off(...args), request: (...args) => socket.request(...args) },
+        socketTarget: () => socket,
+        pinSocket: () => socket,
+        createEngine: fakeEngine({ engines, get publishGate() { return gates.publish && (() => gates.publish.promise) }, get failReplace() { return gates.replace } }),
         setTimeout: (callback, ms) => { timers.set(++timerId, { callback, ms }); return timerId },
         clearTimeout: id => timers.delete(id),
         mediaDevices,
@@ -108,11 +117,16 @@ function load({ capture } = {}) {
             throw new Error(`Unexpected import: ${name}`)
         },
     })
+    const hold = () => { let release; const promise = new Promise(resolve => { release = resolve }); return { promise, release } }
     const env = {
-        page, signals, engines, timers, socket, captured, deps, mediaDevices,
+        page, signals, engines, timers, captured, deps, mediaDevices,
+        get socket() { return socket },
         get engine() { return engines.at(-1) },
         setDevices(next) { devices = next },
-        replaceSocket() { target = { id: `socket-${++timerId}` } },
+        replaceSocket() { socket = fakeSocket(`socket-${++timerId}`); return socket },
+        holdCapture() { gates.capture = hold(); return () => { const gate = gates.capture; gates.capture = null; gate.release() } },
+        holdPublish() { gates.publish = hold(); return () => { const gate = gates.publish; gates.publish = null; gate.release() } },
+        failReplace(message) { gates.replace = message },
         create(value = config()) { return new exports.CloudflareVideoChat(value, deps) },
         fire() { const due = [...timers.values()]; timers.clear(); for (const { callback } of due) callback() },
         named: name => signals.filter(([event]) => event === name),
@@ -210,6 +224,18 @@ test('tracks: video only when received, audio at the volume chosen for the perso
     env.engine.emit({ type: 'tracks' })
     assert.deepEqual(tracksOf(tile.children[0]), [next])
     assert.deepEqual(env.named('user-info-updated'), [])
+
+    // Anyone toggling a mic re-sends the roster and the tracks: the playing elements are left alone (no blink),
+    // and a person whose mic is off never shows as speaking, whatever level the browser still reports.
+    level = 0.3
+    const playing = tile.children[0].srcObject, heard = audio.srcObject
+    env.engine.emit(peers({ peers: [{ uid: 'ana', mic: false, camera: true, screen: false }, { uid: 'bia', mic: true, camera: false, screen: false }], ownScreen: false }))
+    env.engine.emit({ type: 'tracks' })
+    env.engine.emit(peers({ peers: [{ uid: 'ana', mic: false, camera: true, screen: false }, { uid: 'bia', mic: true, camera: false, screen: false }], ownScreen: false }))
+    assert.equal(tile.children[0].srcObject, playing)
+    assert.equal(audio.srcObject, heard)
+    assert.equal(audio.played, 1)
+    assert.equal(chat.getRemoteAudio('ana').speaking, false)
 })
 
 test('camera: on sends and previews, off pauses and turns the light off', async () => {
@@ -340,6 +366,21 @@ test('screen: only inside a conversation, sent as detail, ends with the track, p
     assert.deepEqual(env.named('screen-share-changed').at(-1), ['screen-share-changed', false])
     assert.equal(typeof chat.showScreenPreview('remote-user-me-screen'), 'function')
     assert.equal(tile.children.length, 0)
+
+    // The conversation ends while the server accepts the share: cancelled, unpublished, the button stays off.
+    env.engine.emit(peers())
+    env.clear()
+    const release = env.holdPublish()
+    const late = chat.startScreenShare()
+    await tick()
+    env.engine.emit(peers({ conversation: null, peers: [], ownScreen: false }))
+    release()
+    await assert.rejects(late, { message: 'Compartilhamento cancelado.' })
+    const lateTrack = env.captured.at(-1)
+    assert.notEqual(lateTrack, track)
+    assert.equal(lateTrack.stopped, true)
+    assert.deepEqual(env.engine.calls.at(-1), ['unpublish', 'screen', undefined])
+    assert.deepEqual(env.named('screen-share-changed'), [])
 })
 
 test('notices and destroy', async () => {
@@ -446,6 +487,8 @@ test('a new office socket gets a new engine, started at once, with what this pag
     await chat.toggleCamera()
     await chat.startScreenShare()
     const [mic, camera, screen] = env.captured
+    const speaker = fakeTrack('audio')
+    await chat.publishSpeaker('lounge', speaker)
     env.clear()
 
     // Leaving the office: the engine stops while its handlers are still on the old socket.
@@ -455,6 +498,8 @@ test('a new office socket gets a new engine, started at once, with what this pag
     assert.equal(env.named('user-left').length, 3)
     assert.equal(env.named('video-channel-left').length, 1)
     assert.equal(screen.stopped, true)
+    assert.equal(speaker.stopped, true)
+    assert.deepEqual(plain(env.named('speaker-publish-failed')), [['speaker-publish-failed', { objectId: 'lounge' }]])
     assert.equal(mic.stopped, false)
     assert.equal(camera.stopped, false)
     assert.equal(chat.isConnected, false)
@@ -475,10 +520,16 @@ test('a new office socket gets a new engine, started at once, with what this pag
 
     // The socket replaced without a disconnect seen here (the chat was made on the old one): rebuilt as well.
     await chat.toggleMicrophone()
-    env.replaceSocket()
+    const oldSocket = env.socket
+    assert.equal(second.options.socket, oldSocket)
+    const newSocket = env.replaceSocket()
     chat.configure(config(8))
     const third = env.engine
     assert.deepEqual(second.calls.at(-1), ['stop'])
+    // Handlers leave the socket they were added to, not the current one.
+    assert.equal(oldSocket.handlers.has('disconnect'), false)
+    assert.equal(typeof newSocket.handlers.get('disconnect'), 'function')
+    assert.equal(third.options.socket, newSocket)
     assert.deepEqual(third.calls[0], ['start', 8])
     await tick()
     assert.deepEqual(third.calls.slice(1), [['resume', 'camera', camera]], 'a muted microphone is not sent')
@@ -499,4 +550,86 @@ test('a new office socket gets a new engine, started at once, with what this pag
     assert.equal(camera.stopped, true)
     assert.deepEqual(env.named('local-camera-changed'), [['local-camera-changed', true]])
     assert.deepEqual(plain(env.named('officeFeedback')), [['officeFeedback', { message: 'Não foi possível reenviar sua câmera.' }]])
+})
+
+test('a device switch never revives a camera turned off, leaks nothing on destroy, and closes the old track on failure', async () => {
+    const env = load()
+    const chat = env.create()
+    const box = env.page.add('local-video')
+    await chat.toggleCamera()
+    const first = env.captured.at(-1)
+
+    // The camera is turned off while the new one opens.
+    let release = env.holdCapture()
+    let switching = chat.selectCamera('cam')
+    await tick()
+    assert.equal(await chat.turnOffCamera(), true)
+    release()
+    await switching
+    const late = env.captured.at(-1)
+    assert.notEqual(late, first)
+    assert.equal(late.stopped, true)
+    assert.equal(first.stopped, true)
+    assert.equal(await chat.turnOffCamera(), false)
+    assert.equal(box.children.length, 0)
+    assert.equal(env.engine.calls.some(([name]) => name === 'replaceTrack'), false)
+
+    // The microphone is dropped (publish-failed) while the new one opens.
+    await chat.toggleMicrophone()
+    release = env.holdCapture()
+    switching = chat.selectMicrophone('default')
+    await tick()
+    env.engine.emit({ type: 'publish-failed', kind: 'mic', error: 'x' })
+    release()
+    await switching
+    assert.equal(env.captured.at(-1).stopped, true)
+    assert.equal(chat.isMicrophoneMuted(), true)
+    assert.equal(env.engine.calls.some(([name]) => name === 'replaceTrack'), false)
+
+    // replaceTrack refused: the new track is the camera now, and the old one is closed anyway.
+    await chat.toggleCamera()
+    const before = env.captured.at(-1)
+    env.failReplace('recusado')
+    await assert.rejects(chat.selectCamera('cam'), { message: 'recusado' })
+    const after = env.captured.at(-1)
+    assert.equal(before.stopped, true)
+    assert.equal(after.stopped, false)
+    assert.deepEqual(tracksOf(box.children[0]), [after])
+    env.failReplace(null)
+    assert.equal(await chat.turnOffCamera(), true)
+    assert.equal(after.stopped, true)
+
+    // The call ends while the new device opens.
+    const other = load()
+    const ended = other.create()
+    await ended.toggleCamera()
+    release = other.holdCapture()
+    switching = ended.selectCamera('cam')
+    await tick()
+    ended.destroy()
+    release()
+    await switching
+    assert.equal(other.captured.length, 2)
+    assert.ok(other.captured.every(track => track.stopped))
+    assert.equal(other.engine.calls.some(([name]) => name === 'replaceTrack'), false)
+})
+
+test('the audio output is saved only once the audio moved there', async () => {
+    const env = load()
+    const chat = env.create()
+    env.setDevices([{ kind: 'audioinput', deviceId: 'default' }, { kind: 'audiooutput', deviceId: 'default' }, { kind: 'audiooutput', deviceId: 'usb-out' }])
+    env.engine.emit(peers({ peers: [{ uid: 'ana', mic: true, camera: false, screen: false }], ownScreen: false }))
+    env.engine.tracks.set(key('ana', 'mic'), { id: 'ana-mic' })
+    env.engine.emit({ type: 'tracks' })
+    const audio = env.named('user-info-updated').at(-1)[1].audioTrack.element
+    env.clear()
+    env.page.failSink = true
+    await assert.rejects(chat.selectOutput('usb-out'), { message: 'sink refused' })
+    assert.equal(chat.getDevicePreferences().outputId, '')
+    assert.deepEqual(env.named('media-preferences-changed'), [])
+    env.page.failSink = false
+    await chat.selectOutput('usb-out')
+    assert.equal(audio.sinkId, 'usb-out')
+    assert.equal(chat.getDevicePreferences().outputId, 'usb-out')
+    assert.equal(env.named('media-preferences-changed').length, 1)
 })
